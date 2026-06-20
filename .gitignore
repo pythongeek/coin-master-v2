@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════
+#  GIT IGNORE — এই ফাইলগুলো GitHub-এ আপলোড হবে না
+# ═══════════════════════════════════════════════════════════════
+
+# ── গোপন তথ্য (সবচেয়ে গুরুত্বপূর্ণ!) ─────────────────────────
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+backend/src/config/secrets.ts
+
+# ── Dependencies ──────────────────────────────────────────────
+node_modules/
+.npm-global/
+.pnp
+.pnp.js
+
+# ── Next.js Build ────────────────────────────────────────────
+frontend/.next/
+frontend/out/
+frontend/build/
+.next/
+
+# ── Backend Build ─────────────────────────────────────────────
+backend/dist/
+backend/build/
+
+# ── লগ ফাইল ───────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+backend/logs/
+
+# ── ডাটাবেস ───────────────────────────────────────────────────
+*.sqlite
+*.sqlite3
+postgres_data/
+redis_data/
+
+# ── OS ফাইল ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── এডিটর ─────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── টেস্টিং / কভারেজ ──────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── TypeScript ────────────────────────────────────────────────
+*.tsbuildinfo
+next-env.d.ts
+
+# ── Docker ────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── SSL সার্টিফিকেট ───────────────────────────────────────────
+nginx/ssl/
+*.crt
+*.csr

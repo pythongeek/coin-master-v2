@@ -1,0 +1,235 @@
+'use client';
+/**
+ * ═══════════════════════════════════════════════════════════════
+ *  BET CONTROLS — বেটিং কন্ট্রোল প্যানেল
+ * ═══════════════════════════════════════════════════════════════
+ *
+ *  ইউজার এখান থেকে:
+ *  ① Heads বা Tails বেছে নেবে
+ *  ② বেটের পরিমাণ লিখবে বা প্রিসেট বাটন ব্যবহার করবে
+ *  ③ FLIP বাটন চাপবে
+ * ═══════════════════════════════════════════════════════════════
+ */
+
+import { useState } from 'react';
+import { useGameStore } from '@/lib/store';
+import { getSocket } from '@/lib/socket';
+
+// দ্রুত বেট পরিমাণ বেছে নেওয়ার প্রিসেট
+const BET_PRESETS = [0.10, 0.50, 1.00, 5.00, 10.00, 50.00];
+
+export default function BetControls() {
+  const {
+    user, gameStatus, currentChoice, betAmount,
+    setCurrentChoice, setBetAmount, setGameStatus,
+  } = useGameStore();
+
+  const [clientSeed, setClientSeed] = useState(() =>
+    Math.random().toString(36).slice(2) + Date.now().toString(36)
+  );
+  const [showSeed, setShowSeed] = useState(false);
+
+  const isSpinning = gameStatus === 'spinning';
+  const isResult   = gameStatus === 'result';
+  const canBet     = user && !isSpinning;
+
+  // ── বেট পাঠাও ──────────────────────────────────────────────
+  const handleFlip = () => {
+    if (!canBet || betAmount <= 0) return;
+
+    const socket = getSocket(undefined);
+    socket.emit('game:bet', {
+      choice: currentChoice,
+      amount: betAmount,
+      clientSeed,
+    });
+
+    setGameStatus('spinning');
+
+    // নতুন ক্লায়েন্ট সিড তৈরি করো পরের গেমের জন্য
+    setClientSeed(Math.random().toString(36).slice(2) + Date.now().toString(36));
+  };
+
+  // ── বেট পরিমাণ হেল্পার ─────────────────────────────────────
+  const doubleBet = () => setBetAmount(Math.min(betAmount * 2, user?.balance ?? 0));
+  const halfBet   = () => setBetAmount(Math.max(betAmount / 2, 0.01));
+  const maxBet    = () => setBetAmount(user?.balance ?? 0);
+
+  return (
+    <div className="space-y-5">
+
+      {/* ── ① হেডস / টেইলস বাছাই ─────────────────────────── */}
+      <div>
+        <p className="text-text-muted text-xs font-mono mb-3 uppercase tracking-widest">
+          আপনার পছন্দ
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          {/* HEADS বাটন */}
+          <button
+            onClick={() => setCurrentChoice('heads')}
+            disabled={isSpinning}
+            className={`
+              relative py-5 rounded-xl border-2 transition-all duration-200
+              flex flex-col items-center gap-2 font-display font-bold text-sm
+              disabled:cursor-not-allowed
+              ${currentChoice === 'heads'
+                ? 'border-neon-green bg-neon-green/10 text-neon-green shadow-neon-green scale-[1.03]'
+                : 'border-border text-text-secondary hover:border-neon-green/40'
+              }
+            `}
+            aria-pressed={currentChoice === 'heads'}
+          >
+            <span className="text-3xl">👑</span>
+            <span>HEADS</span>
+            {currentChoice === 'heads' && (
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-neon-green animate-pulse" />
+            )}
+          </button>
+
+          {/* TAILS বাটন */}
+          <button
+            onClick={() => setCurrentChoice('tails')}
+            disabled={isSpinning}
+            className={`
+              relative py-5 rounded-xl border-2 transition-all duration-200
+              flex flex-col items-center gap-2 font-display font-bold text-sm
+              disabled:cursor-not-allowed
+              ${currentChoice === 'tails'
+                ? 'border-neon-blue bg-neon-blue/10 text-neon-blue shadow-neon-blue scale-[1.03]'
+                : 'border-border text-text-secondary hover:border-neon-blue/40'
+              }
+            `}
+            aria-pressed={currentChoice === 'tails'}
+          >
+            <span className="text-3xl">🦅</span>
+            <span>TAILS</span>
+            {currentChoice === 'tails' && (
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-neon-blue animate-pulse" />
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* ── ② বেট পরিমাণ ───────────────────────────────────── */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-text-muted text-xs font-mono uppercase tracking-widest">বেট পরিমাণ</p>
+          {user && (
+            <p className="text-text-muted text-xs font-mono">
+              ব্যালেন্স: <span className="text-neon-green">${user.balance.toFixed(2)}</span>
+            </p>
+          )}
+        </div>
+
+        {/* পরিমাণ ইনপুট */}
+        <div className="relative mb-2">
+          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted font-mono">$</span>
+          <input
+            type="number"
+            min={0.01}
+            max={user?.balance ?? 1000}
+            step={0.01}
+            value={betAmount}
+            onChange={(e) => setBetAmount(Math.max(0.01, parseFloat(e.target.value) || 0))}
+            disabled={isSpinning}
+            className="input-cyber pl-8 text-right text-lg font-mono disabled:opacity-50"
+            aria-label="বেট পরিমাণ"
+          />
+        </div>
+
+        {/* +/- হেল্পার বাটন */}
+        <div className="flex gap-2 mb-3">
+          {[
+            { label: '½',   action: halfBet },
+            { label: '2×',  action: doubleBet },
+            { label: 'MAX', action: maxBet },
+          ].map(({ label, action }) => (
+            <button
+              key={label}
+              onClick={action}
+              disabled={isSpinning}
+              className="flex-1 py-1.5 rounded-lg border border-border text-text-muted
+                         text-xs font-mono hover:border-neon-green/50 hover:text-neon-green
+                         transition-all duration-150 disabled:opacity-40"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* প্রিসেট বাটন */}
+        <div className="grid grid-cols-3 gap-2">
+          {BET_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              onClick={() => setBetAmount(preset)}
+              disabled={isSpinning || (user ? preset > user.balance : false)}
+              className={`
+                py-1.5 rounded-lg text-xs font-mono border transition-all duration-150
+                disabled:opacity-30 disabled:cursor-not-allowed
+                ${betAmount === preset
+                  ? 'border-neon-green text-neon-green bg-neon-green/10'
+                  : 'border-border text-text-muted hover:border-neon-green/40'
+                }
+              `}
+            >
+              ${preset.toFixed(2)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── ③ FLIP বাটন ─────────────────────────────────────── */}
+      <button
+        onClick={handleFlip}
+        disabled={!canBet || betAmount <= 0 || (user ? betAmount > user.balance : false)}
+        className={`
+          w-full py-5 rounded-xl font-display font-black text-xl tracking-widest
+          transition-all duration-200 relative overflow-hidden
+          disabled:cursor-not-allowed disabled:opacity-40
+          ${isSpinning
+            ? 'bg-border text-text-muted cursor-wait'
+            : 'bg-neon-green text-void hover:shadow-neon-green hover:scale-[1.02] active:scale-[0.98]'
+          }
+        `}
+        aria-live="polite"
+      >
+        {isSpinning ? (
+          <span className="flex items-center justify-center gap-3">
+            <span className="w-5 h-5 border-2 border-text-muted border-t-transparent rounded-full animate-spin" />
+            ঘুরছে...
+          </span>
+        ) : isResult ? (
+          '🔄 আবার খেলুন'
+        ) : (
+          '🪙 FLIP!'
+        )}
+      </button>
+
+      {/* ── ক্লায়েন্ট সিড সেটিং ────────────────────────────── */}
+      <div>
+        <button
+          onClick={() => setShowSeed(!showSeed)}
+          className="text-text-muted text-xs font-mono hover:text-text-secondary transition-colors"
+        >
+          🔐 {showSeed ? 'সিড লুকান' : 'ক্লায়েন্ট সিড পরিবর্তন করুন'}
+        </button>
+
+        {showSeed && (
+          <div className="mt-2 space-y-1">
+            <input
+              className="input-cyber text-xs"
+              value={clientSeed}
+              onChange={(e) => setClientSeed(e.target.value)}
+              placeholder="আপনার কাস্টম সিড"
+              aria-label="ক্লায়েন্ট সিড"
+            />
+            <p className="text-text-muted text-xs font-mono">
+              এই সিড Provably Fair হিসাবের অংশ। পরিবর্তন করলে পরের গেম থেকে কার্যকর হবে।
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

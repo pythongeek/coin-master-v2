@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── বেস স্টাইল ─────────────────────────────────── */
+@layer base {
+  * {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #050508;
+    color: #FFFFFF;
+    font-family: 'Inter', sans-serif;
+  }
+
+  /* স্ক্রলবার স্টাইল */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0D0D14;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #00FF94;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #00D4FF;
+  }
+}
+
+/* ── কাস্টম কম্পোনেন্ট ─────────────────────────── */
+@layer components {
+  /* নিয়ন গ্লো বাটন */
+  .btn-neon {
+    @apply relative px-6 py-3 font-display font-bold text-void
+           bg-neon-green rounded-lg transition-all duration-200
+           hover:shadow-neon-green hover:scale-105 active:scale-95;
+  }
+
+  .btn-neon-outline {
+    @apply relative px-6 py-3 font-display font-bold text-neon-green
+           border border-neon-green rounded-lg transition-all duration-200
+           hover:bg-neon-green hover:text-void hover:shadow-neon-green;
+  }
+
+  /* গ্লাস কার্ড */
+  .glass-card {
+    @apply bg-surface/80 border border-border rounded-xl
+           backdrop-blur-sm;
+  }
+
+  /* নিয়ন টেক্সট */
+  .text-neon {
+    @apply text-neon-green;
+    text-shadow: 0 0 10px rgba(0, 255, 148, 0.7),
+                 0 0 20px rgba(0, 255, 148, 0.5);
+  }
+
+  .text-neon-blue {
+    @apply text-neon-blue;
+    text-shadow: 0 0 10px rgba(0, 212, 255, 0.7),
+                 0 0 20px rgba(0, 212, 255, 0.5);
+  }
+
+  /* ডিসপ্লে হেডিং */
+  .heading-display {
+    @apply font-display font-bold tracking-wider uppercase;
+  }
+
+  /* ব্যালেন্স নম্বর */
+  .balance-number {
+    @apply font-mono font-bold text-neon-green tabular-nums;
+  }
+
+  /* ইনপুট ফিল্ড */
+  .input-cyber {
+    @apply w-full px-4 py-3 bg-void border border-border rounded-lg
+           text-text-primary font-mono placeholder-text-muted
+           focus:outline-none focus:border-neon-green focus:shadow-neon-green
+           transition-all duration-200;
+  }
+}
+
+/* ── ইউটিলিটি ──────────────────────────────────── */
+@layer utilities {
+  /* নিয়ন বর্ডার অ্যানিমেশন */
+  .border-neon-animated {
+    animation: borderGlow 2s ease-in-out infinite;
+  }
+
+  @keyframes borderGlow {
+    0%, 100% { border-color: #00FF94; box-shadow: 0 0 10px rgba(0, 255, 148, 0.3); }
+    50%       { border-color: #00D4FF; box-shadow: 0 0 20px rgba(0, 212, 255, 0.5); }
+  }
+
+  /* ক্রিপ্টো রেইন ড্রপ */
+  .rain-particle {
+    animation: rainDrop linear forwards;
+    position: fixed;
+    pointer-events: auto;
+    cursor: pointer;
+    font-size: 1.5rem;
+    z-index: 1000;
+  }
+
+  @keyframes rainDrop {
+    0%   { transform: translateY(-50px); opacity: 1; }
+    100% { transform: translateY(110vh); opacity: 0.3; }
+  }
+}
