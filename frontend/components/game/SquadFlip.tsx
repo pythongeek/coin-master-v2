@@ -18,6 +18,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { Users, X, Trophy, XCircle, RotateCcw, Link2, Check, Loader2, Coins, Plus } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { getSocket } from '@/lib/socket';
 
@@ -124,8 +125,8 @@ export default function SquadFlip() {
 
   if (!user) {
     return (
-      <div className="glass-card p-5 text-center border-neon-purple/20">
-        <span className="text-3xl mb-2 block">👥</span>
+      <div className="glass-card p-5 text-center border-brand-maroon/20">
+        <Users size={26} className="mx-auto mb-2 text-text-muted" />
         <p className="text-text-muted text-xs font-mono">স্কোয়াড ফ্লিপ খেলতে লগইন করুন</p>
       </div>
     );
@@ -138,38 +139,47 @@ export default function SquadFlip() {
     // ── রেজাল্ট এসে গেলে আলাদা কার্ড দেখাও ──────────────────
     if (squadResult) {
       return (
-        <div className={`glass-card p-6 text-center border-2 ${
-          squadResult.won ? 'border-neon-green bg-neon-green/10' : 'border-neon-red bg-neon-red/10'
+        <div className={`glass-card-raised p-6 text-center border ${
+          squadResult.won ? 'border-brand-green/50 shadow-brand-green' : 'border-brand-red/50 shadow-brand-red'
         }`}>
-          <div className="text-5xl mb-2">{squadResult.won ? '🎉' : '😔'}</div>
-          <div className={`heading-display text-xl mb-1 ${squadResult.won ? 'text-neon-green' : 'text-neon-red'}`}>
+          <div className={`inline-flex items-center justify-center w-14 h-14 rounded-full mb-3 ${
+            squadResult.won ? 'bg-brand-green/15 text-brand-green' : 'bg-brand-red/15 text-brand-red'
+          }`}>
+            {squadResult.won ? <Trophy size={28} /> : <XCircle size={28} />}
+          </div>
+          <div className={`heading-display text-xl mb-1 ${squadResult.won ? 'text-brand-green' : 'text-brand-red'}`}>
             {squadResult.won ? 'স্কোয়াড জিতেছে!' : 'স্কোয়াড হেরেছে!'}
           </div>
           <div className="text-text-secondary font-mono text-sm mb-3">
-            {squadResult.result === 'heads' ? '👑 HEADS' : '🦅 TAILS'} | {squadResult.memberCount} জন সদস্য
+            {squadResult.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'} | {squadResult.memberCount} জন সদস্য
           </div>
           {squadResult.won && (
-            <div className="text-neon-green font-mono font-bold text-2xl mb-1">
+            <div className="text-brand-green font-mono font-semibold text-2xl mb-1">
               +${squadResult.perPersonPayout.toFixed(2)} <span className="text-sm">/ জন</span>
             </div>
           )}
           <button
             onClick={leaveSquad}
-            className="mt-4 px-5 py-2 rounded-lg bg-neon-purple/20 border border-neon-purple/50
-                       text-neon-purple text-sm font-mono hover:bg-neon-purple/30 transition-all"
+            className="mt-4 flex items-center gap-1.5 mx-auto px-5 py-2 rounded-lg bg-brand-maroon/15 border border-brand-maroon/40
+                       text-brand-maroon text-sm font-mono hover:bg-brand-maroon/25 transition-all"
           >
-            🔄 নতুন স্কোয়াড তৈরি করুন
+            <RotateCcw size={13} />
+            নতুন স্কোয়াড তৈরি করুন
           </button>
         </div>
       );
     }
 
     return (
-      <div className="glass-card p-5 border-neon-purple/30 bg-squad-gradient/5">
+      <div className="glass-card p-5 border-brand-maroon/25 bg-squad-gradient/[0.04]">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="heading-display text-sm text-neon-purple">👥 স্কোয়াড ফ্লিপ</h3>
-          <button onClick={leaveSquad} className="text-text-muted hover:text-neon-red text-xs">
-            ✕ ছেড়ে দিন
+          <h3 className="heading-display text-sm text-brand-maroon flex items-center gap-1.5">
+            <Users size={14} />
+            স্কোয়াড ফ্লিপ
+          </h3>
+          <button onClick={leaveSquad} className="flex items-center gap-1 text-text-muted hover:text-brand-red text-xs">
+            <X size={12} />
+            ছেড়ে দিন
           </button>
         </div>
 
@@ -192,13 +202,13 @@ export default function SquadFlip() {
           {Array.from({ length: activeSquad.maxMembers }).map((_, i) => (
             <div
               key={i}
-              className={`w-10 h-10 rounded-full border-2 flex items-center justify-center text-lg
+              className={`w-10 h-10 rounded-full border flex items-center justify-center
                 ${i < activeSquad.memberCount
-                  ? 'border-neon-purple bg-neon-purple/20'
+                  ? 'border-brand-maroon bg-brand-maroon/15 text-brand-maroon'
                   : 'border-dashed border-border text-text-muted'
                 }`}
             >
-              {i < activeSquad.memberCount ? '👤' : '+'}
+              {i < activeSquad.memberCount ? <Users size={14} /> : <Plus size={14} />}
             </div>
           ))}
         </div>
@@ -207,11 +217,11 @@ export default function SquadFlip() {
         <div className="grid grid-cols-2 gap-2 mb-4">
           <div className="bg-void rounded-lg p-2 text-center">
             <div className="text-text-muted text-xs font-mono">প্রতিজনের বেট</div>
-            <div className="text-neon-purple font-mono font-bold">${activeSquad.betAmount.toFixed(2)}</div>
+            <div className="text-brand-maroon font-mono font-bold">${activeSquad.betAmount.toFixed(2)}</div>
           </div>
           <div className="bg-void rounded-lg p-2 text-center">
             <div className="text-text-muted text-xs font-mono">মোট পুল</div>
-            <div className="text-neon-gold font-mono font-bold">
+            <div className="text-brand-gold font-mono font-bold">
               ${(activeSquad.betAmount * activeSquad.memberCount).toFixed(2)}
             </div>
           </div>
@@ -219,34 +229,37 @@ export default function SquadFlip() {
 
         {/* জিতলে পাবে */}
         {activeSquad.memberCount >= 2 && (
-          <div className="bg-neon-green/10 border border-neon-green/30 rounded-lg p-2 text-center mb-4">
+          <div className="bg-brand-green/10 border border-brand-green/30 rounded-lg p-2 text-center mb-4">
             <span className="text-text-muted text-xs font-mono">জিতলে প্রতিজন পাবে: </span>
-            <span className="text-neon-green font-mono font-bold">${perPersonPayout}</span>
+            <span className="text-brand-green font-mono font-bold">${perPersonPayout}</span>
           </div>
         )}
 
         {/* ইনভাইট লিংক */}
         <button
           onClick={copyInviteLink}
-          className="w-full py-2 rounded-lg border border-neon-purple/40 text-neon-purple
-                     text-xs font-mono hover:bg-neon-purple/10 transition-all mb-3"
+          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-brand-maroon/35 text-brand-maroon
+                     text-xs font-mono hover:bg-brand-maroon/10 transition-all mb-3"
         >
-          {copied ? '✅ কপি হয়েছে!' : '🔗 ইনভাইট লিংক কপি করুন'}
+          {copied ? <Check size={13} /> : <Link2 size={13} />}
+          {copied ? 'কপি হয়েছে' : 'ইনভাইট লিংক কপি করুন'}
         </button>
 
         {/* ফ্লিপ বাটন — ২+ জন হলেই সক্রিয় */}
         <button
           onClick={startFlip}
           disabled={activeSquad.memberCount < 2 || flipping}
-          className="w-full py-3 rounded-xl bg-squad-gradient text-void font-display font-black
-                     text-sm tracking-widest hover:scale-[1.02] transition-all
-                     disabled:opacity-40 disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-squad-gradient text-white font-display font-semibold
+                     text-sm tracking-wide shadow-brand-maroon hover:-translate-y-0.5 transition-all
+                     disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0"
         >
+          {flipping && <Loader2 size={16} className="animate-spin" />}
+          {!flipping && <Coins size={16} />}
           {flipping
-            ? '⏳ কয়েন ঘুরছে...'
+            ? 'কয়েন ঘুরছে...'
             : activeSquad.memberCount < 2
-            ? '⏳ আরো সদস্যের অপেক্ষায়...'
-            : '🪙 স্কোয়াড ফ্লিপ শুরু করুন!'}
+            ? 'আরো সদস্যের অপেক্ষায়...'
+            : 'স্কোয়াড ফ্লিপ শুরু করুন'}
         </button>
       </div>
     );
@@ -254,10 +267,10 @@ export default function SquadFlip() {
 
   // ── স্কোয়াড তৈরি বা যোগ দেওয়ার ফর্ম ───────────────────────
   return (
-    <div className="glass-card p-5 border-neon-purple/20">
+    <div className="glass-card p-5 border-brand-maroon/20">
       <div className="flex items-center gap-2 mb-1">
-        <span className="text-xl">👥</span>
-        <h3 className="heading-display text-sm text-neon-purple">স্কোয়াড ফ্লিপ</h3>
+        <Users size={16} className="text-brand-maroon" />
+        <h3 className="heading-display text-sm text-brand-maroon">স্কোয়াড ফ্লিপ</h3>
       </div>
       <p className="text-text-muted text-xs font-mono mb-4">
         বন্ধুদের সাথে একসাথে বেট করুন — জিতলে সমান ভাগ!
@@ -282,18 +295,19 @@ export default function SquadFlip() {
               onChange={(e) => setSquadChoice(e.target.value as 'heads' | 'tails')}
               className="input-cyber text-sm py-2 w-28"
             >
-              <option value="heads">👑 Heads</option>
-              <option value="tails">🦅 Tails</option>
+              <option value="heads">🪷 Heads</option>
+              <option value="tails">🐯 Tails</option>
             </select>
           </div>
           <button
             onClick={createSquad}
             disabled={creating || squadBetAmount <= 0}
-            className="w-full py-2 rounded-lg bg-neon-purple/20 border border-neon-purple/50
-                       text-neon-purple text-sm font-mono hover:bg-neon-purple/30 transition-all
+            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-brand-maroon/15 border border-brand-maroon/40
+                       text-brand-maroon text-sm font-mono hover:bg-brand-maroon/25 transition-all
                        disabled:opacity-40"
           >
-            {creating ? '⏳ তৈরি হচ্ছে...' : '+ স্কোয়াড তৈরি করুন'}
+            {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+            {creating ? 'তৈরি হচ্ছে...' : 'স্কোয়াড তৈরি করুন'}
           </button>
         </div>
 
@@ -315,8 +329,8 @@ export default function SquadFlip() {
           <button
             onClick={joinSquad}
             disabled={!joinCode.trim()}
-            className="px-4 py-2 rounded-lg border border-neon-blue/50 text-neon-blue text-sm
-                       font-mono hover:bg-neon-blue/10 transition-all disabled:opacity-40"
+            className="px-4 py-2 rounded-lg border border-brand-info/50 text-brand-info text-sm
+                       font-mono hover:bg-brand-info/10 transition-all disabled:opacity-40"
           >
             যোগ দিন
           </button>

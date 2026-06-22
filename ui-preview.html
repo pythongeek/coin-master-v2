@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<title>CryptoFlip — UI প্রিভিউ (Stake-grade redesign)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#0B0E11; --surface:#141920; --surface2:#1B212B; --border:#262C36; --border2:#343C49;
+    --green:#00C566; --green-dim:#0A9A52;
+    --red:#E8384F; --red-dim:#B82B3D;
+    --gold:#E8A93D; --gold-dim:#C28A28;
+    --maroon:#A8395C; --maroon-dim:#822C47;
+    --info:#5B8DEF;
+    --txt:#F4F6F8; --txt2:#9AA3B2; --txt3:#5B6472;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--void); color:var(--txt); font-family:'Inter',sans-serif;
+    min-height:100vh; padding:24px;
+    background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,197,102,0.05), transparent);
+  }
+  .disp{font-family:'Space Grotesk',sans-serif; font-weight:600}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .wrap{max-width:1120px; margin:0 auto}
+
+  svg.icon{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-0.15em}
+
+  /* ── elevation system — real shadows, not glow ── */
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    box-shadow:0 2px 8px rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.04) inset;
+    background-image:linear-gradient(180deg, rgba(255,255,255,.025) 0%, rgba(255,255,255,0) 18%);
+  }
+  .card-raised{
+    background:var(--surface2); border:1px solid var(--border2); border-radius:14px;
+    box-shadow:0 8px 24px rgba(0,0,0,.5), 0 12px 40px rgba(0,0,0,.3), 0 1px 0 rgba(255,255,255,.05) inset;
+  }
+
+  /* ── tabs ── */
+  .tabs{display:flex; gap:8px; margin-bottom:20px}
+  .tab{
+    display:flex; align-items:center; gap:7px;
+    padding:9px 18px; border-radius:9px; border:1px solid var(--border);
+    background:var(--surface); color:var(--txt2); font-family:'JetBrains Mono',monospace;
+    font-size:12px; cursor:pointer;
+  }
+  .tab.active{background:var(--maroon); border-color:var(--maroon); color:#fff; font-weight:600}
+  .view{display:none} .view.active{display:block; animation:fadein .25s ease}
+  @keyframes fadein{from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)}}
+
+  /* ── navbar ── */
+  .nav{display:flex; justify-content:space-between; align-items:center; padding:14px 20px; margin-bottom:16px}
+  .logo{display:flex; align-items:center; gap:9px; font-size:18px}
+  .logo .mark{width:30px;height:30px;border-radius:9px;background:rgba(0,197,102,.1); color:var(--green); display:flex;align-items:center;justify-content:center}
+  .balance{text-align:right}
+  .balance .lbl{font-size:10px; color:var(--txt3); letter-spacing:.06em; text-transform:uppercase}
+  .balance .num{font-family:'JetBrains Mono',monospace; font-weight:600; color:var(--green); font-size:17px}
+  .pill{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--txt2)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--green); animation:pulse 2.4s infinite}
+  @keyframes pulse{50%{opacity:.45}}
+
+  /* ── grid layout ── */
+  .gamegrid{display:grid; grid-template-columns:2fr 1fr; gap:16px}
+  @media(max-width:760px){.gamegrid{grid-template-columns:1fr}}
+
+  /* ── coin card — REAL 3D flip with two faces ── */
+  .coinbox{position:relative; height:300px; display:flex; align-items:center; justify-content:center; margin-bottom:16px; overflow:hidden}
+  .badge-top{position:absolute; top:14px; left:14px; display:flex; align-items:center; gap:6px; font-size:11px; padding:6px 12px; border-radius:20px; border:1px solid var(--border); background:var(--void); color:var(--gold)}
+  .badge-edge{position:absolute; top:14px; right:14px; font-size:11px; padding:5px 10px; border-radius:6px; border:1px solid var(--border); color:var(--txt3); font-family:'JetBrains Mono',monospace}
+
+  .coin-scene{ perspective:900px; width:160px; height:160px; }
+  .coin-3d{
+    position:relative; width:100%; height:100%; transform-style:preserve-3d;
+    animation:flip3d 3.2s linear infinite;
+  }
+  @keyframes flip3d{ from{transform:rotateY(0)} to{transform:rotateY(360deg)} }
+  .coin-face{
+    position:absolute; inset:0; border-radius:50%; backface-visibility:hidden;
+    display:flex; align-items:center; justify-content:center; font-size:54px;
+    border:3px solid var(--gold);
+    box-shadow:0 14px 30px rgba(0,0,0,.55), inset 0 2px 6px rgba(255,255,255,.15), inset 0 -6px 14px rgba(0,0,0,.35);
+  }
+  .coin-face.front{ background:linear-gradient(160deg,#0FDD78,var(--green-dim)); transform:rotateY(0deg); }
+  .coin-face.back{ background:linear-gradient(160deg,#C24C72,var(--maroon-dim)); transform:rotateY(180deg); }
+  .coin-shadow{
+    position:absolute; bottom:18px; width:120px; height:18px; border-radius:50%;
+    background:radial-gradient(ellipse, rgba(0,0,0,.5), transparent 70%);
+  }
+
+  /* ── result card ── */
+  .resultcard{padding:22px; text-align:center; border:1px solid var(--green); margin-bottom:16px}
+  .resultcard .ic-circ{width:52px;height:52px;border-radius:50%;background:rgba(0,197,102,.12); color:var(--green); display:flex;align-items:center;justify-content:center; margin:0 auto 10px; font-size:24px}
+  .resultcard .title{font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:19px; color:var(--green); margin-bottom:3px}
+  .resultcard .amt{font-family:'JetBrains Mono',monospace; font-weight:600; font-size:22px; color:var(--green)}
+  .resultcard .streak{display:flex; align-items:center; justify-content:center; gap:5px; color:var(--gold); font-size:12px; margin-top:8px; font-family:'JetBrains Mono',monospace}
+
+  /* ── mode toggle ── */
+  .modetoggle{display:flex; gap:8px; margin-bottom:16px}
+  .modebtn{flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px; border-radius:9px; font-size:12px; font-family:'JetBrains Mono',monospace}
+  .modebtn.on{background:rgba(0,197,102,.12); border:1px solid rgba(0,197,102,.35); color:var(--green)}
+  .modebtn.off{border:1px solid var(--border); color:var(--txt3)}
+
+  /* ── bet controls ── */
+  .betbox{padding:20px; margin-bottom:16px}
+  .lbl-up{font-size:10px; color:var(--txt3); text-transform:uppercase; letter-spacing:.1em; margin-bottom:10px; font-family:'JetBrains Mono',monospace}
+  .choices{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px}
+  .choice{padding:18px; border-radius:11px; text-align:center; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:13px; border:1px solid var(--border)}
+  .choice.on.h{border-color:var(--green); background:rgba(0,197,102,.07); color:var(--green); box-shadow:0 4px 14px rgba(0,197,102,.18)}
+  .choice.off{color:var(--txt2)}
+  .choice .ic{font-size:28px; display:block; margin-bottom:6px}
+  .amtbox{background:var(--void); border:1px solid var(--border); border-radius:10px; padding:12px 14px; font-family:'JetBrains Mono',monospace; font-size:17px; text-align:right; color:var(--txt); margin-bottom:10px; box-shadow:inset 0 1px 2px rgba(0,0,0,.4)}
+  .helpers{display:flex; gap:8px; margin-bottom:10px}
+  .helperbtn{flex:1; text-align:center; padding:6px; border:1px solid var(--border); border-radius:7px; font-size:11px; color:var(--txt3); font-family:'JetBrains Mono',monospace}
+  .presets{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:18px}
+  .preset{text-align:center; padding:6px; border:1px solid var(--border); border-radius:7px; font-size:11px; color:var(--txt3); font-family:'JetBrains Mono',monospace}
+  .preset.sel{border-color:var(--green); color:var(--green)}
+  .flipbtn{
+    width:100%; padding:15px; border-radius:11px;
+    background:var(--green); background-image:linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,0) 55%);
+    color:var(--void); text-align:center; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:16px;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    box-shadow:0 4px 14px rgba(0,197,102,.28), 0 1px 0 rgba(255,255,255,.15) inset;
+  }
+
+  /* ── PF box ── */
+  .pfbox{padding:15px 20px; display:flex; justify-content:space-between; align-items:center}
+  .pfbox .l{display:flex; align-items:center; gap:10px}
+  .pfbox .ic-circ{width:32px;height:32px;border-radius:8px;background:rgba(0,197,102,.1); color:var(--green); display:flex;align-items:center;justify-content:center}
+  .pfbox .t1{font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:12px; color:var(--green)}
+  .pfbox .t2{font-size:11px; color:var(--txt3); font-family:'JetBrains Mono',monospace}
+
+  /* ── chat ── */
+  .chat{display:flex; flex-direction:column; height:600px}
+  .chathead{display:flex; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--border)}
+  .chathead .l{display:flex; align-items:center; gap:7px; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:12px; color:var(--txt)}
+  .rain{margin:12px; padding:12px; border:1px solid rgba(232,169,61,.35); background:rgba(232,169,61,.06); border-radius:11px}
+  .rain .top{display:flex; justify-content:space-between; align-items:center}
+  .rain .t1{display:flex; align-items:center; gap:5px; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:11px; color:var(--gold)}
+  .rain .t2{font-size:10px; color:var(--txt3); font-family:'JetBrains Mono',monospace; margin-top:3px}
+  .claimbtn{display:flex; align-items:center; gap:5px; padding:7px 13px; border-radius:8px; background:var(--gold); color:var(--void); font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:11px}
+  .msgs{flex:1; padding:10px 14px; display:flex; flex-direction:column; gap:5px; overflow:hidden}
+  .msg{font-size:12px; font-family:'JetBrains Mono',monospace; padding:5px 8px; border-radius:5px; line-height:1.5}
+  .msg .u{color:var(--info); font-weight:600}
+  .msg.win{background:rgba(0,197,102,.06); border-left:2px solid var(--green); color:var(--green)}
+  .msg.rain{background:rgba(232,169,61,.06); border-left:2px solid var(--gold); color:var(--gold)}
+  .chatinput{display:flex; gap:8px; padding:12px 14px; border-top:1px solid var(--border)}
+  .chatinput input{flex:1; background:var(--void); border:1px solid var(--border); border-radius:8px; padding:9px 12px; color:var(--txt2); font-size:12px}
+  .sendbtn{width:36px;height:36px;border-radius:8px;background:rgba(0,197,102,.12); border:1px solid rgba(0,197,102,.3); color:var(--green); display:flex;align-items:center;justify-content:center}
+
+  /* ── dashboard ── */
+  .statgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px}
+  @media(max-width:760px){.statgrid{grid-template-columns:repeat(2,1fr)}}
+  .stat{padding:16px}
+  .stat .top{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; color:var(--txt3)}
+  .stat .lbl{font-size:10px; color:var(--txt3); font-family:'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:.06em}
+  .stat .val{font-family:'JetBrains Mono',monospace; font-weight:600; font-size:21px}
+  .stat .sub{font-size:11px; color:var(--txt3); margin-top:4px; font-family:'JetBrains Mono',monospace}
+  .stat.green{border-color:rgba(0,197,102,.22)} .stat.green .val,.stat.green .top{color:var(--green)}
+  .stat.blue{border-color:rgba(91,141,239,.22)} .stat.blue .val,.stat.blue .top{color:var(--info)}
+  .stat.purple{border-color:rgba(168,57,92,.22)} .stat.purple .val,.stat.purple .top{color:var(--maroon)}
+  .stat.gold{border-color:rgba(232,169,61,.22)} .stat.gold .val,.stat.gold .top{color:var(--gold)}
+  .stat.red{border-color:rgba(232,56,79,.22)} .stat.red .val,.stat.red .top{color:var(--red)}
+
+  .chartbox{padding:18px; margin-bottom:16px}
+  .charthead{display:flex; justify-content:space-between; margin-bottom:10px}
+  .charthead .t{font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:13px}
+  .charthead .s{font-size:11px; color:var(--txt3); font-family:'JetBrains Mono',monospace}
+
+  table{width:100%; border-collapse:collapse; font-size:12px; font-family:'JetBrains Mono',monospace}
+  th{text-align:left; padding:9px 14px; color:var(--txt3); font-weight:400; border-bottom:1px solid var(--border); font-size:10px; text-transform:uppercase; letter-spacing:.05em}
+  td{padding:10px 14px; border-bottom:1px solid rgba(38,44,54,.6)}
+  .win-tag{display:inline-flex; align-items:center; gap:4px; background:rgba(0,197,102,.13); color:var(--green); padding:2px 8px; border-radius:5px; font-weight:600; font-size:11px}
+  .lose-tag{display:inline-flex; align-items:center; gap:4px; background:rgba(232,56,79,.13); color:var(--red); padding:2px 8px; border-radius:5px; font-weight:600; font-size:11px}
+
+  /* ── admin ── */
+  .admtabs{display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap}
+  .admtab{display:flex; align-items:center; gap:6px; padding:9px 16px; border-radius:8px; font-size:12px; font-family:'JetBrains Mono',monospace; border:1px solid var(--border); color:var(--txt2)}
+  .admtab.on{background:var(--maroon); color:#fff; font-weight:600; border-color:var(--maroon)}
+  .calcbox{padding:16px; margin-bottom:16px; border:1px solid rgba(232,169,61,.25); background:rgba(232,169,61,.03)}
+  .calchead{display:flex; align-items:center; gap:7px; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:12px; color:var(--gold)}
+  .calcgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:10px}
+  .calcitem{background:var(--void); border-radius:8px; padding:10px; text-align:center}
+  .calcitem .l{font-size:10px; color:var(--txt3); font-family:'JetBrains Mono',monospace}
+  .calcitem .v{font-family:'JetBrains Mono',monospace; font-weight:600; font-size:16px}
+
+  .cfgrow{display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border:1px solid var(--border); border-radius:11px; margin-bottom:10px}
+  .cfgrow .name{font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:12px}
+  .cfgrow .desc{font-size:10px; color:var(--txt3); margin-top:3px; font-family:'JetBrains Mono',monospace}
+  .cfgval{background:var(--void); border:1px solid var(--maroon); border-radius:6px; padding:6px 12px; font-family:'JetBrains Mono',monospace; color:var(--maroon); font-size:13px}
+
+  .toggle{width:40px; height:22px; border-radius:11px; background:var(--green); position:relative; box-shadow:0 1px 0 rgba(255,255,255,.15) inset}
+  .toggle .knob{width:16px; height:16px; border-radius:50%; background:var(--void); position:absolute; top:3px; right:3px}
+  .toggle.off{background:var(--border)}
+  .toggle.off .knob{right:auto; left:3px}
+
+  footer{text-align:center; color:var(--txt3); font-size:11px; margin-top:24px; font-family:'JetBrains Mono',monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="tabs">
+    <div class="tab active" onclick="sw('game',this)">[ico:gamepad] GAME পেজ</div>
+    <div class="tab" onclick="sw('dash',this)">[ico:chart] DASHBOARD</div>
+    <div class="tab" onclick="sw('admin',this)">[ico:settings] ADMIN PANEL</div>
+  </div>
+
+  <!-- ════════════ GAME VIEW ════════════ -->
+  <div id="game" class="view active">
+    <div class="card nav">
+      <div class="logo disp"><span class="mark">[ico:coins]</span>CRYPTO<span style="color:var(--green)">FLIP</span></div>
+      <div style="display:flex; align-items:center; gap:18px">
+        <div class="balance"><div class="lbl mono">ব্যালেন্স</div><div class="num">$142.50</div></div>
+        <div style="width:1px;height:30px;background:var(--border)"></div>
+        <div class="balance">
+          <div class="lbl mono" style="text-transform:none">rakib_99</div>
+          <div class="pill" style="justify-content:flex-end"><span class="dot"></span>312 অনলাইন</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="gamegrid">
+      <div>
+        <div class="card coinbox">
+          <div class="badge-top mono">[ico:loader] ঘুরছে...</div>
+          <div class="badge-edge">হাউজ এজ: 2%</div>
+          <div class="coin-scene">
+            <div class="coin-3d">
+              <div class="coin-face front">🪷</div>
+              <div class="coin-face back">🐯</div>
+            </div>
+          </div>
+          <div class="coin-shadow"></div>
+        </div>
+
+        <div class="card resultcard">
+          <div class="ic-circ">[ico:trophy]</div>
+          <div class="title">জিতেছেন!</div>
+          <div style="font-size:13px;color:var(--txt2); margin-bottom:8px">🪷 HEADS</div>
+          <div class="amt">+$1.96</div>
+          <div class="streak">[ico:flame] 3 ধারাবাহিক জয়</div>
+        </div>
+
+        <div class="modetoggle">
+          <div class="card modebtn on">[ico:dice] একক বেট</div>
+          <div class="card modebtn off">[ico:users] স্কোয়াড ফ্লিপ</div>
+        </div>
+
+        <div class="card betbox">
+          <div class="lbl-up">আপনার পছন্দ</div>
+          <div class="choices">
+            <div class="choice on h"><span class="ic">🪷</span>HEADS</div>
+            <div class="choice off"><span class="ic">🐯</span>TAILS</div>
+          </div>
+          <div class="lbl-up">বেট পরিমাণ</div>
+          <div class="amtbox">$ 1.00</div>
+          <div class="helpers">
+            <div class="helperbtn">½</div><div class="helperbtn">2×</div><div class="helperbtn">MAX</div>
+          </div>
+          <div class="presets">
+            <div class="preset sel">$1.00</div><div class="preset">$5.00</div><div class="preset">$10.00</div>
+          </div>
+          <div class="flipbtn">[ico:coins] FLIP</div>
+        </div>
+
+        <div class="card pfbox">
+          <div class="l"><div class="ic-circ">[ico:shield]</div><div><div class="t1">PROVABLY FAIR</div><div class="t2">আপনার গেম যাচাই করুন</div></div></div>
+          <div class="mono" style="color:var(--txt3)">[ico:chevdown]</div>
+        </div>
+      </div>
+
+      <div class="card chat">
+        <div class="chathead">
+          <div class="l">[ico:msg] LIVE CHAT</div>
+          <div class="mono" style="font-size:11px;color:var(--txt3); display:flex; align-items:center; gap:5px">[ico:users] 312</div>
+        </div>
+        <div class="rain">
+          <div class="top">
+            <div><div class="t1">[ico:rain] CRYPTO RAIN চলছে</div><div class="t2">মোট $5.00 | 8/50 ক্লেইম</div></div>
+            <div class="claimbtn">[ico:check] ক্লেইম</div>
+          </div>
+        </div>
+        <div class="msgs">
+          <div class="msg"><span class="u">sumaiya_k:</span> ভাই দারুণ স্ট্রিক চলছে!</div>
+          <div class="msg win">rakib_99 জিতেছে! +$1.96 | 3 ধারাবাহিক জয়</div>
+          <div class="msg"><span class="u">player_a3f2:</span> স্কোয়াড খেলবে কেউ?</div>
+          <div class="msg rain">CRYPTO RAIN! rakib_99-এর 5 জয়ের কারণে $5.00 ছাড়া হচ্ছে</div>
+          <div class="msg"><span class="u">tanvir_x:</span> জয়েন করলাম ভাই</div>
+          <div class="msg"><span class="u">nafisa22:</span> হাউজ এজ মাত্র ২%, ভালোই</div>
+        </div>
+        <div class="chatinput"><input placeholder="বার্তা লিখুন..." disabled><div class="sendbtn">[ico:send]</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ DASHBOARD VIEW ════════════ -->
+  <div id="dash" class="view">
+    <div class="card nav">
+      <div style="display:flex; align-items:center; gap:11px">
+        <div style="width:38px;height:38px;border-radius:10px;background:rgba(91,141,239,.1); color:var(--info); display:flex;align-items:center;justify-content:center">[ico:chart]</div>
+        <div>
+          <div class="disp" style="font-size:16px">আমার ড্যাশবোর্ড</div>
+          <div class="mono" style="font-size:10px;color:var(--txt3)">rakib_99-এর গেমিং পরিসংখ্যান</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statgrid">
+      <div class="card stat green"><div class="top"><span class="lbl">ব্যালেন্স</span>[ico:wallet]</div><div class="val">$142.50</div><div class="sub">বর্তমান ওয়ালেট</div></div>
+      <div class="card stat blue"><div class="top"><span class="lbl">মোট বেট</span>[ico:dice]</div><div class="val">312</div><div class="sub">186জয় / 126হার</div></div>
+      <div class="card stat green"><div class="top"><span class="lbl">জয়ের হার</span>[ico:bars]</div><div class="val">59.6%</div><div class="sub">ভালো চলছে</div></div>
+      <div class="card stat purple"><div class="top"><span class="lbl">মোট বাজি</span>[ico:coins]</div><div class="val">$890.00</div><div class="sub">সব বেটের সমষ্টি</div></div>
+      <div class="card stat green"><div class="top"><span class="lbl">নেট লাভ</span>[ico:trendup]</div><div class="val">+$42.50</div><div class="sub">মোট লাভ</div></div>
+      <div class="card stat gold"><div class="top"><span class="lbl">সর্বোচ্চ জয়</span>[ico:trophy]</div><div class="val">$19.60</div><div class="sub">একক বেটে সর্বোচ্চ</div></div>
+    </div>
+
+    <div class="card chartbox">
+      <div class="charthead"><span class="t">লাভ / লোকসান চার্ট</span><span class="s">শেষ ৩০ দিন · ক্রমবর্ধমান</span></div>
+      <svg viewBox="0 0 600 140" style="width:100%">
+        <line x1="40" y1="70" x2="580" y2="70" stroke="#343C49" stroke-width="1" stroke-dasharray="4 4"/>
+        <path d="M40,100 L120,90 L200,95 L280,60 L360,50 L440,35 L520,25 L580,20 L580,70 L40,70 Z" fill="rgba(0,197,102,.07)"/>
+        <path d="M40,100 L120,90 L200,95 L280,60 L360,50 L440,35 L520,25 L580,20" fill="none" stroke="#00C566" stroke-width="2"/>
+      </svg>
+    </div>
+
+    <div class="card" style="overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:13px">বেট ইতিহাস</div>
+      <table>
+        <tr><th>সময়</th><th>পছন্দ</th><th>ফলাফল</th><th>বেট</th><th>পেআউট</th></tr>
+        <tr><td>20 Jun, 14:32</td><td>🪷 H</td><td><span class="win-tag">[ico:check] জয়</span></td><td>$1.00</td><td style="color:var(--green)">+$1.96</td></tr>
+        <tr><td>20 Jun, 14:30</td><td>🐯 T</td><td><span class="lose-tag">[ico:x] হার</span></td><td>$2.00</td><td style="color:var(--red)">-$2.00</td></tr>
+        <tr><td>20 Jun, 14:28</td><td>🪷 H</td><td><span class="win-tag">[ico:check] জয়</span></td><td>$1.00</td><td style="color:var(--green)">+$1.96</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ════════════ ADMIN VIEW ════════════ -->
+  <div id="admin" class="view">
+    <div class="card nav">
+      <div style="display:flex; align-items:center; gap:11px">
+        <div style="width:38px;height:38px;border-radius:10px;background:rgba(168,57,92,.1); color:var(--maroon); display:flex;align-items:center;justify-content:center">[ico:settings]</div>
+        <div class="disp" style="font-size:16px">Admin Panel</div>
+      </div>
+      <div class="pill"><span class="dot"></span>সিস্টেম চালু আছে</div>
+    </div>
+
+    <div class="admtabs">
+      <div class="admtab on">[ico:chart] লাইভ স্ট্যাটস</div>
+      <div class="admtab">[ico:settings] গেম কনফিগ</div>
+      <div class="admtab">[ico:users] ইউজার</div>
+      <div class="admtab">[ico:shield] সিকিউরিটি</div>
+    </div>
+
+    <div class="statgrid">
+      <div class="card stat blue"><div class="top"><span class="lbl">মোট ইউজার</span>[ico:users]</div><div class="val">1,284</div><div class="sub">+47 আজ</div></div>
+      <div class="card stat green"><div class="top"><span class="lbl">বেট ভলিউম</span>[ico:banknote]</div><div class="val">$94,320</div><div class="sub">আজ: $3,840</div></div>
+      <div class="card stat gold"><div class="top"><span class="lbl">হাউজ প্রফিট</span>[ico:landmark]</div><div class="val">$1,886</div><div class="sub">সর্বমোট নেট আয়</div></div>
+      <div class="card stat purple"><div class="top"><span class="lbl">আজকের বেট</span>[ico:dice]</div><div class="val">612</div><div class="sub">সর্বমোট: 18,430</div></div>
+    </div>
+
+    <div class="card calcbox">
+      <div class="calchead">[ico:calc] পেআউট ক্যালকুলেটর</div>
+      <div class="calcgrid">
+        <div class="calcitem"><div class="l">হাউজ এজ</div><div class="v" style="color:var(--gold)">2.0%</div></div>
+        <div class="calcitem"><div class="l">মাল্টিপ্লায়ার</div><div class="v" style="color:var(--green)">1.96×</div></div>
+        <div class="calcitem"><div class="l">$100 বেটে জয়</div><div class="v" style="color:var(--info)">$196.00</div></div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:16px">
+      <div class="cfgrow">
+        <div><div class="name">হাউজ এজ</div><div class="desc">প্ল্যাটফর্মের কমিশন পার্সেন্ট</div></div>
+        <div class="cfgval">2.0 %</div>
+      </div>
+      <div class="cfgrow">
+        <div><div class="name">রেইন ট্রিগার স্ট্রিক</div><div class="desc">টানা কতবার জিতলে Crypto Rain শুরু হবে</div></div>
+        <div class="cfgval">5 বার</div>
+      </div>
+      <div class="cfgrow">
+        <div><div class="name">রেইন ফিচার চালু</div><div class="desc">Crypto Rain বন্ধ/চালু</div></div>
+        <div class="toggle"><div class="knob"></div></div>
+      </div>
+      <div class="cfgrow" style="margin-bottom:0">
+        <div><div class="name">মেইনটেন্যান্স মোড</div><div class="desc">চালু করলে কেউ গেম খেলতে পারবে না</div></div>
+        <div class="toggle off"><div class="knob"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>CryptoFlip UI প্রিভিউ — Stake.com-গ্রেড ক্রিস্প ডিজাইন · বাংলাদেশী সাংস্কৃতিক রঙ ও প্রতীক (শাপলা/রয়েল বেঙ্গল টাইগার) · আসল অ্যাপে কয়েনটি Three.js দিয়ে রেন্ডার হবে এবং সব ডেটা লাইভ Socket.io দিয়ে আপডেট হয়</footer>
+</div>
+
+<script>
+// ── ছোট ইনলাইন SVG আইকন সেট (lucide-style, stroke-based) ──
+const ICONS = {
+  gamepad: 'M6 12h4m-2-2v4m7-1h.01M19 9h.01M3 11l1.5-4.5A3 3 0 0 1 7.36 4h9.28a3 3 0 0 1 2.86 2.5L21 11v6a2 2 0 0 1-2 2h0a2 2 0 0 1-1.8-1.1L16 15H8l-1.2 2.9A2 2 0 0 1 5 19h0a2 2 0 0 1-2-2v-6z',
+  chart: 'M3 3v18h18 M7 16l4-6 4 3 5-7',
+  settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z',
+  coins: 'M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12z M18.09 10.37A6 6 0 1 1 10.34 18 M7 6h1v4 M16.71 13.88l.7.71-2.82 2.82',
+  loader: 'M12 2v4 M12 18v4 M4.93 4.93l2.83 2.83 M16.24 16.24l2.83 2.83 M2 12h4 M18 12h4 M4.93 19.07l2.83-2.83 M16.24 7.76l2.83-2.83',
+  trophy: 'M8 21h8 M12 17v4 M7 4h10v5a5 5 0 0 1-10 0V4z M7 4H4a2 2 0 0 0 0 4h1m12-4h3a2 2 0 0 1 0 4h-1',
+  flame: 'M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z',
+  dice: 'M3 13a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6z M7 17h.01 M11 17h.01 M15 17h.01 M3 7l9-4 9 4-9 4-9-4z',
+  users: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  shield: 'M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4z',
+  chevdown: 'M6 9l6 6 6-6',
+  msg: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10z',
+  rain: 'M16 13v8 M8 13v8 M12 15v8 M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25',
+  check: 'M20 6 9 17l-5-5',
+  send: 'M22 2 11 13 M22 2l-7 20-4-9-9-4 20-7z',
+  wallet: 'M21 12V7H5a2 2 0 0 1 0-4h14v4 M3 5v14a2 2 0 0 0 2 2h16v-5 M18 12a2 2 0 0 0 0 4h4v-4z',
+  bars: 'M3 3v18h18 M18 17V9 M13 17V5 M8 17v-3',
+  trendup: 'M23 6l-9.5 9.5-5-5L1 18 M17 6h6v6',
+  banknote: 'M2 6h20v12H2z M12 12h.01 M6 10v4 M18 10v4',
+  landmark: 'M3 22h18 M6 18v-7 M10 18v-7 M14 18v-7 M18 18v-7 M3 11l9-7 9 7H3z',
+  calc: 'M4 2h16v20H4z M8 6h8 M8 10h.01 M12 10h.01 M16 10h.01 M8 14h.01 M12 14h.01 M16 14h.01 M8 18h.01 M12 18h.01 M16 18h.01',
+  x: 'M18 6 6 18 M6 6l12 12'
+};
+function renderIcons(){
+  document.body.innerHTML = document.body.innerHTML.replace(/\[ico:(\w+)\]/g, (m, name) => {
+    const d = ICONS[name];
+    if(!d) return '';
+    return `<svg class="icon" viewBox="0 0 24 24">${d.split(' M').map((seg,i)=>`<path d="${i===0?seg:'M'+seg}"/>`).join('')}</svg>`;
+  });
+}
+renderIcons();
+
+function sw(id, el){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  el.classList.add('active');
+}
+</script>
+</body>
+</html>

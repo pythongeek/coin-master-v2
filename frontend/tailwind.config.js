@@ -7,80 +7,100 @@ module.exports = {
   ],
   theme: {
     extend: {
-      // ── সাইবারপাংক কালার প্যালেট ──────────────────
+      // ═══════════════════════════════════════════════════════
+      //  COLOR SYSTEM — Stake.com-এর crisp casino-dark বেস +
+      //  বাংলাদেশী সাংস্কৃতিক রঙ (পতাকার সবুজ-লাল, উৎসবের সোনালী)
+      // ═══════════════════════════════════════════════════════
       colors: {
-        // Dark backgrounds
-        'void':    '#050508',    // গেমের মূল ব্যাকগ্রাউন্ড
-        'surface': '#0D0D14',    // কার্ড/প্যানেলের ব্যাকগ্রাউন্ড
-        'border':  '#1A1A2E',    // বর্ডার কালার
+        // ── বেস ব্যাকগ্রাউন্ড (Stake-স্টাইল ডিপ নেভি-ব্ল্যাক, খাঁটি কালো নয়) ──
+        'void':    '#0B0E11',   // মূল ব্যাকগ্রাউন্ড
+        'surface': '#141920',   // কার্ড/প্যানেল
+        'surface2':'#1B212B',   // উঁচু স্তরের কার্ড (elevated)
+        'border':  '#262C36',   // স্ট্যান্ডার্ড বর্ডার
+        'border2': '#343C49',   // হাইলাইট বর্ডার (hover/focus)
 
-        // Neon accents
-        'neon': {
-          'green':  '#00FF94',   // জেতার রঙ / প্রাইমারি অ্যাকসেন্ট
-          'blue':   '#00D4FF',   // ইনফো / হাইলাইট
-          'purple': '#B44FFF',   // স্পেশাল ইভেন্ট / Squad
-          'gold':   '#FFD700',   // জ্যাকপট / উইন স্ট্রিক
-          'red':    '#FF3A3A',   // হারার রঙ / ওয়ার্নিং
+        // ── ব্র্যান্ড রঙ — বাংলাদেশের পতাকা + উৎসবের রঙ থেকে অনুপ্রাণিত ──
+        'brand': {
+          // প্রাইমারি: পতাকার গাঢ় সবুজ থেকে Stake-গ্রেড vivid emerald
+          'green':      '#00C566',
+          'green-dim':  '#0A9A52',
+          // পতাকার লাল বৃত্ত — হার/বিপদ নির্দেশক
+          'red':        '#E8384F',
+          'red-dim':    '#B82B3D',
+          // উৎসবের সোনালী (পহেলা বৈশাখ, ঈদ) — প্রিমিয়াম/স্ট্রিক/রেইন
+          'gold':       '#E8A93D',
+          'gold-dim':   '#C28A28',
+          // নকশী কাঁথা মেরুন/বেগুনি — স্কোয়াড ফিচারের জন্য আলাদা পরিচয়
+          'maroon':     '#A8395C',
+          'maroon-dim': '#822C47',
+          // নিরপেক্ষ তথ্য — প্রশমিত স্লেট-নীল (চোখ ধাঁধানো নয়)
+          'info':       '#5B8DEF',
+          'info-dim':   '#3F6BC4',
         },
 
-        // Text hierarchy
+        // ── টেক্সট হায়ারার্কি ──────────────────────────────────
         'text': {
-          'primary':   '#FFFFFF',
-          'secondary': '#A0A0B8',
-          'muted':     '#4A4A6A',
+          'primary':   '#F4F6F8',
+          'secondary': '#9AA3B2',
+          'muted':     '#5B6472',
         },
       },
 
-      // ── ফন্ট ──────────────────────────────────────
+      // ── ফন্ট — Stake-গ্রেড: জ্যামিতিক geometric display + পরিষ্কার বডি ──
       fontFamily: {
-        'display': ['Orbitron', 'monospace'],   // হেডিং - সাইবারপাংক
-        'body':    ['Inter', 'sans-serif'],      // বডি টেক্সট
-        'mono':    ['JetBrains Mono', 'monospace'], // নম্বর/কোড
+        'display': ['"Space Grotesk"', 'sans-serif'],
+        'body':    ['Inter', 'sans-serif'],
+        'mono':    ['"JetBrains Mono"', 'monospace'],
       },
 
-      // ── অ্যানিমেশন ─────────────────────────────────
+      // ── অ্যানিমেশন — সূক্ষ্ম, পেশাদার (গ্লো-হীন) ─────────────
       animation: {
-        'glow-pulse':   'glowPulse 2s ease-in-out infinite',
-        'float-up':     'floatUp 0.6s ease-out forwards',
-        'spin-slow':    'spin 3s linear infinite',
-        'rain-drop':    'rainDrop 1s ease-in forwards',
-        'neon-flicker': 'neonFlicker 0.15s infinite',
+        'float-up':    'floatUp 0.4s cubic-bezier(0.16,1,0.3,1) forwards',
+        'spin-slow':   'spin 3s linear infinite',
+        'rain-drop':   'rainDrop 1s ease-in forwards',
+        'pulse-soft':  'pulseSoft 2.4s ease-in-out infinite',
+        'lift-in':     'liftIn 0.25s cubic-bezier(0.16,1,0.3,1) forwards',
       },
       keyframes: {
-        glowPulse: {
-          '0%, 100%': { boxShadow: '0 0 20px rgba(0, 255, 148, 0.3)' },
-          '50%':      { boxShadow: '0 0 40px rgba(0, 255, 148, 0.7)' },
-        },
         floatUp: {
-          '0%':   { opacity: '0', transform: 'translateY(20px)' },
+          '0%':   { opacity: '0', transform: 'translateY(8px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         rainDrop: {
           '0%':   { opacity: '1', transform: 'translateY(-20px)' },
-          '100%': { opacity: '0', transform: 'translateY(100vh)' },
+          '100%': { opacity: '0.2', transform: 'translateY(100vh)' },
         },
-        neonFlicker: {
-          '0%, 19%, 21%, 23%, 25%, 54%, 56%, 100%': { opacity: '1' },
-          '20%, 24%, 55%':                            { opacity: '0.4' },
+        pulseSoft: {
+          '0%, 100%': { opacity: '1' },
+          '50%':      { opacity: '0.55' },
+        },
+        liftIn: {
+          '0%':   { opacity: '0', transform: 'translateY(4px) scale(0.98)' },
+          '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
       },
 
-      // ── বক্স শ্যাডো (নিয়ন গ্লো) ──────────────────
+      // ── এলিভেশন শ্যাডো — Stake-স্টাইল লেয়ার্ড ডেপথ (গ্লো নয়, real shadow) ──
       boxShadow: {
-        'neon-green':  '0 0 20px rgba(0, 255, 148, 0.5)',
-        'neon-blue':   '0 0 20px rgba(0, 212, 255, 0.5)',
-        'neon-purple': '0 0 20px rgba(180, 79, 255, 0.5)',
-        'neon-gold':   '0 0 20px rgba(255, 215, 0, 0.5)',
-        'neon-red':    '0 0 20px rgba(255, 58, 58, 0.5)',
+        'elevate-sm': '0 1px 2px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.03) inset',
+        'elevate-md': '0 2px 8px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.04) inset',
+        'elevate-lg': '0 8px 24px rgba(0,0,0,0.5), 0 12px 40px rgba(0,0,0,0.3), 0 1px 0 rgba(255,255,255,0.05) inset',
+        'brand-green': '0 4px 14px rgba(0,197,102,0.28), 0 1px 0 rgba(255,255,255,0.15) inset',
+        'brand-red':   '0 4px 14px rgba(232,56,79,0.28), 0 1px 0 rgba(255,255,255,0.1) inset',
+        'brand-gold':  '0 4px 14px rgba(232,169,61,0.28), 0 1px 0 rgba(255,255,255,0.15) inset',
+        'brand-maroon':'0 4px 14px rgba(168,57,92,0.28), 0 1px 0 rgba(255,255,255,0.1) inset',
+        'brand-info':  '0 4px 14px rgba(91,141,239,0.22), 0 1px 0 rgba(255,255,255,0.1) inset',
       },
 
-      // ── ব্যাকগ্রাউন্ড গ্র্যাডিয়েন্ট ──────────────
+      // ── গ্র্যাডিয়েন্ট — সূক্ষ্ম বেভেল/embossed ইফেক্টের জন্য ──
       backgroundImage: {
-        'grid-pattern':   'radial-gradient(circle, #1A1A2E 1px, transparent 1px)',
-        'hero-gradient':  'radial-gradient(ellipse at center, #0D0D1A 0%, #050508 100%)',
-        'win-gradient':   'linear-gradient(135deg, #00FF94 0%, #00D4FF 100%)',
-        'lose-gradient':  'linear-gradient(135deg, #FF3A3A 0%, #B44FFF 100%)',
-        'squad-gradient': 'linear-gradient(135deg, #B44FFF 0%, #00D4FF 100%)',
+        'card-bevel':    'linear-gradient(180deg, rgba(255,255,255,0.035) 0%, rgba(255,255,255,0) 100%)',
+        'btn-bevel':     'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 60%)',
+        'win-gradient':  'linear-gradient(135deg, #00C566 0%, #0A9A52 100%)',
+        'lose-gradient': 'linear-gradient(135deg, #E8384F 0%, #B82B3D 100%)',
+        'squad-gradient':'linear-gradient(135deg, #A8395C 0%, #822C47 100%)',
+        'gold-gradient': 'linear-gradient(135deg, #E8A93D 0%, #C28A28 100%)',
+        'vignette':      'radial-gradient(ellipse 80% 50% at 50% -10%, rgba(0,197,102,0.06), transparent)',
       },
     },
   },

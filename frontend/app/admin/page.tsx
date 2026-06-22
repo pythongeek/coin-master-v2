@@ -12,17 +12,18 @@
  * ═══════════════════════════════════════════════════════════════
  */
 import { useState } from 'react';
+import { BarChart3, Settings, Users, ShieldCheck, type LucideIcon } from 'lucide-react';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
 import AdminUserTable from '@/components/dashboard/AdminUserTable';
 import SeedRotationPanel from '@/components/dashboard/SeedRotationPanel';
 
-const TABS = [
-  { id: 'live',     label: 'লাইভ স্ট্যাটস', icon: '📊' },
-  { id: 'config',   label: 'গেম কনফিগ',     icon: '⚙️' },
-  { id: 'users',    label: 'ইউজার',         icon: '👥' },
-  { id: 'security', label: 'সিকিউরিটি',     icon: '🔐' },
-] as const;
+const TABS: { id: 'live' | 'config' | 'users' | 'security'; label: string; Icon: LucideIcon }[] = [
+  { id: 'live',     label: 'লাইভ স্ট্যাটস', Icon: BarChart3 },
+  { id: 'config',   label: 'গেম কনফিগ',     Icon: Settings },
+  { id: 'users',    label: 'ইউজার',         Icon: Users },
+  { id: 'security', label: 'সিকিউরিটি',     Icon: ShieldCheck },
+];
 
 type TabId = typeof TABS[number]['id'];
 
@@ -33,14 +34,16 @@ export default function AdminPage() {
     <main className="min-h-screen p-4 md:p-6 max-w-5xl mx-auto">
       {/* হেডার */}
       <div className="flex items-center gap-4 mb-6">
-        <div className="w-12 h-12 rounded-xl bg-neon-purple/20 border border-neon-purple/40
-                        flex items-center justify-center text-2xl">⚙️</div>
+        <div className="w-11 h-11 rounded-xl bg-brand-maroon/10 border border-brand-maroon/25
+                        flex items-center justify-center text-brand-maroon">
+          <Settings size={20} />
+        </div>
         <div>
-          <h1 className="heading-display text-2xl text-neon-purple">ADMIN PANEL</h1>
+          <h1 className="heading-display text-xl text-text-primary">Admin Panel</h1>
           <p className="text-text-muted text-xs font-mono">CryptoFlip — সুপার এডমিন কন্ট্রোল</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-brand-green animate-pulse-soft" />
           <span className="text-text-muted text-xs font-mono">সিস্টেম চালু আছে</span>
         </div>
       </div>
@@ -52,13 +55,13 @@ export default function AdminPage() {
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-mono whitespace-nowrap
-                        transition-all duration-200 ${
+                        transition-all duration-150 ${
               activeTab === tab.id
-                ? 'bg-neon-purple text-void font-bold shadow-neon-purple'
-                : 'border border-border text-text-secondary hover:border-neon-purple/50'
+                ? 'bg-brand-maroon text-white font-medium shadow-brand-maroon'
+                : 'border border-border text-text-secondary hover:border-brand-maroon/50'
             }`}
           >
-            <span>{tab.icon}</span>
+            <tab.Icon size={14} />
             {tab.label}
           </button>
         ))}

@@ -10,6 +10,7 @@
  */
 import { useState } from 'react';
 import { createHmac, createHash } from 'crypto';
+import { ShieldCheck, ChevronDown, ChevronUp, Search, Loader2, CheckCircle2, XCircle, BookOpen } from 'lucide-react';
 
 interface VerifyInput {
   serverSeed: string;
@@ -39,8 +40,8 @@ function verifyLocally(input: VerifyInput): VerifyResult {
   const result: 'heads' | 'tails' = rawValue % 2 === 0 ? 'heads' : 'tails';
 
   const explanation = hashMatches
-    ? `✅ সার্ভার সিড হ্যাশ মিলেছে। রেজাল্ট: ${result === 'heads' ? 'হেডস 👑' : 'টেইলস 🦅'}`
-    : `❌ হ্যাশ মিলছে না! সম্ভাব্য কারচুপি সনাক্ত হয়েছে!`;
+    ? `সার্ভার সিড হ্যাশ মিলেছে। রেজাল্ট: ${result === 'heads' ? 'হেডস 🪷' : 'টেইলস 🐯'}`
+    : `হ্যাশ মিলছে না! সম্ভাব্য কারচুপি সনাক্ত হয়েছে!`;
 
   return { isValid: hashMatches, result, rawHash, hashMatches, explanation };
 }
@@ -71,21 +72,25 @@ export default function ProvablyFairWidget() {
         className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
       >
         <div className="flex items-center gap-3">
-          <span className="text-xl">🔐</span>
+          <div className="w-8 h-8 rounded-lg bg-brand-green/10 flex items-center justify-center text-brand-green">
+            <ShieldCheck size={16} />
+          </div>
           <div className="text-left">
-            <div className="heading-display text-sm text-neon-green">PROVABLY FAIR</div>
+            <div className="heading-display text-sm text-brand-green">PROVABLY FAIR</div>
             <div className="text-text-muted text-xs font-mono">আপনার গেম যাচাই করুন</div>
           </div>
         </div>
-        <span className="text-text-muted text-xs font-mono">{expanded ? '▲ বন্ধ করুন' : '▼ খুলুন'}</span>
+        <span className="text-text-muted">
+          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </span>
       </button>
 
       {expanded && (
         <div className="border-t border-border p-4 space-y-4">
           {/* ব্যাখ্যা */}
-          <div className="bg-void rounded-lg p-3 border border-neon-green/20">
+          <div className="bg-void rounded-lg p-3 border border-brand-green/20">
             <p className="text-text-secondary text-xs font-mono leading-relaxed">
-              গেম শেষে আপনাকে <span className="text-neon-green">Server Seed</span> দেওয়া হবে।
+              গেম শেষে আপনাকে <span className="text-brand-green">Server Seed</span> দেওয়া হবে।
               নিচে সব তথ্য পেস্ট করুন — সিস্টেম নিজেই প্রমাণ করবে রেজাল্ট আগে থেকে নির্ধারিত ছিল
               এবং কোনো কারচুপি হয়নি।
             </p>
@@ -95,7 +100,7 @@ export default function ProvablyFairWidget() {
           <div className="space-y-3">
             <div>
               <label className="text-text-secondary text-xs font-mono block mb-1">
-                সার্ভার সিড হ্যাশ <span className="text-neon-blue">(গেমের আগে পাওয়া)</span>
+                সার্ভার সিড হ্যাশ <span className="text-brand-info">(গেমের আগে পাওয়া)</span>
               </label>
               <input
                 className="input-cyber text-xs"
@@ -106,7 +111,7 @@ export default function ProvablyFairWidget() {
             </div>
             <div>
               <label className="text-text-secondary text-xs font-mono block mb-1">
-                সার্ভার সিড <span className="text-neon-green">(গেমের পরে প্রকাশিত)</span>
+                সার্ভার সিড <span className="text-brand-green">(গেমের পরে প্রকাশিত)</span>
               </label>
               <input
                 className="input-cyber text-xs"
@@ -142,23 +147,25 @@ export default function ProvablyFairWidget() {
           <button
             onClick={handleVerify}
             disabled={loading || !input.serverSeed || !input.clientSeed || !input.serverSeedHash}
-            className="w-full py-3 rounded-lg font-display font-bold text-sm transition-all duration-200
-                       bg-neon-green text-void hover:shadow-neon-green hover:scale-[1.02]
-                       disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-lg font-display font-semibold text-sm transition-all duration-150
+                       bg-brand-green text-void shadow-brand-green hover:bg-brand-green-dim hover:-translate-y-0.5
+                       disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0"
           >
-            {loading ? '⏳ যাচাই হচ্ছে...' : '🔍 যাচাই করুন'}
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+            {loading ? 'যাচাই হচ্ছে...' : 'যাচাই করুন'}
           </button>
 
           {/* রেজাল্ট */}
           {result && (
-            <div className={`rounded-lg p-4 border ${result.isValid ? 'border-neon-green/50 bg-neon-green/5' : 'border-neon-red/50 bg-neon-red/5'}`}>
-              <p className={`font-mono text-sm font-bold mb-2 ${result.isValid ? 'text-neon-green' : 'text-neon-red'}`}>
+            <div className={`rounded-lg p-4 border ${result.isValid ? 'border-brand-green/40 bg-brand-green/5' : 'border-brand-red/40 bg-brand-red/5'}`}>
+              <p className={`flex items-center gap-2 font-mono text-sm font-medium mb-2 ${result.isValid ? 'text-brand-green' : 'text-brand-red'}`}>
+                {result.isValid ? <CheckCircle2 size={15} className="shrink-0" /> : <XCircle size={15} className="shrink-0" />}
                 {result.explanation}
               </p>
               {result.isValid && (
                 <div className="space-y-1 text-xs font-mono text-text-muted">
-                  <div>রেজাল্ট: <span className="text-white">{result.result === 'heads' ? '👑 HEADS' : '🦅 TAILS'}</span></div>
-                  <div className="break-all">রিড হ্যাশ: <span className="text-neon-blue">{result.rawHash.slice(0, 32)}...</span></div>
+                  <div>রেজাল্ট: <span className="text-white">{result.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'}</span></div>
+                  <div className="break-all">রিড হ্যাশ: <span className="text-brand-info">{result.rawHash.slice(0, 32)}...</span></div>
                 </div>
               )}
             </div>
@@ -166,7 +173,10 @@ export default function ProvablyFairWidget() {
 
           {/* বিস্তারিত ব্যাখ্যা */}
           <details className="text-xs font-mono text-text-muted">
-            <summary className="cursor-pointer hover:text-text-secondary">📖 কীভাবে কাজ করে?</summary>
+            <summary className="flex items-center gap-1.5 cursor-pointer hover:text-text-secondary">
+              <BookOpen size={12} />
+              কীভাবে কাজ করে?
+            </summary>
             <div className="mt-2 space-y-1 bg-void p-3 rounded-lg border border-border leading-relaxed">
               <p>১. গেমের আগে সার্ভার একটি গোপন বীজ তৈরি করে → SHA-256 হ্যাশ আপনাকে দেয়।</p>
               <p>২. আপনি আপনার ক্লায়েন্ট সিড দেন (বা অটো তৈরি হয়)।</p>

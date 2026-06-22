@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Users, Banknote, Landmark, Dices, CloudRain, type LucideIcon } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -66,34 +67,34 @@ export default function AdminLiveStats() {
 
   if (!stats) return null;
 
-  const cards = [
+  const cards: { label: string; Icon: LucideIcon; color: string; value: string; sub: string }[] = [
     {
-      label: 'মোট ইউজার', icon: '👥', color: 'blue',
+      label: 'মোট ইউজার', Icon: Users, color: 'blue',
       value: stats.users.total.toLocaleString(),
       sub: `+${stats.users.today} আজ`,
     },
     {
-      label: 'মোট বেট ভলিউম', icon: '💸', color: 'green',
+      label: 'মোট বেট ভলিউম', Icon: Banknote, color: 'green',
       value: `$${stats.bets.totalVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
       sub: `আজ: $${stats.bets.todayVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
     },
     {
-      label: 'হাউজ প্রফিট', icon: '🏦', color: 'gold',
+      label: 'হাউজ প্রফিট', Icon: Landmark, color: 'gold',
       value: `$${stats.houseProfit.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
       sub: 'সর্বমোট নেট আয়',
     },
     {
-      label: 'আজকের বেট', icon: '🎲', color: 'purple',
+      label: 'আজকের বেট', Icon: Dices, color: 'purple',
       value: stats.bets.today.toLocaleString(),
       sub: `সর্বমোট: ${stats.bets.total.toLocaleString()}`,
     },
   ];
 
   const colorClass: Record<string, string> = {
-    blue:   'border-neon-blue/30 text-neon-blue',
-    green:  'border-neon-green/30 text-neon-green',
-    gold:   'border-neon-gold/30 text-neon-gold',
-    purple: 'border-neon-purple/30 text-neon-purple',
+    blue:   'border-brand-info/30 text-brand-info',
+    green:  'border-brand-green/30 text-brand-green',
+    gold:   'border-brand-gold/30 text-brand-gold',
+    purple: 'border-brand-maroon/30 text-brand-maroon',
   };
 
   return (
@@ -101,7 +102,7 @@ export default function AdminLiveStats() {
       <div className="flex items-center justify-between mb-3">
         <h3 className="heading-display text-sm text-text-primary">লাইভ পরিসংখ্যান</h3>
         <div className="flex items-center gap-2 text-text-muted text-xs font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" />
           আপডেট: {lastUpdate.toLocaleTimeString('bn-BD')}
         </div>
       </div>
@@ -111,9 +112,9 @@ export default function AdminLiveStats() {
           <div key={c.label} className={`glass-card p-4 border ${colorClass[c.color]}`}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-text-muted text-xs font-mono">{c.label}</span>
-              <span className="text-lg">{c.icon}</span>
+              <c.Icon size={16} strokeWidth={2} />
             </div>
-            <div className={`font-mono font-bold text-xl ${colorClass[c.color].split(' ')[1]}`}>
+            <div className={`font-mono font-semibold text-xl ${colorClass[c.color].split(' ')[1]}`}>
               {c.value}
             </div>
             <div className="text-text-muted text-xs font-mono mt-1">{c.sub}</div>
@@ -123,8 +124,9 @@ export default function AdminLiveStats() {
 
       {/* Active rain warning */}
       {stats.activeRains > 0 && (
-        <div className="mt-3 px-4 py-2 rounded-lg border border-neon-gold/40 bg-neon-gold/5 text-neon-gold text-xs font-mono">
-          🌧️ এই মুহূর্তে {stats.activeRains}টি Crypto Rain সক্রিয় আছে
+        <div className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg border border-brand-gold/40 bg-brand-gold/5 text-brand-gold text-xs font-mono">
+          <CloudRain size={14} />
+          এই মুহূর্তে {stats.activeRains}টি Crypto Rain সক্রিয় আছে
         </div>
       )}
     </div>

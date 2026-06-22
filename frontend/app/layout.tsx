@@ -15,23 +15,17 @@ export default function RootLayout({
   return (
     <html lang="bn" className="dark">
       <head>
-        {/* Google Fonts — Orbitron (display) + Inter (body) + JetBrains Mono */}
+        {/* Google Fonts — Space Grotesk (display, crisp geometric) + Inter (body) + JetBrains Mono (numbers) */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
-          href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
           rel="stylesheet"
         />
       </head>
       <body className="font-body bg-void text-text-primary antialiased min-h-screen">
-        {/* ব্যাকগ্রাউন্ড গ্রিড প্যাটার্ন */}
-        <div
-          className="fixed inset-0 pointer-events-none z-0 opacity-20"
-          style={{
-            backgroundImage: 'radial-gradient(circle, #1A1A2E 1px, transparent 1px)',
-            backgroundSize: '40px 40px',
-          }}
-        />
+        {/* সূক্ষ্ম vignette — Stake-স্টাইল ডেপথ, কোনো ডট-গ্রিড/সাইবারপাংক প্যাটার্ন নয় */}
+        <div className="fixed inset-0 pointer-events-none z-0 bg-vignette" />
         {/* মেইন কন্টেন্ট */}
         <div className="relative z-10">
           {children}

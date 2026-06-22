@@ -5,16 +5,19 @@
  * ═══════════════════════════════════════════════════════════════
  *
  *  গেম শেষে স্ক্রিনে জয় বা পরাজয়ের অ্যানিমেশন দেখায়।
- *  স্বয়ংক্রিয়ভাবে ৩ সেকেন্ড পর সরে যায়।
+ *  স্বয়ংক্রিয়ভাবে ৫ সেকেন্ড পর সরে যায়।
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { useEffect, useState } from 'react';
+import { Trophy, XCircle, Flame, Lock, CloudRain, Info } from 'lucide-react';
 import { useGameStore, BetResult } from '@/lib/store';
 
 // ── Notification Toast ─────────────────────────────────────────
 export function NotificationStack() {
-  const { notifications, removeNotification } = useGameStore();
+  const { notifications } = useGameStore();
+
+  const ICON_MAP = { win: Trophy, lose: XCircle, rain: CloudRain, info: Info } as const;
 
   return (
     <div
@@ -22,26 +25,30 @@ export function NotificationStack() {
       aria-live="polite"
       aria-label="নোটিফিকেশন"
     >
-      {notifications.map((notif) => (
-        <div
-          key={notif.id}
-          className={`
-            pointer-events-auto px-4 py-3 rounded-xl border font-mono text-sm
-            animate-float-up shadow-lg max-w-xs
-            ${notif.type === 'win'
-              ? 'bg-neon-green/20 border-neon-green/50 text-neon-green'
-              : notif.type === 'lose'
-              ? 'bg-neon-red/20 border-neon-red/50 text-neon-red'
-              : notif.type === 'rain'
-              ? 'bg-neon-gold/20 border-neon-gold/50 text-neon-gold'
-              : 'bg-surface border-border text-text-primary'
-            }
-          `}
-          role="alert"
-        >
-          {notif.message}
-        </div>
-      ))}
+      {notifications.map((notif) => {
+        const Icon = ICON_MAP[notif.type];
+        return (
+          <div
+            key={notif.id}
+            className={`
+              pointer-events-auto flex items-center gap-2 px-4 py-3 rounded-xl border font-mono text-sm
+              animate-float-up shadow-elevate-lg max-w-xs
+              ${notif.type === 'win'
+                ? 'bg-surface2 border-brand-green/40 text-brand-green'
+                : notif.type === 'lose'
+                ? 'bg-surface2 border-brand-red/40 text-brand-red'
+                : notif.type === 'rain'
+                ? 'bg-surface2 border-brand-gold/40 text-brand-gold'
+                : 'bg-surface2 border-border text-text-primary'
+              }
+            `}
+            role="alert"
+          >
+            <Icon size={16} className="shrink-0" />
+            {notif.message}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -64,58 +71,62 @@ export function ResultCard({ result }: { result: BetResult }) {
   return (
     <div
       className={`
-        rounded-2xl border-2 p-5 text-center animate-float-up
+        glass-card-raised rounded-2xl border p-6 text-center animate-float-up
         ${result.won
-          ? 'border-neon-green bg-neon-green/10 shadow-neon-green'
-          : 'border-neon-red bg-neon-red/10 shadow-neon-red'
+          ? 'border-brand-green/50 shadow-brand-green'
+          : 'border-brand-red/50 shadow-brand-red'
         }
       `}
       role="status"
       aria-label={result.won ? 'জিতেছেন' : 'হেরেছেন'}
     >
-      {/* ইমোজি */}
-      <div className="text-5xl mb-2">
-        {result.won ? '🎉' : '😔'}
+      {/* আইকন */}
+      <div className={`inline-flex items-center justify-center w-14 h-14 rounded-full mb-3 ${
+        result.won ? 'bg-brand-green/15 text-brand-green' : 'bg-brand-red/15 text-brand-red'
+      }`}>
+        {result.won ? <Trophy size={28} strokeWidth={2} /> : <XCircle size={28} strokeWidth={2} />}
       </div>
 
       {/* রেজাল্ট */}
-      <div className={`heading-display text-2xl mb-1 ${result.won ? 'text-neon-green' : 'text-neon-red'}`}>
+      <div className={`heading-display text-xl mb-1 ${result.won ? 'text-brand-green' : 'text-brand-red'}`}>
         {result.won ? 'জিতেছেন!' : 'হেরেছেন!'}
       </div>
 
       {/* কয়েনের ফলাফল */}
       <div className="text-text-secondary font-mono text-sm mb-3">
-        {result.result === 'heads' ? '👑 HEADS' : '🦅 TAILS'}
+        {result.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'}
       </div>
 
       {/* পরিমাণ */}
-      <div className={`font-mono font-bold text-xl mb-1 ${result.won ? 'text-neon-green' : 'text-neon-red'}`}>
+      <div className={`font-mono font-semibold text-xl mb-1 ${result.won ? 'text-brand-green' : 'text-brand-red'}`}>
         {result.won ? `+$${result.payout.toFixed(2)}` : `-$${result.betAmount.toFixed(2)}`}
       </div>
 
       {/* Win Streak */}
       {result.won && result.winStreak > 1 && (
-        <div className="text-neon-gold font-mono text-sm">
-          🔥 {result.winStreak} ধারাবাহিক জয়!
+        <div className="flex items-center justify-center gap-1.5 text-brand-gold font-mono text-sm mt-1">
+          <Flame size={14} />
+          {result.winStreak} ধারাবাহিক জয়
         </div>
       )}
 
       {/* Provably Fair সিড */}
-      <details className="mt-3 text-left">
-        <summary className="text-text-muted text-xs font-mono cursor-pointer hover:text-text-secondary">
-          🔐 Provably Fair ভেরিফিকেশন ডেটা
+      <details className="mt-4 text-left">
+        <summary className="flex items-center gap-1.5 text-text-muted text-xs font-mono cursor-pointer hover:text-text-secondary">
+          <Lock size={12} />
+          Provably Fair ভেরিফিকেশন ডেটা
         </summary>
-        <div className="mt-2 space-y-1 text-xs font-mono text-text-muted bg-void p-2 rounded-lg">
+        <div className="mt-2 space-y-1 text-xs font-mono text-text-muted bg-void p-2.5 rounded-lg border border-border">
           <div className="break-all">
-            <span className="text-neon-blue">Server Seed: </span>
+            <span className="text-brand-info">Server Seed: </span>
             {result.verification.serverSeed}
           </div>
           <div className="break-all">
-            <span className="text-neon-green">Hash: </span>
+            <span className="text-brand-green">Hash: </span>
             {result.verification.serverSeedHash.slice(0, 32)}...
           </div>
           <div>
-            <span className="text-neon-purple">Nonce: </span>
+            <span className="text-brand-maroon">Nonce: </span>
             {result.verification.nonce}
           </div>
         </div>

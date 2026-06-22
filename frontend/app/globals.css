@@ -2,109 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── বেস স্টাইল ─────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   বেস স্টাইল — Stake-গ্রেড ক্লিন ডার্ক বেস (ডট-গ্রিড/সাইবারপাংক প্যাটার্ন নেই)
+═══════════════════════════════════════════════════════════════ */
 @layer base {
-  * {
-    box-sizing: border-box;
-    padding: 0;
-    margin: 0;
-  }
-
-  html {
-    scroll-behavior: smooth;
-  }
+  * { box-sizing: border-box; padding: 0; margin: 0; }
+  html { scroll-behavior: smooth; }
 
   body {
-    background-color: #050508;
-    color: #FFFFFF;
+    background-color: #0B0E11;
+    color: #F4F6F8;
     font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
-  /* স্ক্রলবার স্টাইল */
-  ::-webkit-scrollbar {
-    width: 6px;
-  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #141920; }
+  ::-webkit-scrollbar-thumb { background: #343C49; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #00C566; }
 
-  ::-webkit-scrollbar-track {
-    background: #0D0D14;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background: #00FF94;
-    border-radius: 3px;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: #00D4FF;
+  /* ফোকাস রিং — অ্যাক্সেসিবিলিটি, কিন্তু glow নয় */
+  *:focus-visible {
+    outline: 2px solid #00C566;
+    outline-offset: 2px;
   }
 }
 
-/* ── কাস্টম কম্পোনেন্ট ─────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   কম্পোনেন্ট সিস্টেম — crisp, embossed, real elevation
+═══════════════════════════════════════════════════════════════ */
 @layer components {
-  /* নিয়ন গ্লো বাটন */
-  .btn-neon {
-    @apply relative px-6 py-3 font-display font-bold text-void
-           bg-neon-green rounded-lg transition-all duration-200
-           hover:shadow-neon-green hover:scale-105 active:scale-95;
+
+  /* ── প্রাইমারি বাটন — Stake-স্টাইল সলিড ফিল + টপ বেভেল হাইলাইট ── */
+  .btn-brand {
+    @apply relative px-6 py-3 font-display font-semibold text-void
+           bg-brand-green rounded-lg shadow-elevate-sm
+           transition-all duration-150 ease-out
+           hover:bg-brand-green-dim hover:shadow-brand-green hover:-translate-y-0.5
+           active:translate-y-0 active:shadow-elevate-sm;
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 55%);
   }
 
-  .btn-neon-outline {
-    @apply relative px-6 py-3 font-display font-bold text-neon-green
-           border border-neon-green rounded-lg transition-all duration-200
-           hover:bg-neon-green hover:text-void hover:shadow-neon-green;
+  .btn-brand-outline {
+    @apply relative px-6 py-3 font-display font-semibold text-brand-green
+           border border-brand-green/40 rounded-lg bg-surface
+           transition-all duration-150 ease-out
+           hover:border-brand-green hover:bg-brand-green/10 hover:-translate-y-0.5;
   }
 
-  /* গ্লাস কার্ড */
+  /* ── কার্ড — সলিড সারফেস + সূক্ষ্ম টপ বেভেল + লেয়ার্ড শ্যাডো (3D depth) ── */
   .glass-card {
-    @apply bg-surface/80 border border-border rounded-xl
-           backdrop-blur-sm;
+    @apply bg-surface border border-border rounded-xl shadow-elevate-md;
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, rgba(255,255,255,0) 18%);
   }
 
-  /* নিয়ন টেক্সট */
-  .text-neon {
-    @apply text-neon-green;
-    text-shadow: 0 0 10px rgba(0, 255, 148, 0.7),
-                 0 0 20px rgba(0, 255, 148, 0.5);
+  .glass-card-raised {
+    @apply bg-surface2 border border-border2 rounded-xl shadow-elevate-lg;
+    background-image: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 20%);
   }
 
-  .text-neon-blue {
-    @apply text-neon-blue;
-    text-shadow: 0 0 10px rgba(0, 212, 255, 0.7),
-                 0 0 20px rgba(0, 212, 255, 0.5);
-  }
+  /* ── ব্র্যান্ড টেক্সট — গ্লো নয়, শুধু রঙ ── */
+  .text-brand      { @apply text-brand-green; }
+  .text-brand-blue { @apply text-brand-info; }
 
-  /* ডিসপ্লে হেডিং */
   .heading-display {
-    @apply font-display font-bold tracking-wider uppercase;
+    @apply font-display font-semibold tracking-tight;
   }
 
-  /* ব্যালেন্স নম্বর */
   .balance-number {
-    @apply font-mono font-bold text-neon-green tabular-nums;
+    @apply font-mono font-semibold text-brand-green tabular-nums;
   }
 
-  /* ইনপুট ফিল্ড */
+  /* ── ইনপুট ফিল্ড — crisp বর্ডার, inset শ্যাডো (depth), neon glow নেই ── */
   .input-cyber {
     @apply w-full px-4 py-3 bg-void border border-border rounded-lg
            text-text-primary font-mono placeholder-text-muted
-           focus:outline-none focus:border-neon-green focus:shadow-neon-green
-           transition-all duration-200;
+           transition-all duration-150;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+  }
+  .input-cyber:focus {
+    @apply outline-none border-brand-green;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.4), 0 0 0 3px rgba(0,197,102,0.15);
   }
 }
 
-/* ── ইউটিলিটি ──────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   ইউটিলিটি
+═══════════════════════════════════════════════════════════════ */
 @layer utilities {
-  /* নিয়ন বর্ডার অ্যানিমেশন */
-  .border-neon-animated {
-    animation: borderGlow 2s ease-in-out infinite;
+  .border-brand-animated {
+    animation: borderShift 3s ease-in-out infinite;
+  }
+  @keyframes borderShift {
+    0%, 100% { border-color: #00C566; }
+    50%       { border-color: #E8A93D; }
   }
 
-  @keyframes borderGlow {
-    0%, 100% { border-color: #00FF94; box-shadow: 0 0 10px rgba(0, 255, 148, 0.3); }
-    50%       { border-color: #00D4FF; box-shadow: 0 0 20px rgba(0, 212, 255, 0.5); }
-  }
-
-  /* ক্রিপ্টো রেইন ড্রপ */
   .rain-particle {
     animation: rainDrop linear forwards;
     position: fixed;
@@ -117,5 +110,10 @@
   @keyframes rainDrop {
     0%   { transform: translateY(-50px); opacity: 1; }
     100% { transform: translateY(110vh); opacity: 0.3; }
+  }
+
+  /* এম্বসড টপ-হাইলাইট — যেকোনো এলিমেন্টে 3D বেভেল যোগ করতে */
+  .bevel-top {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
   }
 }

@@ -12,6 +12,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Search, Check, X, Pencil, Lock, Unlock } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -100,13 +101,16 @@ export default function AdminUserTable() {
       {/* হেডার ও সার্চ */}
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
         <h3 className="heading-display text-sm text-text-primary">ইউজার ম্যানেজমেন্ট</h3>
-        <input
-          type="text"
-          placeholder="🔍 ইউজারনেম বা ইমেইল খুঁজুন..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="input-cyber text-xs py-1.5 max-w-xs"
-        />
+        <div className="relative max-w-xs w-full">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <input
+            type="text"
+            placeholder="ইউজারনেম বা ইমেইল খুঁজুন..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="input-cyber text-xs py-1.5 pl-8"
+          />
+        </div>
       </div>
 
       {/* টেবিল */}
@@ -132,7 +136,7 @@ export default function AdminUserTable() {
                     <div className="flex items-center gap-2">
                       <span className="text-text-primary">{u.username}</span>
                       {u.is_admin && (
-                        <span className="px-1.5 py-0.5 rounded bg-neon-purple/20 text-neon-purple text-[10px]">ADMIN</span>
+                        <span className="px-1.5 py-0.5 rounded bg-brand-maroon/20 text-brand-maroon text-[10px]">ADMIN</span>
                       )}
                     </div>
                   </td>
@@ -145,24 +149,24 @@ export default function AdminUserTable() {
                   {/* ব্যালেন্স — এডিটেবল */}
                   <td className="px-4 py-2.5">
                     {editingId === u.id ? (
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
                         <input
                           type="number"
                           value={editBalance}
                           onChange={(e) => setEditBalance(e.target.value)}
-                          className="w-20 px-2 py-1 bg-void border border-neon-green/50 rounded text-neon-green"
+                          className="w-20 px-2 py-1 bg-void border border-brand-green/50 rounded text-brand-green"
                           autoFocus
                         />
-                        <button onClick={() => saveBalance(u.id)} className="text-neon-green">✓</button>
-                        <button onClick={() => setEditingId(null)} className="text-neon-red">✗</button>
+                        <button onClick={() => saveBalance(u.id)} className="text-brand-green"><Check size={13} /></button>
+                        <button onClick={() => setEditingId(null)} className="text-brand-red"><X size={13} /></button>
                       </div>
                     ) : (
                       <button
                         onClick={() => { setEditingId(u.id); setEditBalance(String(u.balance)); }}
-                        className="text-neon-green hover:underline"
+                        className="flex items-center gap-1.5 text-brand-green hover:underline"
                         title="ব্যালেন্স এডিট করুন"
                       >
-                        ${u.balance.toFixed(2)} ✏️
+                        ${u.balance.toFixed(2)} <Pencil size={11} className="text-text-muted" />
                       </button>
                     )}
                   </td>
@@ -171,18 +175,19 @@ export default function AdminUserTable() {
                   <td className="px-4 py-2.5 text-text-secondary">{u.total_bets}</td>
 
                   {/* P&L */}
-                  <td className={`px-4 py-2.5 font-bold ${u.net_pnl >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                  <td className={`px-4 py-2.5 font-semibold ${u.net_pnl >= 0 ? 'text-brand-green' : 'text-brand-red'}`}>
                     {u.net_pnl >= 0 ? '+' : ''}{u.net_pnl.toFixed(2)}
                   </td>
 
                   {/* স্ট্যাটাস */}
                   <td className="px-4 py-2.5">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${
                       u.is_active
-                        ? 'bg-neon-green/15 text-neon-green'
-                        : 'bg-neon-red/15 text-neon-red'
+                        ? 'bg-brand-green/15 text-brand-green'
+                        : 'bg-brand-red/15 text-brand-red'
                     }`}>
-                      {u.is_active ? '● সক্রিয়' : '● ফ্রিজড'}
+                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                      {u.is_active ? 'সক্রিয়' : 'ফ্রিজড'}
                     </span>
                   </td>
 
@@ -191,13 +196,14 @@ export default function AdminUserTable() {
                     {!u.is_admin && (
                       <button
                         onClick={() => toggleActive(u)}
-                        className={`px-2 py-1 rounded text-[10px] border transition-all ${
+                        className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border transition-all ${
                           u.is_active
-                            ? 'border-neon-red/40 text-neon-red hover:bg-neon-red/10'
-                            : 'border-neon-green/40 text-neon-green hover:bg-neon-green/10'
+                            ? 'border-brand-red/35 text-brand-red hover:bg-brand-red/10'
+                            : 'border-brand-green/35 text-brand-green hover:bg-brand-green/10'
                         }`}
                       >
-                        {u.is_active ? '🔒 ফ্রিজ করুন' : '🔓 আনফ্রিজ করুন'}
+                        {u.is_active ? <Lock size={11} /> : <Unlock size={11} />}
+                        {u.is_active ? 'ফ্রিজ করুন' : 'আনফ্রিজ করুন'}
                       </button>
                     )}
                   </td>

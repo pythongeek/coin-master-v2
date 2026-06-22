@@ -4,6 +4,7 @@
  *  STATS CARDS — ইউজারের মূল পরিসংখ্যান কার্ড
  * ═══════════════════════════════════════════════════════════════
  */
+import { Wallet, Dices, BarChart3, Coins, TrendingUp, TrendingDown, Trophy, type LucideIcon } from 'lucide-react';
 
 interface Stats {
   balance:      number;
@@ -20,25 +21,25 @@ interface CardProps {
   value: string;
   sub?: string;
   color: 'green' | 'blue' | 'purple' | 'gold' | 'red';
-  icon: string;
+  Icon: LucideIcon;
 }
 
 const COLOR_MAP: Record<CardProps['color'], string> = {
-  green:  'border-neon-green/30 bg-neon-green/5  text-neon-green',
-  blue:   'border-neon-blue/30  bg-neon-blue/5   text-neon-blue',
-  purple: 'border-neon-purple/30 bg-neon-purple/5 text-neon-purple',
-  gold:   'border-neon-gold/30  bg-neon-gold/5   text-neon-gold',
-  red:    'border-neon-red/30   bg-neon-red/5    text-neon-red',
+  green:  'border-brand-green/25 bg-brand-green/[0.06]  text-brand-green',
+  blue:   'border-brand-info/25  bg-brand-info/[0.06]   text-brand-info',
+  purple: 'border-brand-maroon/25 bg-brand-maroon/[0.06] text-brand-maroon',
+  gold:   'border-brand-gold/25  bg-brand-gold/[0.06]   text-brand-gold',
+  red:    'border-brand-red/25   bg-brand-red/[0.06]    text-brand-red',
 };
 
-function StatCard({ label, value, sub, color, icon }: CardProps) {
+function StatCard({ label, value, sub, color, Icon }: CardProps) {
   return (
-    <div className={`rounded-xl border p-4 ${COLOR_MAP[color]}`}>
+    <div className={`glass-card rounded-xl border p-4 ${COLOR_MAP[color]}`}>
       <div className="flex items-center justify-between mb-3">
         <span className="text-text-muted text-xs font-mono uppercase tracking-widest">{label}</span>
-        <span className="text-xl">{icon}</span>
+        <Icon size={18} strokeWidth={2} />
       </div>
-      <div className={`font-mono font-bold text-2xl ${COLOR_MAP[color].split(' ')[2]}`}>
+      <div className={`font-mono font-semibold text-2xl ${COLOR_MAP[color].split(' ')[2]}`}>
         {value}
       </div>
       {sub && <div className="text-text-muted text-xs font-mono mt-1">{sub}</div>}
@@ -65,42 +66,42 @@ export default function StatsCards({ stats, loading }: { stats: Stats | null; lo
       value: `$${stats.balance.toFixed(2)}`,
       sub: 'বর্তমান ওয়ালেট',
       color: 'green',
-      icon: '💰',
+      Icon: Wallet,
     },
     {
       label: 'মোট বেট',
       value: stats.totalBets.toLocaleString(),
       sub: `${stats.totalWins}জয় / ${stats.totalBets - stats.totalWins}হার`,
       color: 'blue',
-      icon: '🎲',
+      Icon: Dices,
     },
     {
       label: 'জয়ের হার',
       value: `${stats.winRate}%`,
-      sub: stats.winRate >= 50 ? '📈 ভালো চলছে!' : '📉 সাবধান',
+      sub: stats.winRate >= 50 ? 'ভালো চলছে' : 'সাবধান',
       color: stats.winRate >= 50 ? 'green' : 'red',
-      icon: '📊',
+      Icon: BarChart3,
     },
     {
       label: 'মোট বাজি',
       value: `$${stats.totalWagered.toFixed(2)}`,
       sub: 'সব বেটের সমষ্টি',
       color: 'purple',
-      icon: '💸',
+      Icon: Coins,
     },
     {
       label: 'নেট লাভ/লোকসান',
       value: `${stats.netPnl >= 0 ? '+' : ''}$${stats.netPnl.toFixed(2)}`,
       sub: stats.netPnl >= 0 ? 'মোট লাভ' : 'মোট লোকসান',
       color: stats.netPnl >= 0 ? 'green' : 'red',
-      icon: stats.netPnl >= 0 ? '📈' : '📉',
+      Icon: stats.netPnl >= 0 ? TrendingUp : TrendingDown,
     },
     {
       label: 'সর্বোচ্চ জয়',
       value: `$${stats.biggestWin.toFixed(2)}`,
       sub: 'একক বেটে সর্বোচ্চ',
       color: 'gold',
-      icon: '🏆',
+      Icon: Trophy,
     },
   ];
 

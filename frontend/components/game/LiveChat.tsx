@@ -10,6 +10,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { Users, CloudRain, Check, Loader2, Send, CheckCheck } from 'lucide-react';
 import { useGameStore, ChatMessage } from '@/lib/store';
 import { getSocket } from '@/lib/socket';
 
@@ -49,14 +50,14 @@ export default function LiveChat() {
 
   // ── বার্তার রঙ ─────────────────────────────────────────────
   const msgColor = (type: ChatMessage['type']) => {
-    if (type === 'win')  return 'text-neon-green';
-    if (type === 'rain') return 'text-neon-gold';
+    if (type === 'win')  return 'text-brand-green';
+    if (type === 'rain') return 'text-brand-gold';
     return 'text-text-primary';
   };
 
   const msgBg = (type: ChatMessage['type']) => {
-    if (type === 'win')  return 'bg-neon-green/5 border-l-2 border-neon-green';
-    if (type === 'rain') return 'bg-neon-gold/5 border-l-2 border-neon-gold';
+    if (type === 'win')  return 'bg-brand-green/5 border-l-2 border-brand-green';
+    if (type === 'rain') return 'bg-brand-gold/5 border-l-2 border-brand-gold';
     return '';
   };
 
@@ -66,22 +67,25 @@ export default function LiveChat() {
       {/* ── হেডার ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
-          <span className="heading-display text-xs text-neon-green">LIVE CHAT</span>
+          <span className="w-2 h-2 rounded-full bg-brand-green animate-pulse" />
+          <span className="heading-display text-xs text-brand-green">LIVE CHAT</span>
         </div>
-        <div className="flex items-center gap-1 text-text-muted text-xs font-mono">
-          <span>👥</span>
+        <div className="flex items-center gap-1.5 text-text-muted text-xs font-mono">
+          <Users size={13} />
           <span>{onlineCount.toLocaleString()} অনলাইন</span>
         </div>
       </div>
 
       {/* ── Crypto Rain ব্যানার ────────────────────────────── */}
       {activeRain && (
-        <div className="mx-3 mt-3 rounded-xl border border-neon-gold/50 bg-neon-gold/10 p-3
-                        animate-glow-pulse">
+        <div className="mx-3 mt-3 rounded-xl border border-brand-gold/50 bg-brand-gold/10 p-3
+                        animate-pulse-soft">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="heading-display text-xs text-neon-gold">🌧️ CRYPTO RAIN চলছে!</p>
+              <p className="heading-display text-xs text-brand-gold flex items-center gap-1.5">
+                <CloudRain size={13} />
+                CRYPTO RAIN চলছে
+              </p>
               <p className="text-text-muted text-xs font-mono mt-0.5">
                 মোট ${activeRain.totalAmount.toFixed(2)} |{' '}
                 {activeRain.claimCount ?? 0}/{activeRain.maxClaims} ক্লেইম
@@ -90,16 +94,19 @@ export default function LiveChat() {
 
             {user ? (
               hasClaimedRain ? (
-                <span className="text-neon-green text-xs font-mono shrink-0">✅ ক্লেইম হয়েছে</span>
+                <span className="flex items-center gap-1 text-brand-green text-xs font-mono shrink-0">
+                  <CheckCheck size={13} /> ক্লেইম হয়েছে
+                </span>
               ) : (
                 <button
                   onClick={claimRain}
                   disabled={claiming}
-                  className="shrink-0 px-3 py-1.5 rounded-lg bg-neon-gold text-void
-                             font-display font-bold text-xs hover:opacity-90
-                             disabled:opacity-50 transition-all animate-pulse"
+                  className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-gold text-void
+                             font-display font-semibold text-xs hover:bg-brand-gold-dim
+                             disabled:opacity-50 transition-all"
                 >
-                  {claiming ? '⏳' : '💸 ক্লেইম!'}
+                  {claiming ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  ক্লেইম করুন
                 </button>
               )
             ) : (
@@ -110,7 +117,7 @@ export default function LiveChat() {
           {/* প্রগ্রেস বার */}
           <div className="mt-2 h-1 bg-border rounded-full overflow-hidden">
             <div
-              className="h-full bg-neon-gold transition-all duration-500"
+              className="h-full bg-brand-gold transition-all duration-500"
               style={{
                 width: `${Math.min(
                   ((activeRain.claimCount ?? 0) / activeRain.maxClaims) * 100,
@@ -135,7 +142,7 @@ export default function LiveChat() {
             key={msg.id}
             className={`px-2 py-1 rounded text-xs leading-relaxed ${msgBg(msg.type)}`}
           >
-            <span className="font-mono font-bold text-neon-blue">{msg.username}: </span>
+            <span className="font-mono font-bold text-brand-info">{msg.username}: </span>
             <span className={`font-mono ${msgColor(msg.type)}`}>{msg.message}</span>
           </div>
         ))}
@@ -159,12 +166,12 @@ export default function LiveChat() {
             <button
               onClick={sendMessage}
               disabled={!message.trim()}
-              className="px-3 py-2 rounded-lg bg-neon-green/20 border border-neon-green/40
-                         text-neon-green text-sm hover:bg-neon-green/30 transition-all
-                         disabled:opacity-40"
+              className="px-3 py-2 rounded-lg bg-brand-green/15 border border-brand-green/30
+                         text-brand-green hover:bg-brand-green/25 transition-all
+                         disabled:opacity-40 flex items-center justify-center"
               aria-label="বার্তা পাঠান"
             >
-              →
+              <Send size={15} />
             </button>
           </div>
         ) : (

@@ -11,9 +11,10 @@
  */
 
 import { useState } from 'react';
+import { X, Coins, Loader2, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
 import {
   isMetaMaskInstalled, isPhantomInstalled,
-  connectMetaMask, connectPhantom, shortenAddress,
+  connectMetaMask, connectPhantom,
 } from '@/lib/wallet';
 import { useGameStore } from '@/lib/store';
 import { storeToken } from '@/lib/socket';
@@ -132,21 +133,23 @@ export default function LoginModal({ onClose }: Props) {
         {/* বন্ধ বাটন */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-text-muted hover:text-text-primary text-xl"
+          className="absolute top-4 right-4 text-text-muted hover:text-text-primary"
           aria-label="বন্ধ করুন"
         >
-          ✕
+          <X size={18} />
         </button>
 
         {/* হেডার */}
         <div className="text-center mb-6">
-          <div className="text-4xl mb-2">🪙</div>
-          <h2 className="heading-display text-xl text-neon">CRYPTOFLIP-এ যোগ দিন</h2>
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-brand-green/10 text-brand-green mb-3">
+            <Coins size={24} />
+          </div>
+          <h2 className="heading-display text-xl text-brand">CRYPTOFLIP-এ যোগ দিন</h2>
           <p className="text-text-muted text-xs font-mono mt-1">নতুন রেজিস্ট্রেশনে $5-$10 ওয়েলকাম বোনাস</p>
         </div>
 
         {error && (
-          <div className="mb-4 px-3 py-2 rounded-lg bg-neon-red/10 border border-neon-red/30 text-neon-red text-xs font-mono">
+          <div className="mb-4 px-3 py-2 rounded-lg bg-brand-red/10 border border-brand-red/30 text-brand-red text-xs font-mono">
             {error}
           </div>
         )}
@@ -158,19 +161,19 @@ export default function LoginModal({ onClose }: Props) {
               onClick={handleMetaMask}
               disabled={connectingType !== null}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border
-                         hover:border-neon-gold/50 hover:bg-neon-gold/5 transition-all duration-200
+                         hover:border-brand-gold/50 hover:bg-brand-gold/5 transition-all duration-200
                          disabled:opacity-50"
             >
-              <span className="text-2xl">🦊</span>
+              <div className="w-9 h-9 rounded-lg bg-brand-gold/10 flex items-center justify-center text-xl shrink-0">🦊</div>
               <div className="text-left flex-1">
-                <div className="font-display font-bold text-sm text-text-primary">MetaMask</div>
+                <div className="font-display font-semibold text-sm text-text-primary">MetaMask</div>
                 <div className="text-text-muted text-xs font-mono">Ethereum / BSC ওয়ালেট</div>
               </div>
               {connectingType === 'metamask' && (
-                <span className="text-neon-gold text-xs">⏳</span>
+                <Loader2 size={14} className="text-brand-gold animate-spin" />
               )}
-              {!isMetaMaskInstalled() && (
-                <span className="text-text-muted text-xs">ইন্সটল করুন →</span>
+              {!isMetaMaskInstalled() && connectingType !== 'metamask' && (
+                <span className="flex items-center gap-1 text-text-muted text-xs">ইন্সটল করুন <ArrowRight size={12} /></span>
               )}
             </button>
 
@@ -179,19 +182,19 @@ export default function LoginModal({ onClose }: Props) {
               onClick={handlePhantom}
               disabled={connectingType !== null}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border
-                         hover:border-neon-purple/50 hover:bg-neon-purple/5 transition-all duration-200
+                         hover:border-brand-maroon/50 hover:bg-brand-maroon/5 transition-all duration-200
                          disabled:opacity-50"
             >
-              <span className="text-2xl">👻</span>
+              <div className="w-9 h-9 rounded-lg bg-brand-maroon/10 flex items-center justify-center text-xl shrink-0">👻</div>
               <div className="text-left flex-1">
-                <div className="font-display font-bold text-sm text-text-primary">Phantom</div>
+                <div className="font-display font-semibold text-sm text-text-primary">Phantom</div>
                 <div className="text-text-muted text-xs font-mono">Solana ওয়ালেট</div>
               </div>
               {connectingType === 'phantom' && (
-                <span className="text-neon-purple text-xs">⏳</span>
+                <Loader2 size={14} className="text-brand-maroon animate-spin" />
               )}
-              {!isPhantomInstalled() && (
-                <span className="text-text-muted text-xs">ইন্সটল করুন →</span>
+              {!isPhantomInstalled() && connectingType !== 'phantom' && (
+                <span className="flex items-center gap-1 text-text-muted text-xs">ইন্সটল করুন <ArrowRight size={12} /></span>
               )}
             </button>
 
@@ -206,11 +209,13 @@ export default function LoginModal({ onClose }: Props) {
             <button
               onClick={() => setMode('email')}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border
-                         hover:border-neon-blue/50 hover:bg-neon-blue/5 transition-all duration-200"
+                         hover:border-brand-info/50 hover:bg-brand-info/5 transition-all duration-200"
             >
-              <span className="text-2xl">📧</span>
+              <div className="w-9 h-9 rounded-lg bg-brand-info/10 text-brand-info flex items-center justify-center shrink-0">
+                <Mail size={17} />
+              </div>
               <div className="text-left flex-1">
-                <div className="font-display font-bold text-sm text-text-primary">ইউজারনেম/পাসওয়ার্ড</div>
+                <div className="font-display font-semibold text-sm text-text-primary">ইউজারনেম/পাসওয়ার্ড</div>
                 <div className="text-text-muted text-xs font-mono">ওয়ালেট ছাড়াই খেলুন</div>
               </div>
             </button>
@@ -221,9 +226,10 @@ export default function LoginModal({ onClose }: Props) {
           <div className="space-y-3">
             <button
               onClick={() => setMode('choose')}
-              className="text-text-muted text-xs font-mono hover:text-text-secondary mb-2"
+              className="flex items-center gap-1 text-text-muted text-xs font-mono hover:text-text-secondary mb-2"
             >
-              ← ফিরে যান
+              <ArrowLeft size={12} />
+              ফিরে যান
             </button>
 
             <input
@@ -254,16 +260,17 @@ export default function LoginModal({ onClose }: Props) {
             <button
               onClick={handleEmailAuth}
               disabled={loading}
-              className="btn-neon w-full disabled:opacity-50"
+              className="btn-brand w-full flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {loading ? '⏳ অপেক্ষা করুন...' : isRegister ? 'রেজিস্ট্রেশন করুন' : 'লগইন করুন'}
+              {loading && <Loader2 size={15} className="animate-spin" />}
+              {loading ? 'অপেক্ষা করুন...' : isRegister ? 'রেজিস্ট্রেশন করুন' : 'লগইন করুন'}
             </button>
 
             <p className="text-center text-text-muted text-xs font-mono">
               {isRegister ? 'অ্যাকাউন্ট আছে?' : 'নতুন এসেছেন?'}{' '}
               <button
                 onClick={() => setIsRegister(!isRegister)}
-                className="text-neon-green hover:underline"
+                className="text-brand-green hover:underline"
               >
                 {isRegister ? 'লগইন করুন' : 'রেজিস্ট্রেশন করুন'}
               </button>

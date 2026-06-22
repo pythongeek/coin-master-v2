@@ -6,6 +6,7 @@
  */
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { BarChart3, Gamepad2 } from 'lucide-react';
 import StatsCards from '@/components/dashboard/StatsCards';
 import ProfitChart from '@/components/dashboard/ProfitChart';
 import BetHistory from '@/components/dashboard/BetHistory';
@@ -58,11 +59,20 @@ export default function DashboardPage() {
     <main className="min-h-screen p-4 md:p-6 max-w-5xl mx-auto">
       {/* হেডার */}
       <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="heading-display text-2xl text-neon-blue">আমার ড্যাশবোর্ড</h1>
-          <p className="text-text-muted text-xs font-mono mt-0.5">আপনার সম্পূর্ণ গেমিং পরিসংখ্যান</p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-brand-info/10 border border-brand-info/25
+                          flex items-center justify-center text-brand-info">
+            <BarChart3 size={18} />
+          </div>
+          <div>
+            <h1 className="heading-display text-xl text-text-primary">আমার ড্যাশবোর্ড</h1>
+            <p className="text-text-muted text-xs font-mono mt-0.5">আপনার সম্পূর্ণ গেমিং পরিসংখ্যান</p>
+          </div>
         </div>
-        <Link href="/game" className="btn-neon text-sm py-2 px-4">🎮 গেম খেলুন</Link>
+        <Link href="/game" className="btn-brand flex items-center gap-1.5 text-sm py-2 px-4">
+          <Gamepad2 size={15} />
+          গেম খেলুন
+        </Link>
       </div>
 
       <div className="space-y-5">

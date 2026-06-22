@@ -5,6 +5,7 @@
  * ═══════════════════════════════════════════════════════════════
  */
 import { useState, useEffect } from 'react';
+import { Wallet, CloudRain, Users, Zap, ShieldCheck, Settings, RotateCcw, Calculator, Check, Loader2, type LucideIcon } from 'lucide-react';
 
 // ── DEFAULT CONFIG (Backend থেকে না পেলে এটি ব্যবহার হবে) ────────
 const DEFAULTS = {
@@ -27,13 +28,13 @@ const DEFAULTS = {
 
 type ConfigKey = keyof typeof DEFAULTS;
 
-const CATEGORY_ICONS: Record<string, string> = {
-  'বেটিং': '💰',
-  'ক্রিপ্টো রেইন': '🌧️',
-  'স্কোয়াড': '👥',
-  'গেম স্পিড': '⚡',
-  'নিরাপত্তা': '🔐',
-  'সিস্টেম': '⚙️',
+const CATEGORY_ICONS: Record<string, LucideIcon> = {
+  'বেটিং': Wallet,
+  'ক্রিপ্টো রেইন': CloudRain,
+  'স্কোয়াড': Users,
+  'গেম স্পিড': Zap,
+  'নিরাপত্তা': ShieldCheck,
+  'সিস্টেম': Settings,
 };
 
 export default function AdminConfigPanel() {
@@ -90,36 +91,37 @@ export default function AdminConfigPanel() {
       {/* ─── হেডার ───────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="heading-display text-xl text-neon-purple">এডমিন কন্ট্রোল প্যানেল</h2>
+          <h2 className="heading-display text-xl text-brand-maroon">এডমিন কন্ট্রোল প্যানেল</h2>
           <p className="text-text-muted text-xs font-mono mt-1">সব পরিবর্তন সাথে সাথে কার্যকর হয়</p>
         </div>
         <button
           onClick={handleReset}
-          className="px-4 py-2 border border-neon-red/50 text-neon-red rounded-lg text-xs font-mono
-                     hover:bg-neon-red/10 transition-all duration-200"
+          className="flex items-center gap-1.5 px-4 py-2 border border-brand-red/40 text-brand-red rounded-lg text-xs font-mono
+                     hover:bg-brand-red/10 transition-all duration-150"
         >
-          🔄 ডিফল্টে ফিরুন
+          <RotateCcw size={13} />
+          ডিফল্টে ফিরুন
         </button>
       </div>
 
       {/* ─── হাউজ এজ ক্যালকুলেটর ─────────────────────────────────── */}
-      <div className="glass-card p-4 border border-neon-gold/30 bg-neon-gold/5">
+      <div className="glass-card p-4 border border-brand-gold/30 bg-brand-gold/5">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-lg">🧮</span>
-          <span className="heading-display text-sm text-neon-gold">পেআউট ক্যালকুলেটর</span>
+          <Calculator size={16} className="text-brand-gold" />
+          <span className="heading-display text-sm text-brand-gold">পেআউট ক্যালকুলেটর</span>
         </div>
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="bg-void rounded-lg p-3">
             <div className="text-text-muted text-xs font-mono">হাউজ এজ</div>
-            <div className="text-neon-gold font-mono font-bold text-lg">{houseEdge}%</div>
+            <div className="text-brand-gold font-mono font-bold text-lg">{houseEdge}%</div>
           </div>
           <div className="bg-void rounded-lg p-3">
             <div className="text-text-muted text-xs font-mono">মাল্টিপ্লায়ার</div>
-            <div className="text-neon-green font-mono font-bold text-lg">{payoutMultiplier}×</div>
+            <div className="text-brand-green font-mono font-bold text-lg">{payoutMultiplier}×</div>
           </div>
           <div className="bg-void rounded-lg p-3">
             <div className="text-text-muted text-xs font-mono">$100 বেটে জিতলে</div>
-            <div className="text-neon-blue font-mono font-bold text-lg">${examplePayout}</div>
+            <div className="text-brand-info font-mono font-bold text-lg">${examplePayout}</div>
           </div>
         </div>
         <p className="text-text-muted text-xs font-mono mt-2 text-center">
@@ -129,19 +131,23 @@ export default function AdminConfigPanel() {
 
       {/* ─── ক্যাটাগরি ট্যাব ──────────────────────────────────────── */}
       <div className="flex flex-wrap gap-2">
-        {categories.map(cat => (
-          <button
-            key={cat}
-            onClick={() => setActiveCategory(cat)}
-            className={`px-4 py-2 rounded-lg text-xs font-mono transition-all duration-200 ${
-              activeCategory === cat
-                ? 'bg-neon-purple text-void font-bold shadow-neon-purple'
-                : 'border border-border text-text-secondary hover:border-neon-purple/50'
-            }`}
-          >
-            {CATEGORY_ICONS[cat]} {cat}
-          </button>
-        ))}
+        {categories.map(cat => {
+          const CatIcon = CATEGORY_ICONS[cat];
+          return (
+            <button
+              key={cat}
+              onClick={() => setActiveCategory(cat)}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-mono transition-all duration-150 ${
+                activeCategory === cat
+                  ? 'bg-brand-maroon text-white font-medium shadow-brand-maroon'
+                  : 'border border-border text-text-secondary hover:border-brand-maroon/50'
+              }`}
+            >
+              <CatIcon size={13} />
+              {cat}
+            </button>
+          );
+        })}
       </div>
 
       {/* ─── সেটিং কার্ডগুলো ──────────────────────────────────────── */}
@@ -157,7 +163,7 @@ export default function AdminConfigPanel() {
             <div
               key={key}
               className={`glass-card p-4 border transition-all duration-300 ${
-                isModified ? 'border-neon-purple/40' : 'border-border'
+                isModified ? 'border-brand-maroon/40' : 'border-border'
               }`}
             >
               <div className="flex items-start justify-between gap-4">
@@ -166,18 +172,20 @@ export default function AdminConfigPanel() {
                   <div className="flex items-center gap-2">
                     <span className="heading-display text-sm text-text-primary">{meta.label}</span>
                     {isModified && (
-                      <span className="text-xs font-mono text-neon-purple px-2 py-0.5 border border-neon-purple/30 rounded">
+                      <span className="text-xs font-mono text-brand-maroon px-2 py-0.5 border border-brand-maroon/30 rounded">
                         পরিবর্তিত
                       </span>
                     )}
                     {isSaved && (
-                      <span className="text-xs font-mono text-neon-green animate-float-up">✓ সেভ হয়েছে</span>
+                      <span className="flex items-center gap-1 text-xs font-mono text-brand-green animate-float-up">
+                        <Check size={11} /> সেভ হয়েছে
+                      </span>
                     )}
                   </div>
                   <p className="text-text-muted text-xs font-mono mt-1">{meta.desc}</p>
                   {isModified && (
                     <p className="text-text-muted text-xs font-mono mt-0.5">
-                      ডিফল্ট: <span className="text-neon-blue">{String(meta.value)}{meta.unit}</span>
+                      ডিফল্ট: <span className="text-brand-info">{String(meta.value)}{meta.unit}</span>
                     </p>
                   )}
                 </div>
@@ -189,7 +197,7 @@ export default function AdminConfigPanel() {
                     <button
                       onClick={() => handleUpdate(configKey, !currentValue)}
                       className={`relative w-14 h-7 rounded-full transition-all duration-300 ${
-                        currentValue ? 'bg-neon-green shadow-neon-green' : 'bg-border'
+                        currentValue ? 'bg-brand-green shadow-brand-green' : 'bg-border'
                       }`}
                     >
                       <span className={`absolute top-1 w-5 h-5 bg-void rounded-full transition-all duration-300 ${
@@ -208,7 +216,7 @@ export default function AdminConfigPanel() {
                         onChange={e => setConfig(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))}
                         onBlur={e => handleUpdate(configKey, parseFloat(e.target.value) || 0)}
                         className="w-28 px-3 py-2 bg-void border border-border rounded-lg text-right
-                                   font-mono text-sm text-text-primary focus:outline-none focus:border-neon-purple
+                                   font-mono text-sm text-text-primary focus:outline-none focus:border-brand-maroon
                                    transition-colors"
                       />
                       {meta.unit && (
@@ -216,7 +224,7 @@ export default function AdminConfigPanel() {
                       )}
                     </div>
                   )}
-                  {isSaving && <span className="text-neon-blue text-xs">⏳</span>}
+                  {isSaving && <Loader2 size={13} className="text-brand-info animate-spin" />}
                 </div>
               </div>
 
@@ -236,10 +244,10 @@ export default function AdminConfigPanel() {
                     }}
                     className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
                     style={{
-                      background: `linear-gradient(to right, #B44FFF ${
+                      background: `linear-gradient(to right, #A8395C ${
                         (((currentValue as number) - ((meta as { min?: number }).min || 0)) /
                           (((meta as { max?: number }).max || 100) - ((meta as { min?: number }).min || 0))) * 100
-                      }%, #1A1A2E 0%)`,
+                      }%, #262C36 0%)`,
                     }}
                   />
                   <div className="flex justify-between text-text-muted text-xs font-mono mt-1">

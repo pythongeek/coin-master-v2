@@ -19,6 +19,7 @@
 
 import { useEffect, useState, Suspense, lazy } from 'react';
 import Link from 'next/link';
+import { Coins, Dices, Users, Trophy, XCircle, Loader2, LayoutDashboard, LogOut } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { useSocketEvents } from '@/lib/useSocketEvents';
 import { getSocket, clearToken } from '@/lib/socket';
@@ -57,9 +58,11 @@ export default function GamePage() {
 
         {/* ── NAVBAR ─────────────────────────────────────── */}
         <nav className="glass-card mx-4 mt-4 px-5 py-3 flex items-center justify-between flex-wrap gap-3">
-          <Link href="/" className="heading-display text-lg">
-            <span className="text-neon-green">CRYPTO</span>
-            <span className="text-neon-blue">FLIP</span>
+          <Link href="/" className="flex items-center gap-2 heading-display text-lg">
+            <div className="w-7 h-7 rounded-lg bg-brand-green/10 text-brand-green flex items-center justify-center">
+              <Coins size={15} />
+            </div>
+            <span className="text-text-primary">CRYPTO<span className="text-brand-green">FLIP</span></span>
           </Link>
 
           {user ? (
@@ -75,24 +78,26 @@ export default function GamePage() {
                   {user.walletAddress ? shortenAddress(user.walletAddress) : user.username}
                 </div>
                 <div className="flex items-center gap-1 justify-end">
-                  <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse-soft" />
                   <span className="text-text-secondary text-xs font-mono">{onlineCount} অনলাইন</span>
                 </div>
               </div>
-              <Link href="/dashboard" className="text-text-muted hover:text-neon-blue text-xs font-mono">
-                📊 ড্যাশবোর্ড
+              <Link href="/dashboard" className="flex items-center gap-1.5 text-text-muted hover:text-brand-info text-xs font-mono">
+                <LayoutDashboard size={13} />
+                ড্যাশবোর্ড
               </Link>
               <button
                 onClick={handleLogout}
-                className="text-text-muted hover:text-neon-red text-xs font-mono"
+                className="flex items-center gap-1.5 text-text-muted hover:text-brand-red text-xs font-mono"
               >
+                <LogOut size={13} />
                 লগআউট
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-3">
               <span className="text-text-muted text-xs font-mono">{onlineCount} দর্শক</span>
-              <button onClick={() => setShowLogin(true)} className="btn-neon text-sm py-2 px-4">
+              <button onClick={() => setShowLogin(true)} className="btn-brand text-sm py-2 px-4">
                 লগইন / ওয়ালেট কানেক্ট
               </button>
             </div>
@@ -113,22 +118,20 @@ export default function GamePage() {
                 <div className={`
                   flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-mono
                   ${gameStatus === 'spinning'
-                    ? 'border-neon-gold/60 bg-neon-gold/10 text-neon-gold'
+                    ? 'border-brand-gold/50 bg-brand-gold/10 text-brand-gold'
                     : gameStatus === 'result'
                     ? lastResult?.won
-                      ? 'border-neon-green/60 bg-neon-green/10 text-neon-green'
-                      : 'border-neon-red/60 bg-neon-red/10 text-neon-red'
+                      ? 'border-brand-green/50 bg-brand-green/10 text-brand-green'
+                      : 'border-brand-red/50 bg-brand-red/10 text-brand-red'
                     : 'border-border bg-surface text-text-muted'
                   }
                 `}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    gameStatus === 'spinning' ? 'bg-neon-gold animate-pulse' :
-                    gameStatus === 'result'   ? (lastResult?.won ? 'bg-neon-green' : 'bg-neon-red') :
-                    'bg-text-muted'
-                  }`} />
+                  {gameStatus === 'spinning' && <Loader2 size={12} className="animate-spin" />}
+                  {gameStatus === 'result' && (lastResult?.won ? <Trophy size={12} /> : <XCircle size={12} />)}
+                  {gameStatus === 'idle' && <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />}
                   {gameStatus === 'idle'     && 'বেট ধরুন'}
-                  {gameStatus === 'spinning' && '⏳ ঘুরছে...'}
-                  {gameStatus === 'result'   && (lastResult?.won ? 'জিতেছেন! 🎉' : 'হেরেছেন 😔')}
+                  {gameStatus === 'spinning' && 'ঘুরছে...'}
+                  {gameStatus === 'result'   && (lastResult?.won ? 'জিতেছেন!' : 'হেরেছেন')}
                 </div>
               </div>
 
@@ -139,7 +142,7 @@ export default function GamePage() {
               {/* কয়েন */}
               <Suspense fallback={
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-7xl animate-spin-slow">🪙</div>
+                  <Coins size={56} className="text-brand-gold animate-spin-slow" strokeWidth={1.5} />
                 </div>
               }>
                 <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} />
@@ -155,23 +158,25 @@ export default function GamePage() {
             <div className="flex gap-2">
               <button
                 onClick={() => setShowSquad(false)}
-                className={`flex-1 py-2 rounded-lg text-sm font-mono transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-mono transition-all ${
                   !showSquad
-                    ? 'bg-neon-green/15 text-neon-green border border-neon-green/40'
-                    : 'border border-border text-text-muted hover:border-neon-green/30'
+                    ? 'bg-brand-green/15 text-brand-green border border-brand-green/35'
+                    : 'border border-border text-text-muted hover:border-brand-green/30'
                 }`}
               >
-                🎲 একক বেট
+                <Dices size={14} />
+                একক বেট
               </button>
               <button
                 onClick={() => setShowSquad(true)}
-                className={`flex-1 py-2 rounded-lg text-sm font-mono transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-mono transition-all ${
                   showSquad
-                    ? 'bg-neon-purple/15 text-neon-purple border border-neon-purple/40'
-                    : 'border border-border text-text-muted hover:border-neon-purple/30'
+                    ? 'bg-brand-maroon/15 text-brand-maroon border border-brand-maroon/35'
+                    : 'border border-border text-text-muted hover:border-brand-maroon/30'
                 }`}
               >
-                👥 স্কোয়াড ফ্লিপ
+                <Users size={14} />
+                স্কোয়াড ফ্লিপ
               </button>
             </div>
 

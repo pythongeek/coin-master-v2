@@ -12,6 +12,7 @@
  */
 
 import { useState } from 'react';
+import { Lock, RotateCw, Coins } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { getSocket } from '@/lib/socket';
 
@@ -69,20 +70,20 @@ export default function BetControls() {
             onClick={() => setCurrentChoice('heads')}
             disabled={isSpinning}
             className={`
-              relative py-5 rounded-xl border-2 transition-all duration-200
-              flex flex-col items-center gap-2 font-display font-bold text-sm
+              relative py-5 rounded-xl border transition-all duration-150
+              flex flex-col items-center gap-2 font-display font-semibold text-sm
               disabled:cursor-not-allowed
               ${currentChoice === 'heads'
-                ? 'border-neon-green bg-neon-green/10 text-neon-green shadow-neon-green scale-[1.03]'
-                : 'border-border text-text-secondary hover:border-neon-green/40'
+                ? 'border-brand-green bg-brand-green/[0.08] text-brand-green shadow-brand-green'
+                : 'border-border text-text-secondary hover:border-brand-green/40 hover:-translate-y-0.5'
               }
             `}
             aria-pressed={currentChoice === 'heads'}
           >
-            <span className="text-3xl">👑</span>
+            <span className="text-3xl">🪷</span>
             <span>HEADS</span>
             {currentChoice === 'heads' && (
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-neon-green animate-pulse" />
+              <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 rounded-full bg-brand-green" />
             )}
           </button>
 
@@ -91,20 +92,20 @@ export default function BetControls() {
             onClick={() => setCurrentChoice('tails')}
             disabled={isSpinning}
             className={`
-              relative py-5 rounded-xl border-2 transition-all duration-200
-              flex flex-col items-center gap-2 font-display font-bold text-sm
+              relative py-5 rounded-xl border transition-all duration-150
+              flex flex-col items-center gap-2 font-display font-semibold text-sm
               disabled:cursor-not-allowed
               ${currentChoice === 'tails'
-                ? 'border-neon-blue bg-neon-blue/10 text-neon-blue shadow-neon-blue scale-[1.03]'
-                : 'border-border text-text-secondary hover:border-neon-blue/40'
+                ? 'border-brand-maroon bg-brand-maroon/[0.08] text-brand-maroon shadow-brand-maroon'
+                : 'border-border text-text-secondary hover:border-brand-maroon/40 hover:-translate-y-0.5'
               }
             `}
             aria-pressed={currentChoice === 'tails'}
           >
-            <span className="text-3xl">🦅</span>
+            <span className="text-3xl">🐯</span>
             <span>TAILS</span>
             {currentChoice === 'tails' && (
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-neon-blue animate-pulse" />
+              <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 rounded-full bg-brand-maroon" />
             )}
           </button>
         </div>
@@ -116,7 +117,7 @@ export default function BetControls() {
           <p className="text-text-muted text-xs font-mono uppercase tracking-widest">বেট পরিমাণ</p>
           {user && (
             <p className="text-text-muted text-xs font-mono">
-              ব্যালেন্স: <span className="text-neon-green">${user.balance.toFixed(2)}</span>
+              ব্যালেন্স: <span className="text-brand-green">${user.balance.toFixed(2)}</span>
             </p>
           )}
         </div>
@@ -149,7 +150,7 @@ export default function BetControls() {
               onClick={action}
               disabled={isSpinning}
               className="flex-1 py-1.5 rounded-lg border border-border text-text-muted
-                         text-xs font-mono hover:border-neon-green/50 hover:text-neon-green
+                         text-xs font-mono hover:border-brand-green/50 hover:text-brand-green
                          transition-all duration-150 disabled:opacity-40"
             >
               {label}
@@ -168,8 +169,8 @@ export default function BetControls() {
                 py-1.5 rounded-lg text-xs font-mono border transition-all duration-150
                 disabled:opacity-30 disabled:cursor-not-allowed
                 ${betAmount === preset
-                  ? 'border-neon-green text-neon-green bg-neon-green/10'
-                  : 'border-border text-text-muted hover:border-neon-green/40'
+                  ? 'border-brand-green text-brand-green bg-brand-green/10'
+                  : 'border-border text-text-muted hover:border-brand-green/40'
                 }
               `}
             >
@@ -184,25 +185,32 @@ export default function BetControls() {
         onClick={handleFlip}
         disabled={!canBet || betAmount <= 0 || (user ? betAmount > user.balance : false)}
         className={`
-          w-full py-5 rounded-xl font-display font-black text-xl tracking-widest
-          transition-all duration-200 relative overflow-hidden
+          w-full py-4 rounded-xl font-display font-semibold text-lg tracking-wide
+          transition-all duration-150 relative overflow-hidden flex items-center justify-center gap-2
           disabled:cursor-not-allowed disabled:opacity-40
           ${isSpinning
-            ? 'bg-border text-text-muted cursor-wait'
-            : 'bg-neon-green text-void hover:shadow-neon-green hover:scale-[1.02] active:scale-[0.98]'
+            ? 'bg-surface2 text-text-muted cursor-wait border border-border'
+            : 'bg-brand-green text-void shadow-brand-green hover:bg-brand-green-dim hover:-translate-y-0.5 active:translate-y-0'
           }
         `}
+        style={!isSpinning ? { backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0) 55%)' } : undefined}
         aria-live="polite"
       >
         {isSpinning ? (
-          <span className="flex items-center justify-center gap-3">
+          <>
             <span className="w-5 h-5 border-2 border-text-muted border-t-transparent rounded-full animate-spin" />
             ঘুরছে...
-          </span>
+          </>
         ) : isResult ? (
-          '🔄 আবার খেলুন'
+          <>
+            <RotateCw size={20} strokeWidth={2.25} />
+            আবার খেলুন
+          </>
         ) : (
-          '🪙 FLIP!'
+          <>
+            <Coins size={20} strokeWidth={2.25} />
+            FLIP
+          </>
         )}
       </button>
 
@@ -210,9 +218,10 @@ export default function BetControls() {
       <div>
         <button
           onClick={() => setShowSeed(!showSeed)}
-          className="text-text-muted text-xs font-mono hover:text-text-secondary transition-colors"
+          className="flex items-center gap-1.5 text-text-muted text-xs font-mono hover:text-text-secondary transition-colors"
         >
-          🔐 {showSeed ? 'সিড লুকান' : 'ক্লায়েন্ট সিড পরিবর্তন করুন'}
+          <Lock size={12} />
+          {showSeed ? 'সিড লুকান' : 'ক্লায়েন্ট সিড পরিবর্তন করুন'}
         </button>
 
         {showSeed && (

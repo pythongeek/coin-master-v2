@@ -121,8 +121,8 @@ export default function ProfitChart({ data, loading }: Props) {
               onClick={() => setView(v)}
               className={`px-3 py-1 rounded text-xs font-mono transition-all ${
                 view === v
-                  ? 'bg-neon-green/20 text-neon-green border border-neon-green/40'
-                  : 'text-text-muted border border-border hover:border-neon-green/30'
+                  ? 'bg-brand-green/20 text-brand-green border border-brand-green/40'
+                  : 'text-text-muted border border-border hover:border-brand-green/30'
               }`}
             >
               {v === 'cumulative' ? 'ক্রমবর্ধমান' : 'দৈনিক'}
@@ -143,14 +143,14 @@ export default function ProfitChart({ data, loading }: Props) {
           <g key={val}>
             <line
               x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
-              stroke={val === 0 ? '#4A4A6A' : '#1A1A2E'}
+              stroke={val === 0 ? '#5B6472' : '#262C36'}
               strokeWidth={val === 0 ? 1 : 0.5}
               strokeDasharray={val === 0 ? '4 4' : '2 4'}
             />
             <text
               x={PAD.left - 8} y={y + 4}
               textAnchor="end" fontSize="10"
-              fill={val === 0 ? '#4A4A6A' : '#4A4A6A'}
+              fill={val === 0 ? '#5B6472' : '#5B6472'}
               fontFamily="monospace"
             >
               {val >= 0 ? '+' : ''}{val.toFixed(1)}
@@ -164,8 +164,8 @@ export default function ProfitChart({ data, loading }: Props) {
             d={areaPath}
             fill={
               points[points.length - 1]?.val >= 0
-                ? 'rgba(0, 255, 148, 0.08)'
-                : 'rgba(255, 58, 58, 0.08)'
+                ? 'rgba(0, 197, 102, 0.08)'
+                : 'rgba(232, 56, 79, 0.08)'
             }
           />
         )}
@@ -175,7 +175,7 @@ export default function ProfitChart({ data, loading }: Props) {
           <path
             d={linePath}
             fill="none"
-            stroke={points[points.length - 1]?.val >= 0 ? '#00FF94' : '#FF3A3A'}
+            stroke={points[points.length - 1]?.val >= 0 ? '#00C566' : '#E8384F'}
             strokeWidth="1.5"
             strokeLinejoin="round"
             strokeLinecap="round"
@@ -189,7 +189,7 @@ export default function ProfitChart({ data, loading }: Props) {
             <circle
               key={i}
               cx={p.x} cy={p.y} r={2.5}
-              fill={p.val >= 0 ? '#00FF94' : '#FF3A3A'}
+              fill={p.val >= 0 ? '#00C566' : '#E8384F'}
             />
           ))}
 
@@ -199,7 +199,7 @@ export default function ProfitChart({ data, loading }: Props) {
             key={label}
             x={x} y={H - 6}
             textAnchor="middle" fontSize="10"
-            fill="#4A4A6A"
+            fill="#5B6472"
             fontFamily="monospace"
           >
             {label}
@@ -218,7 +218,7 @@ export default function ProfitChart({ data, loading }: Props) {
             <div className="text-text-muted text-xs font-mono">{item.label}</div>
             <div className={`font-mono text-sm font-bold ${
               item.val === null ? 'text-text-primary' :
-              (item.val ?? 0) >= 0 ? 'text-neon-green' : 'text-neon-red'
+              (item.val ?? 0) >= 0 ? 'text-brand-green' : 'text-brand-red'
             }`}>
               {item.val !== null && item.val !== undefined
                 ? `${item.val >= 0 ? '+' : ''}$${item.val.toFixed(2)}`

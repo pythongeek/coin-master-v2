@@ -4,6 +4,7 @@
  *  BET HISTORY TABLE — বেট ইতিহাসের সম্পূর্ণ তালিকা
  * ═══════════════════════════════════════════════════════════════
  */
+import { Check, X, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface Bet {
   id:         string;
@@ -66,7 +67,7 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
                 <tr
                   key={bet.id}
                   className={`border-b border-border/50 transition-colors hover:bg-white/2 ${
-                    bet.won ? 'bg-neon-green/2' : ''
+                    bet.won ? 'bg-brand-green/2' : ''
                   }`}
                 >
                   {/* সময় */}
@@ -79,19 +80,20 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
 
                   {/* পছন্দ */}
                   <td className="px-4 py-2.5">
-                    <span className={bet.choice === 'heads' ? 'text-neon-green' : 'text-neon-blue'}>
-                      {bet.choice === 'heads' ? '👑 H' : '🦅 T'}
+                    <span className={bet.choice === 'heads' ? 'text-brand-green' : 'text-brand-info'}>
+                      {bet.choice === 'heads' ? '🪷 H' : '🐯 T'}
                     </span>
                   </td>
 
                   {/* ফলাফল */}
                   <td className="px-4 py-2.5">
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                       bet.won
-                        ? 'bg-neon-green/15 text-neon-green'
-                        : 'bg-neon-red/15 text-neon-red'
+                        ? 'bg-brand-green/15 text-brand-green'
+                        : 'bg-brand-red/15 text-brand-red'
                     }`}>
-                      {bet.won ? '✓ জয়' : '✗ হার'}
+                      {bet.won ? <Check size={11} /> : <X size={11} />}
+                      {bet.won ? 'জয়' : 'হার'}
                     </span>
                   </td>
 
@@ -101,8 +103,8 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
                   </td>
 
                   {/* পেআউট */}
-                  <td className={`px-4 py-2.5 font-bold ${
-                    bet.won ? 'text-neon-green' : 'text-neon-red'
+                  <td className={`px-4 py-2.5 font-semibold ${
+                    bet.won ? 'text-brand-green' : 'text-brand-red'
                   }`}>
                     {bet.won
                       ? `+$${parseFloat(String(bet.payout)).toFixed(2)}`
@@ -122,10 +124,11 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
                         const url = `/game?verify=true&hash=${bet.flip_hash}`;
                         window.open(url, '_blank');
                       }}
-                      className="text-neon-blue hover:underline text-xs"
+                      className="flex items-center gap-1 text-brand-info hover:underline text-xs"
                       title="Provably Fair যাচাই করুন"
                     >
-                      🔐 যাচাই
+                      <ShieldCheck size={12} />
+                      যাচাই
                     </button>
                   </td>
                 </tr>
@@ -141,10 +144,10 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
           <button
             onClick={() => onPageChange(page - 1)}
             disabled={page <= 1}
-            className="px-3 py-1 rounded border border-border text-text-muted text-xs
-                       hover:border-neon-green/50 disabled:opacity-30 transition-all"
+            className="flex items-center gap-1 px-3 py-1 rounded border border-border text-text-muted text-xs
+                       hover:border-brand-green/50 disabled:opacity-30 transition-all"
           >
-            ← আগে
+            <ChevronLeft size={13} /> আগে
           </button>
           <span className="text-text-muted text-xs font-mono">
             {page} / {totalPages}
@@ -152,10 +155,10 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
           <button
             onClick={() => onPageChange(page + 1)}
             disabled={page >= totalPages}
-            className="px-3 py-1 rounded border border-border text-text-muted text-xs
-                       hover:border-neon-green/50 disabled:opacity-30 transition-all"
+            className="flex items-center gap-1 px-3 py-1 rounded border border-border text-text-muted text-xs
+                       hover:border-brand-green/50 disabled:opacity-30 transition-all"
           >
-            পরে →
+            পরে <ChevronRight size={13} />
           </button>
         </div>
       )}
