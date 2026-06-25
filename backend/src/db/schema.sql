@@ -125,7 +125,8 @@ INSERT INTO admin_settings (key, value, description) VALUES
   ('rain_trigger_streak', '5', 'কতবার জিতলে Crypto Rain ট্রিগার হবে'),
   ('rain_budget_daily', '50', 'প্রতিদিনের Crypto Rain বাজেট'),
   ('rain_claim_per_user', '0.10', 'প্রতি ইউজার সর্বোচ্চ কত ক্লেইম করতে পারবে'),
-  ('max_squad_size', '5', 'Squad এ সর্বোচ্চ সদস্য সংখ্যা')
+  ('max_squad_size', '5', 'Squad এ সর্বোচ্চ সদস্য সংখ্যা'),
+  ('max_win_amount', '50000', 'সর্বোচ্চ জয়ের সীমা প্রতি বেট')
 ON CONFLICT (key) DO NOTHING;
 
 -- ── INDEXES ───────────────────────────────────────

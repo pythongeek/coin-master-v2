@@ -27,7 +27,7 @@ import {
 import {
   getConfig, validateBetAmount, GameConfig
 } from './admin-config';
-import { query } from '../config/database';
+import { db, query } from '../config/database';
 import {
   lockBet, unlockBet, incrementWinStreak,
   resetWinStreak, getWinStreak
@@ -63,14 +63,13 @@ export interface BetResponse {
   message: string;  // বাংলায় ফলাফলের বার্তা
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  MAIN FUNCTION — একটি গেম রাউন্ড সম্পন্ন করো
-// ═══════════════════════════════════════════════════════════════
+/**
+ * একটি ফ্লিপ বেট প্লেস এবং প্রসেস করো (Provably Fair)
+ */
 export async function placeBet(req: BetRequest): Promise<BetResponse> {
-  // ── ধাপ ১: কনফিগ লোড করো ───────────────────────────────────
-  const config: GameConfig = await getConfig();
+  // ── ধাপ ১: গেম কনফিগ লোড করো ──────────────────────────────
+  const config = await getConfig();
 
-  // মেইনটেন্যান্স মোড চেক
   if (config.maintenanceMode) {
     throw new Error(config.maintenanceMessage);
   }
@@ -79,14 +78,23 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
   const validation = validateBetAmount(req.amount, config);
   if (!validation.valid) throw new Error(validation.error);
 
+  // ── জয়ের সর্বোচ্চ সীমা চেক করো ──
+  const potentialPayout = req.amount * (2 - (config.houseEdgePercent / 100) * 2);
+  if (potentialPayout > config.maxWinAmount) {
+    throw new Error(`বেটের সম্ভাব্য জয় আপনার জয়ের সীমা $${config.maxWinAmount} অতিক্রম করেছে।`);
+  }
+
   // ── ধাপ ৩: রেস কন্ডিশন প্রতিরোধ করো (একসাথে ২টি বেট নয়) ──
   const locked = await lockBet(req.userId, req.amount);
   if (!locked) throw new Error('একটি গেম চলছে। শেষ হলে আবার চেষ্টা করুন।');
 
+  const client = await db.connect();
   try {
-    // ── ধাপ ৪: ইউজারের ব্যালেন্স চেক করো ──────────────────────
-    const userResult = await query(
-      'SELECT balance FROM users WHERE id = $1 AND is_active = true',
+    await client.query('BEGIN');
+
+    // ── ধাপ ৪: ইউজারের ব্যালেন্স চেক করো (Row Lock সহ) ──────────────────────
+    const userResult = await client.query(
+      'SELECT balance FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
       [req.userId]
     );
     if (!userResult.rows.length) throw new Error('ইউজার পাওয়া যায়নি।');
@@ -96,13 +104,13 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       throw new Error(`অপর্যাপ্ত ব্যালেন্স। আপনার কাছে আছে: $${currentBalance.toFixed(2)}`);
     }
 
-    // ── ধাপ ৫: Provably Fair সিড তৈরি করো ──────────────────────
+    // ── Provably Fair সিড তৈরি করো ──────────────────────
     const serverSeed = generateServerSeed();
     const serverSeedHash = hashServerSeed(serverSeed);
     const clientSeed = req.clientSeed || generateClientSeed();
 
     // নন্স বের করো (এই ইউজারের কততম গেম)
-    const nonceResult = await query(
+    const nonceResult = await client.query(
       'SELECT COUNT(*) as count FROM bets WHERE user_id = $1',
       [req.userId]
     );
@@ -110,7 +118,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
 
     const seeds: SeedPair = { serverSeed, serverSeedHash, clientSeed, nonce };
 
-    // ── ধাপ ৬: গেম রেজাল্ট বের করো ─────────────────────────────
+    // ── গেম রেজাল্ট বের করো ─────────────────────────────
     const outcome: FlipOutcome = resolveFlip(
       seeds, req.choice, req.amount, config.houseEdgePercent
     );
@@ -120,14 +128,14 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     const balanceChange = won ? outcome.payout - req.amount : -req.amount;
     const newBalance = parseFloat((currentBalance + balanceChange).toFixed(8));
 
-    await query(
+    await client.query(
       'UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2',
       [newBalance, req.userId]
     );
 
     // ── ধাপ ৮: বেট ডাটাবেসে সেভ করো ────────────────────────────
     const betId = uuidv4();
-    await query(
+    await client.query(
       `INSERT INTO bets
         (id, user_id, choice, amount, result, won, payout, house_edge, status, flip_hash, resolved_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'resolved',$9,NOW())`,
@@ -135,6 +143,8 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
        outcome.result, won, outcome.payout, config.houseEdgePercent,
        outcome.rawHash]
     );
+
+    await client.query('COMMIT');
 
     // ── ধাপ ৯: Win Streak আপডেট করো ─────────────────────────────
     let winStreak = 0;
@@ -178,7 +188,11 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       message,
     };
 
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
   } finally {
+    client.release();
     // সবসময় লক খুলে দাও (এরর হলেও)
     await unlockBet(req.userId);
   }

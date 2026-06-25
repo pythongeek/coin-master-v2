@@ -23,6 +23,8 @@ export interface GameConfig {
   /** হাউজ এজ পার্সেন্ট (০.০১% - ৫০%)
    *  উদাহরণ: ২ = ২% → ইউজার ১০০ বেট করলে জিতলে ১৯৬ পাবে (লাভ ৯৬) */
   houseEdgePercent: number;
+  /** সর্বোচ্চ জয়ের সীমা প্রতি বেট */
+  maxWinAmount: number;
 
   // ── বেট লিমিট সেটিং ─────────────────────────────────────────
   /** সর্বনিম্ন বেট পরিমাণ */
@@ -80,6 +82,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   // বেট লিমিট
   minBetAmount: 0.01,
   maxBetAmount: 1000.0,
+  maxWinAmount: 50000.0,
   maxConcurrentBets: 1,
 
   // ক্রিপ্টো রেইন
@@ -111,6 +114,7 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   houseEdgePercent:       { label: 'হাউজ এজ', description: 'প্ল্যাটফর্মের লাভের পার্সেন্ট। ২% মানে ইউজার ১০০ বেটে জিতলে ১৯৬ পাবে।', unit: '%', min: 0.1, max: 10, type: 'number', category: 'বেটিং' },
   minBetAmount:           { label: 'সর্বনিম্ন বেট', description: 'একটি বেটে সর্বনিম্ন পরিমাণ।', unit: '$', min: 0.01, max: 10, type: 'number', category: 'বেটিং' },
   maxBetAmount:           { label: 'সর্বোচ্চ বেট', description: 'একটি বেটে সর্বোচ্চ পরিমাণ। রিস্ক কন্ট্রোলের জন্য গুরুত্বপূর্ণ।', unit: '$', min: 10, max: 100000, type: 'number', category: 'বেটিং' },
+  maxWinAmount:           { label: 'সর্বোচ্চ জয়ের সীমা', description: 'প্রতি বেটে সর্বোচ্চ জয়ের লিমিট। এর বেশি লাভ করতে পারবে না।', unit: '$', min: 100, max: 1000000, type: 'number', category: 'বেটিং' },
   maxConcurrentBets:      { label: 'একসাথে বেট সংখ্যা', description: 'একজন ইউজার একসাথে কতটি বেট রাখতে পারবে।', unit: 'টি', min: 1, max: 5, type: 'number', category: 'বেটিং' },
   rainTriggerStreak:      { label: 'রেইন ট্রিগার স্ট্রিক', description: 'টানা কতটি জয়ের পর Crypto Rain শুরু হবে।', unit: 'বার', min: 3, max: 20, type: 'number', category: 'ক্রিপ্টো রেইন' },
   rainBudgetDailyUsd:     { label: 'দৈনিক রেইন বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার রেইন হিসেবে দেওয়া হবে।', unit: '$', min: 1, max: 10000, type: 'number', category: 'ক্রিপ্টো রেইন' },
@@ -139,17 +143,24 @@ export async function getConfig(): Promise<GameConfig> {
     // ডিফল্ট কনফিগ দিয়ে শুরু করো
     const config: GameConfig = { ...DEFAULT_CONFIG };
 
+    // snake_case থেকে camelCase এ রূপান্তর করার জন্য
+    const snakeToCamel = (str: string) =>
+      str.replace(/([-_][a-z])/g, group =>
+        group.toUpperCase().replace('-', '').replace('_', '')
+      );
+
     // ডাটাবেস থেকে পড়া মান দিয়ে আপডেট করো
     for (const row of result.rows) {
-      const key = row.key as keyof GameConfig;
-      if (key in config) {
-        const meta = CONFIG_LABELS[key];
+      const dbKey = row.key;
+      const camelKey = snakeToCamel(dbKey) as keyof GameConfig;
+      if (camelKey in config) {
+        const meta = CONFIG_LABELS[camelKey];
         if (meta.type === 'boolean') {
-          (config as Record<string, unknown>)[key] = row.value === 'true';
+          (config as any)[camelKey] = row.value === 'true';
         } else if (meta.type === 'number') {
-          (config as Record<string, unknown>)[key] = parseFloat(row.value);
+          (config as any)[camelKey] = parseFloat(row.value);
         } else {
-          (config as Record<string, unknown>)[key] = row.value;
+          (config as any)[camelKey] = row.value;
         }
       }
     }
