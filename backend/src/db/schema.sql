@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS users (
   balance        DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000, -- ক্রিপ্টো ব্যালেন্স
   is_active      BOOLEAN NOT NULL DEFAULT true,
   is_admin       BOOLEAN NOT NULL DEFAULT false,
+  kyc_status     VARCHAR(20) NOT NULL DEFAULT 'unverified' CHECK (kyc_status IN ('unverified', 'pending', 'verified', 'rejected')),
+  self_excluded_until TIMESTAMPTZ,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

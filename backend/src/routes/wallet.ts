@@ -284,5 +284,41 @@ router.post('/deposit/simulate-block', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * POST /api/wallet/withdraw
+ * Initiate an automated crypto withdrawal (queued through BullMQ)
+ */
+router.post('/withdraw', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { walletId, toAddress, amount } = req.body;
+    if (!walletId || !toAddress || amount === undefined) {
+      return res.status(400).json({ success: false, error: 'Missing required parameters: walletId, toAddress, amount' });
+    }
+
+    const parsedAmount = Number(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ success: false, error: 'Withdrawal amount must be a positive number' });
+    }
+
+    const { requestWithdrawal } = await import('../services/withdrawal-queue');
+    const result = await requestWithdrawal(userId, walletId, toAddress, parsedAmount);
+
+    res.json({
+      success: true,
+      transactionId: result.requestId,
+      status: result.status,
+      message: 'Withdrawal request enqueued successfully'
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ success: false, error: errorMsg });
+  }
+});
+
 export default router;
 
