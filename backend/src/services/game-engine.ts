@@ -32,6 +32,7 @@ import {
   lockBet, unlockBet, incrementWinStreak,
   resetWinStreak, getWinStreak
 } from '../config/redis';
+import { reconcileUser } from './reconciliation-engine';
 
 // ── ইনপুট ও আউটপুটের ধরন ───────────────────────────────────────
 export interface BetRequest {
@@ -143,6 +144,9 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
        outcome.result, won, outcome.payout, config.houseEdgePercent,
        outcome.rawHash]
     );
+
+    // Run reconciliation check
+    await reconcileUser(req.userId, client);
 
     await client.query('COMMIT');
 

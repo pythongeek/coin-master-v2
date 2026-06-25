@@ -32,6 +32,17 @@ Module.prototype.require = function (id: string) {
       }
     };
   }
+  if (id === './reconciliation-engine' || id === '../services/reconciliation-engine') {
+    return {
+      reconcileUser: async (userId: string, client?: any) => ({
+        userId,
+        isValid: true,
+        userBalance: { expected: 0, actual: 0, mismatch: 0 },
+        walletBalances: [],
+        frozen: false
+      })
+    };
+  }
   return originalRequire.apply(this, arguments as any);
 };
 

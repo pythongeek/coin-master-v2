@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Queue, Worker, Job } from 'bullmq';
 import { db, query } from '../config/database';
 import { redisConfig } from '../config/redis';
+import { reconcileUser } from './reconciliation-engine';
 
 // Configure a withdrawal Queue
 export const withdrawalQueue = new Queue('withdrawals', {
@@ -29,7 +30,7 @@ export async function requestWithdrawal(
 
     // 1. Check user KYC and Self-exclusion
     const userResult = await client.query(
-      'SELECT kyc_status, self_excluded_until FROM users WHERE id = $1',
+      'SELECT kyc_status, self_excluded_until, is_active FROM users WHERE id = $1',
       [userId]
     );
 
@@ -38,6 +39,10 @@ export async function requestWithdrawal(
     }
 
     const user = userResult.rows[0];
+    if (!user.is_active) {
+      throw new Error('Account is inactive');
+    }
+
     if (user.kyc_status !== 'verified') {
       throw new Error('KYC verification required for withdrawals');
     }
@@ -114,6 +119,9 @@ export async function requestWithdrawal(
     );
     const txId = txResult.rows[0].id;
 
+    // Run reconciliation check
+    await reconcileUser(userId, client);
+
     await client.query('COMMIT');
 
     // 6. Enqueue job into BullMQ
@@ -145,7 +153,7 @@ export async function requestWithdrawal(
 
 // Configure and start Worker
 export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
-  const { txId, walletId, amount, chain } = job.data;
+  const { txId, walletId, amount, chain, userId } = job.data;
 
   try {
     // 1. Simulate blockchain payout / broadcast
@@ -186,6 +194,9 @@ export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
          WHERE id = $2`,
          [amount, walletId]
       );
+
+      // Run reconciliation check
+      await reconcileUser(userId, client);
 
       await client.query('COMMIT');
     } catch (dbErr) {

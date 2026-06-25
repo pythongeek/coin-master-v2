@@ -46,6 +46,17 @@ Module.prototype.require = function (id: string) {
       Worker: MockWorker
     };
   }
+  if (id === './reconciliation-engine' || id === '../services/reconciliation-engine') {
+    return {
+      reconcileUser: async (userId: string, client?: any) => ({
+        userId,
+        isValid: true,
+        userBalance: { expected: 0, actual: 0, mismatch: 0 },
+        walletBalances: [],
+        frozen: false
+      })
+    };
+  }
   return originalRequire.apply(this, arguments as any);
 };
 
@@ -65,7 +76,7 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   }
   const normalized = text.trim().replace(/\s+/g, ' ');
 
-  if (normalized.startsWith('SELECT kyc_status, self_excluded_until FROM users')) {
+  if (normalized.startsWith('SELECT kyc_status, self_excluded_until')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
     return { rows: user ? [user] : [] };
@@ -186,7 +197,8 @@ async function runTests() {
   mockUsers.push({
     id: userId,
     kyc_status: 'unverified',
-    self_excluded_until: null
+    self_excluded_until: null,
+    is_active: true
   });
 
   mockWallets.push({
@@ -364,6 +376,39 @@ async function runTests() {
       console.log('✅ Worker failure verified: funds remain securely held in locked_balance.');
     } else {
       throw new Error(`Locked balance should remain 30.00, got: ${wallet.locked_balance}`);
+    }
+
+    // 9. Test withdrawal request validation for deactivated/inactive accounts
+    console.log('\nScenario 9: Testing withdrawal request validation for deactivated/inactive accounts...');
+    // Seed an inactive user
+    const inactiveUserId = 'inactive-user-uuid-1111-2222';
+    const inactiveWalletId = 'inactive-wallet-uuid-3333-4444';
+    
+    mockUsers.push({
+      id: inactiveUserId,
+      kyc_status: 'verified',
+      self_excluded_until: null,
+      is_active: false
+    });
+
+    mockWallets.push({
+      id: inactiveWalletId,
+      user_id: inactiveUserId,
+      chain: 'ethereum',
+      token_symbol: 'USDT',
+      balance: 100.00,
+      locked_balance: 0.00
+    });
+
+    try {
+      await requestWithdrawal(inactiveUserId, inactiveWalletId, '0xRecipientAddress', 25.00);
+      throw new Error('Expected inactive user withdrawal to be blocked but it succeeded');
+    } catch (err: any) {
+      if (err.message.includes('Account is inactive')) {
+        console.log('✅ Withdrawal deactivation check verified: inactive account withdrawal blocked.');
+      } else {
+        throw err;
+      }
     }
 
     console.log('\n🎉 All withdrawal queue & BullMQ worker tests passed successfully!');

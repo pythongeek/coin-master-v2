@@ -201,6 +201,23 @@ CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
 CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
 
+-- ── TABLE: ledger_alerts ──────────────────────────
+CREATE TABLE IF NOT EXISTS ledger_alerts (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+  alert_type      VARCHAR(50) NOT NULL, -- 'user_balance_mismatch', 'wallet_balance_mismatch'
+  expected_balance DECIMAL(36, 18) NOT NULL,
+  actual_balance   DECIMAL(36, 18) NOT NULL,
+  mismatch_amount  DECIMAL(36, 18) NOT NULL,
+  currency        VARCHAR(20) NOT NULL,
+  wallet_id       UUID REFERENCES wallets(id) ON DELETE SET NULL,
+  details         JSONB DEFAULT '{}',
+  resolved        BOOLEAN NOT NULL DEFAULT false,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_alerts_user_id ON ledger_alerts(user_id);
+
 -- ✅ স্কিমা তৈরি সম্পন্ন
 -- Use DO block for notices in normal client sessions
 DO $$
@@ -208,4 +225,5 @@ BEGIN
   RAISE NOTICE 'CryptoFlip Database Schema Successfully Created! ✅';
 END
 $$;
+
 

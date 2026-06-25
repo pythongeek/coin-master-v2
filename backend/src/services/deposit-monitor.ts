@@ -1,4 +1,5 @@
 import { db, query } from '../config/database';
+import { reconcileUser } from './reconciliation-engine';
 import crypto from 'crypto';
 
 const CONFIRMATIONS_REQUIRED_EVM = 12;
@@ -169,6 +170,9 @@ async function completeDeposit(
        WHERE id = $1`,
       [txId]
     );
+
+    // Run reconciliation check
+    await reconcileUser(userId, client);
 
     await client.query('COMMIT');
   } catch (err) {
