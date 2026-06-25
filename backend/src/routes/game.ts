@@ -22,7 +22,7 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 router.post('/bet', async (req: Request, res: Response) => {
   try {
-    const { userId, choice, amount, clientSeed } = req.body;
+    const { userId, choice, amount, clientSeed, targetMultiplier } = req.body;
 
     if (!userId || !choice || !amount) {
       return res.status(400).json({
@@ -38,7 +38,24 @@ router.post('/bet', async (req: Request, res: Response) => {
       });
     }
 
-    const result = await placeBet({ userId, choice, amount: parseFloat(amount), clientSeed });
+    let parsedTarget = 2.00;
+    if (targetMultiplier !== undefined) {
+      parsedTarget = parseFloat(targetMultiplier);
+      if (isNaN(parsedTarget) || parsedTarget < 1.01 || parsedTarget > 1027604.48) {
+        return res.status(400).json({
+          success: false,
+          error: 'targetMultiplier অবশ্যই ১.০১ থেকে ১,০২৭,৬০৪.৪৮ এর মধ্যে হতে হবে।'
+        });
+      }
+    }
+
+    const result = await placeBet({
+      userId,
+      choice,
+      amount: parseFloat(amount),
+      clientSeed,
+      targetMultiplier: parsedTarget
+    });
 
     res.json({ success: true, data: result });
   } catch (err: unknown) {
@@ -55,12 +72,12 @@ router.post('/bet', async (req: Request, res: Response) => {
 // ══════════════════════════════════════════════════════════════
 router.post('/verify', (req: Request, res: Response) => {
   try {
-    const { serverSeed, clientSeed, nonce, serverSeedHash } = req.body;
+    const { serverSeed, clientSeed, nonce, serverSeedHash, choice, targetMultiplier, houseEdge } = req.body;
 
-    if (!serverSeed || !clientSeed || nonce === undefined || !serverSeedHash) {
+    if (!serverSeed || !clientSeed || nonce === undefined || !serverSeedHash || !choice) {
       return res.status(400).json({
         success: false,
-        error: 'serverSeed, clientSeed, nonce, serverSeedHash — সব দিতে হবে।'
+        error: 'serverSeed, clientSeed, nonce, serverSeedHash, choice — সব দিতে হবে।'
       });
     }
 
@@ -69,6 +86,9 @@ router.post('/verify', (req: Request, res: Response) => {
       clientSeed,
       nonce: parseInt(nonce),
       serverSeedHash,
+      choice,
+      targetMultiplier: targetMultiplier ? parseFloat(targetMultiplier) : 2.0,
+      houseEdge: houseEdge ? parseFloat(houseEdge) : 2.0,
     });
 
     res.json({ success: true, data: result });

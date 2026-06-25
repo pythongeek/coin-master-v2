@@ -40,6 +40,7 @@ export interface BetRequest {
   choice: FlipResult;
   amount: number;
   clientSeed?: string;  // ইউজার না দিলে অটো-জেনারেট
+  targetMultiplier?: number;
 }
 
 export interface BetResponse {
@@ -50,6 +51,10 @@ export interface BetResponse {
   betAmount: number;
   payout: number;
   houseEdge: number;
+  targetMultiplier: number;
+  actualMultiplier: number;
+  winChance: number;
+  roll: number;
   newBalance: number;
   winStreak: number;
   cryptoRainTriggered: boolean;
@@ -60,6 +65,8 @@ export interface BetResponse {
     clientSeed: string;
     nonce: number;
     rawHash: string;
+    roll: number;
+    winChance: number;
   };
   message: string;  // বাংলায় ফলাফলের বার্তা
 }
@@ -80,7 +87,8 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
   if (!validation.valid) throw new Error(validation.error);
 
   // ── জয়ের সর্বোচ্চ সীমা চেক করো ──
-  const potentialPayout = req.amount * (2 - (config.houseEdgePercent / 100) * 2);
+  const targetMultiplier = req.targetMultiplier || 2.00;
+  const potentialPayout = req.amount * targetMultiplier;
   if (potentialPayout > config.maxWinAmount) {
     throw new Error(`বেটের সম্ভাব্য জয় আপনার জয়ের সীমা $${config.maxWinAmount} অতিক্রম করেছে।`);
   }
@@ -121,9 +129,9 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
 
     // ── গেম রেজাল্ট বের করো ─────────────────────────────
     const outcome: FlipOutcome = resolveFlip(
-      seeds, req.choice, req.amount, config.houseEdgePercent
+      seeds, req.choice, req.amount, config.houseEdgePercent, targetMultiplier
     );
-    const won = outcome.result === req.choice;
+    const won = outcome.won;
 
     // ── ধাপ ৭: ব্যালেন্স আপডেট করো ─────────────────────────────
     const balanceChange = won ? outcome.payout - req.amount : -req.amount;
@@ -138,11 +146,12 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     const betId = uuidv4();
     await client.query(
       `INSERT INTO bets
-        (id, user_id, choice, amount, result, won, payout, house_edge, status, flip_hash, resolved_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'resolved',$9,NOW())`,
+        (id, user_id, choice, amount, result, won, payout, house_edge, 
+         target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW())`,
       [betId, req.userId, req.choice, req.amount,
        outcome.result, won, outcome.payout, config.houseEdgePercent,
-       outcome.rawHash]
+       targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash]
     );
 
     // Run reconciliation check
@@ -179,6 +188,10 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       betAmount: req.amount,
       payout: outcome.payout,
       houseEdge: config.houseEdgePercent,
+      targetMultiplier,
+      actualMultiplier: targetMultiplier,
+      winChance: outcome.winChance,
+      roll: outcome.roll,
       newBalance,
       winStreak,
       cryptoRainTriggered,
@@ -188,6 +201,8 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
         clientSeed,
         nonce,
         rawHash: outcome.rawHash,
+        roll: outcome.roll,
+        winChance: outcome.winChance,
       },
       message,
     };
@@ -221,6 +236,7 @@ async function triggerCryptoRain(userId: string, config: GameConfig): Promise<vo
 export async function getBetHistory(userId: string, limit: number = 20) {
   const result = await query(
     `SELECT id, choice, amount, result, won, payout, house_edge,
+            target_multiplier, actual_multiplier, win_chance,
             flip_hash, created_at, resolved_at
      FROM bets WHERE user_id = $1
      ORDER BY created_at DESC LIMIT $2`,

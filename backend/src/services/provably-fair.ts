@@ -47,6 +47,11 @@ export interface FlipOutcome {
   serverSeedHash: string;      // ইউজার ভেরিফাই করতে পারবে
   payout: number;              // জিতলে কত পাবে
   houseEdge: number;           // প্ল্যাটফর্মের ফি %
+  targetMultiplier: number;    // টার্গেট মাল্টিপ্লায়ার
+  actualMultiplier: number;    // প্রকৃত মাল্টিপ্লায়ার
+  winChance: number;           // জয়ের সম্ভাবনা %
+  won: boolean;                // জিতেছে কিনা
+  roll: number;                // প্রাপ্ত রোল (০-১০০)
 }
 
 export interface VerificationInput {
@@ -54,6 +59,9 @@ export interface VerificationInput {
   clientSeed: string;   // ইউজারের সিড
   nonce: number;        // গেম নম্বর
   serverSeedHash: string; // মিলিয়ে দেখতে হবে
+  choice: FlipResult;   // ইউজারের পছন্দ
+  targetMultiplier: number; // টার্গেট মাল্টিপ্লায়ার
+  houseEdge: number;    // প্ল্যাটফর্মের ফি %
 }
 
 export interface VerificationResult {
@@ -125,34 +133,68 @@ export function computeFlip(
 }
 
 /**
+ * প্রোগ্রেসিভ মাল্টিপ্লায়ার সহ কয়েন ফ্লিপ কম্পিউট করো
+ */
+export function computeFlipWithMultiplier(
+  serverSeed: string,
+  clientSeed: string,
+  nonce: number,
+  choice: FlipResult,
+  targetMultiplier: number,
+  houseEdge: number
+): { result: FlipResult; rawHash: string; rawValue: number; roll: number } {
+  const message = `${clientSeed}:${nonce}`;
+
+  const rawHash = crypto
+    .createHmac('sha256', serverSeed)
+    .update(message)
+    .digest('hex');
+
+  const firstFourBytes = rawHash.slice(0, 8);
+  const rawValue = parseInt(firstFourBytes, 16);
+
+  // ০ থেকে ৯৯.৯৯৯৯৯৯ পরিসরে রোল রূপান্তর
+  const roll = (rawValue / 0xFFFFFFFF) * 100;
+
+  const winChance = (100 - houseEdge) / targetMultiplier;
+  const won = roll < winChance;
+
+  // জিতলে কয়েন পড়বে ইউজারের পছন্দে, হারলে বিপরীতে
+  const result: FlipResult = won ? choice : (choice === 'heads' ? 'tails' : 'heads');
+
+  return { result, rawHash, rawValue, roll };
+}
+
+/**
  * সম্পূর্ণ গেম পরিচালনা করো এবং পেআউট হিসাব করো
  *
- * @param seeds      - সার্ভার সিড, ক্লায়েন্ট সিড, নন্স
- * @param choice     - ইউজার কী বেছেছে (heads/tails)
- * @param betAmount  - বেট পরিমাণ
- * @param houseEdge  - প্ল্যাটফর্মের ফি % (ডিফল্ট ২%)
+ * @param seeds            - সার্ভার সিড, ক্লায়েন্ট সিড, নন্স
+ * @param choice           - ইউজার কী বেছেছে (heads/tails)
+ * @param betAmount        - বেট পরিমাণ
+ * @param houseEdge        - প্ল্যাটফর্মের ফি % (ডিফল্ট ২%)
+ * @param targetMultiplier - টার্গেট মাল্টিপ্লায়ার (ডিফল্ট ২x)
  */
 export function resolveFlip(
   seeds: SeedPair,
   choice: FlipResult,
   betAmount: number,
-  houseEdge: number = 2.0
+  houseEdge: number = 2.0,
+  targetMultiplier: number = 2.0
 ): FlipOutcome {
+  const winChance = (100 - houseEdge) / targetMultiplier;
 
   // কয়েন ফ্লিপ কম্পিউট করো
-  const { result, rawHash, rawValue } = computeFlip(
+  const { result, rawHash, rawValue, roll } = computeFlipWithMultiplier(
     seeds.serverSeed,
     seeds.clientSeed,
-    seeds.nonce
+    seeds.nonce,
+    choice,
+    targetMultiplier,
+    houseEdge
   );
 
-  // পেআউট হিসাব:
-  // জিতলে: betAmount × (2 - houseEdge/50) এর পরিবর্তে সঠিক ফর্মুলা:
-  // জয়ের ক্ষেত্রে ফেরত = betAmount + betAmount × (1 - houseEdge/100)
-  // অর্থাৎ: ২% হাউজ এজে ১০০ বেট → জিতলে পাবে ১০০ + ৯৮ = ১৯৮ টাকা (নেট লাভ ৯৮)
-  const won = result === choice;
-  const multiplier = 2 - (houseEdge / 100) * 2; // প্রায় ১.৯৬ যদি ২% হয়
-  const payout = won ? parseFloat((betAmount * multiplier).toFixed(8)) : 0;
+  const won = roll < winChance;
+  const payout = won ? parseFloat((betAmount * targetMultiplier).toFixed(8)) : 0;
 
   return {
     result,
@@ -161,34 +203,38 @@ export function resolveFlip(
     serverSeedHash: seeds.serverSeedHash,
     payout,
     houseEdge,
+    targetMultiplier,
+    actualMultiplier: targetMultiplier,
+    winChance,
+    won,
+    roll
   };
 }
 
 /**
  * ইউজার নিজে ভেরিফাই করতে পারবে
- * গেম শেষে সার্ভার সিড প্রকাশ করলে ইউজার নিজেই চেক করবে:
- * "আমার গেমের রেজাল্ট কি সত্যিই এই সিড থেকে এসেছে?"
  */
 export function verifyFlip(input: VerificationInput): VerificationResult {
+  const hashMatches = hashServerSeed(input.serverSeed) === input.serverSeedHash;
 
-  // ধাপ ১: সার্ভার সিডের হ্যাশ কি মিলছে?
-  const computedHash = hashServerSeed(input.serverSeed);
-  const hashMatches = computedHash === input.serverSeedHash;
-
-  // ধাপ ২: রেজাল্ট পুনরায় কম্পিউট করো
-  const { result, rawHash } = computeFlip(
+  const { result, rawHash, roll } = computeFlipWithMultiplier(
     input.serverSeed,
     input.clientSeed,
-    input.nonce
+    input.nonce,
+    input.choice,
+    input.targetMultiplier || 2.0,
+    input.houseEdge || 2.0
   );
 
-  // ধাপ ৩: ব্যাখ্যা তৈরি করো
+  const winChance = (100 - (input.houseEdge || 2.0)) / (input.targetMultiplier || 2.0);
+  const won = roll < winChance;
+
   let explanation: string;
   if (!hashMatches) {
     explanation = `❌ যাচাই ব্যর্থ! সার্ভার সিডের হ্যাশ মিলছে না। সম্ভাব্য কারচুপি!`;
   } else {
-    explanation = `✅ যাচাই সফল! সার্ভার সিড থেকে হ্যাশ মিলেছে। ` +
-      `HMAC-SHA256("${input.serverSeed}", "${input.clientSeed}:${input.nonce}") = ${rawHash.slice(0,8)}... → ${result}`;
+    explanation = `✅ যাচাই সফল! ` +
+      `HMAC-SHA256("${input.serverSeed}", "${input.clientSeed}:${input.nonce}") = ${rawHash.slice(0,8)}... → Roll: ${roll.toFixed(4)}% (Win chance: ${winChance.toFixed(4)}%) → Result: ${result} (${won ? 'Win' : 'Loss'})`;
   }
 
   return {

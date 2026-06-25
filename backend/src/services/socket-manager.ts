@@ -97,7 +97,7 @@ export function setupSocketHandlers(io: SocketIOServer) {
     // ══════════════════════════════════════════════════════════
     //  গেম ইভেন্ট: বেট ধরো
     // ══════════════════════════════════════════════════════════
-    socket.on('game:bet', async (data: { choice: 'heads' | 'tails'; amount: number; clientSeed?: string }) => {
+    socket.on('game:bet', async (data: { choice: 'heads' | 'tails'; amount: number; clientSeed?: string; targetMultiplier?: number }) => {
       if (!user) {
         return socket.emit('game:error', { message: 'বেট ধরতে লগইন করুন।' });
       }
@@ -109,12 +109,13 @@ export function setupSocketHandlers(io: SocketIOServer) {
           timestamp: Date.now(),
         });
 
-        // ধাপ ২: গেম ইঞ্জিনে বেট প্রসেস করো
+        // ── ধাপ ২: গেম ইঞ্জিনে বেট প্রসেস করো ──
         const result = await placeBet({
           userId: user.userId,
           choice: data.choice,
           amount: data.amount,
           clientSeed: data.clientSeed,
+          targetMultiplier: data.targetMultiplier,
         });
 
         // ধাপ ৩: কয়েন স্পিনের সময় অপেক্ষা করো (ফ্রন্টএন্ড অ্যানিমেশনের সাথে সিঙ্ক)

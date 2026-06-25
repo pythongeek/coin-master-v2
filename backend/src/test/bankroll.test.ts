@@ -27,7 +27,8 @@ Module.prototype.require = function (id: string) {
           rawValue: mockOutcomeResult === 'heads' ? 0 : 1,
           serverSeedHash: seeds.serverSeedHash,
           payout,
-          houseEdge
+          houseEdge,
+          won
         };
       }
     };

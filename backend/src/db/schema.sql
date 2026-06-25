@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS bets (
   won            BOOLEAN,
   payout         DECIMAL(18, 8) DEFAULT 0,
   house_edge     DECIMAL(5, 2) NOT NULL DEFAULT 2.00,
+  target_multiplier DECIMAL(12, 4) NOT NULL DEFAULT 2.0000,
+  actual_multiplier DECIMAL(12, 4) NOT NULL DEFAULT 1.9600,
+  win_chance     DECIMAL(8, 4) NOT NULL DEFAULT 49.0000,
   status         VARCHAR(20) NOT NULL DEFAULT 'pending'
                    CHECK (status IN ('pending', 'resolved', 'cancelled')),
   flip_hash      TEXT,                       -- ভেরিফিকেশনের জন্য
