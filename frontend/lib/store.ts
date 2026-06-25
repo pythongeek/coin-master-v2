@@ -77,12 +77,16 @@ interface GameStore {
   betAmount: number;
   lastResult: BetResult | null;
   betHistory: BetResult[];
+  isAutoPlayRunning: boolean;
+  targetMultiplier: number;
 
   setGameStatus: (status: GameStatus) => void;
   setCurrentChoice: (choice: FlipChoice) => void;
   setBetAmount: (amount: number) => void;
   setLastResult: (result: BetResult) => void;
   addToBetHistory: (result: BetResult) => void;
+  setIsAutoPlayRunning: (running: boolean) => void;
+  setTargetMultiplier: (multiplier: number) => void;
   resetGame: () => void;
 
   // ── চ্যাট ──────────────────────────────────────────────────
@@ -134,11 +138,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   betAmount: 1.00,
   lastResult: null,
   betHistory: [],
+  isAutoPlayRunning: false,
+  targetMultiplier: 2.0,
 
   setGameStatus:   (status) => set({ gameStatus: status }),
   setCurrentChoice: (choice) => set({ currentChoice: choice }),
   setBetAmount:    (amount) => set({ betAmount: amount }),
   setLastResult:   (result) => set({ lastResult: result }),
+  setIsAutoPlayRunning: (running) => set({ isAutoPlayRunning: running }),
+  setTargetMultiplier: (multiplier) => set({ targetMultiplier: multiplier }),
 
   addToBetHistory: (result) =>
     set((state) => ({
@@ -146,7 +154,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     })),
 
   resetGame: () =>
-    set({ gameStatus: 'idle', lastResult: null }),
+    set({ gameStatus: 'idle', lastResult: null, isAutoPlayRunning: false }),
 
   // ── চ্যাট ──────────────────────────────────────────────────
   chatMessages: [],

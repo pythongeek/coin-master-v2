@@ -42,7 +42,7 @@ interface SquadResult {
 }
 
 export default function SquadFlip() {
-  const { user, betAmount: defaultBet, currentChoice, updateBalance } = useGameStore();
+  const { user, betAmount: defaultBet, currentChoice, updateBalance, isAutoPlayRunning } = useGameStore();
 
   const [activeSquad, setActiveSquad] = useState<SquadInfo | null>(null);
   const [creating, setCreating] = useState(false);
@@ -128,6 +128,16 @@ export default function SquadFlip() {
       <div className="glass-card p-5 text-center border-brand-maroon/20">
         <Users size={26} className="mx-auto mb-2 text-text-muted" />
         <p className="text-text-muted text-xs font-mono">স্কোয়াড ফ্লিপ খেলতে লগইন করুন</p>
+      </div>
+    );
+  }
+
+  if (isAutoPlayRunning) {
+    return (
+      <div className="glass-card p-5 text-center border-brand-maroon/20 bg-void/80 backdrop-blur-sm animate-pulse-soft">
+        <Users size={26} className="mx-auto mb-2 text-brand-maroon" />
+        <p className="text-brand-maroon text-xs font-mono font-bold">অটো-প্লে চালু আছে</p>
+        <p className="text-text-muted text-[10px] font-mono mt-1">স্কোয়াড ফ্লিপ খেলার আগে অটো-প্লে বন্ধ করুন</p>
       </div>
     );
   }

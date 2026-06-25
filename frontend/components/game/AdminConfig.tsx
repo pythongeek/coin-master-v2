@@ -50,7 +50,7 @@ export default function AdminConfigPanel() {
   // ── একটি সেটিং আপডেট করো ──────────────────────────────────────
   const handleUpdate = async (key: ConfigKey, value: unknown) => {
     setSaving(key);
-    setConfig(prev => ({ ...prev, [key]: value }));
+    setConfig(prev => ({ ...prev, [key]: value as any }));
 
     // API কল (ব্যাকএন্ড কানেক্ট থাকলে)
     try {
