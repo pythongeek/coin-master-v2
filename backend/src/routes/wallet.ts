@@ -220,4 +220,68 @@ router.get('/transactions', authMiddleware, async (req: AuthRequest, res: Respon
   }
 });
 
+/**
+ * POST /api/wallet/deposit/simulate-tx
+ * Development only: simulate an incoming on-chain deposit (starts confirming)
+ */
+router.post('/deposit/simulate-tx', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, error: 'Forbidden in production' });
+  }
+
+  try {
+    const { txHash, fromAddress, toAddress, amount, chain } = req.body;
+    if (!txHash || !fromAddress || !toAddress || !amount || !chain) {
+      return res.status(400).json({ success: false, error: 'Missing required parameters' });
+    }
+
+    const { registerIncomingDeposit } = await import('../services/deposit-monitor');
+    const txId = await registerIncomingDeposit({
+      txHash,
+      fromAddress,
+      toAddress,
+      amount: Number(amount),
+      chain,
+    });
+
+    res.json({
+      success: true,
+      transactionId: txId,
+      message: 'Mock transaction registered successfully',
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * POST /api/wallet/deposit/simulate-block
+ * Development only: simulate a new block mined to increment confirmations
+ */
+router.post('/deposit/simulate-block', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, error: 'Forbidden in production' });
+  }
+
+  try {
+    const { chain } = req.body;
+    if (chain !== 'ethereum' && chain !== 'solana') {
+      return res.status(400).json({ success: false, error: 'Invalid chain' });
+    }
+
+    const { processNewBlock } = await import('../services/deposit-monitor');
+    await processNewBlock(chain);
+
+    res.json({
+      success: true,
+      message: `Mined a simulated block for chain ${chain}`,
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
 export default router;
+
