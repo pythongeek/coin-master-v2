@@ -29,8 +29,8 @@ router.post('/deposit/address', authMiddleware, async (req: AuthRequest, res: Re
     }
 
     const { chain } = req.body;
-    if (chain !== 'ethereum' && chain !== 'solana') {
-      return res.status(400).json({ success: false, error: 'Invalid chain. Supported: ethereum, solana' });
+    if (chain !== 'ethereum' && chain !== 'solana' && chain !== 'tron') {
+      return res.status(400).json({ success: false, error: 'Invalid chain. Supported: ethereum, solana, tron' });
     }
 
     const wallet = await getOrCreateUserWallet(userId, chain);
@@ -230,7 +230,7 @@ router.post('/deposit/simulate-tx', async (req: Request, res: Response) => {
   }
 
   try {
-    const { txHash, fromAddress, toAddress, amount, chain } = req.body;
+    const { txHash, fromAddress, toAddress, amount, chain, currency } = req.body;
     if (!txHash || !fromAddress || !toAddress || !amount || !chain) {
       return res.status(400).json({ success: false, error: 'Missing required parameters' });
     }
@@ -242,6 +242,7 @@ router.post('/deposit/simulate-tx', async (req: Request, res: Response) => {
       toAddress,
       amount: Number(amount),
       chain,
+      currency,
     });
 
     res.json({
@@ -266,8 +267,8 @@ router.post('/deposit/simulate-block', async (req: Request, res: Response) => {
 
   try {
     const { chain } = req.body;
-    if (chain !== 'ethereum' && chain !== 'solana') {
-      return res.status(400).json({ success: false, error: 'Invalid chain' });
+    if (chain !== 'ethereum' && chain !== 'solana' && chain !== 'tron') {
+      return res.status(400).json({ success: false, error: 'Invalid chain. Supported: ethereum, solana, tron' });
     }
 
     const { processNewBlock } = await import('../services/deposit-monitor');

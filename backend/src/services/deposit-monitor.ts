@@ -2,6 +2,7 @@ import { db, query } from '../config/database';
 import crypto from 'crypto';
 
 const CONFIRMATIONS_REQUIRED_EVM = 12;
+const CONFIRMATIONS_REQUIRED_TRON = 3;
 const CONFIRMATIONS_REQUIRED_SOL = 1;
 
 export interface DepositEvent {
@@ -9,13 +10,14 @@ export interface DepositEvent {
   fromAddress: string;
   toAddress: string;
   amount: number;
-  chain: 'ethereum' | 'solana';
+  chain: 'ethereum' | 'solana' | 'tron';
+  currency?: string; // 'USDT' | 'USDC' (default 'USDT')
 }
 
 /**
  * Handle new block event (or simulation) to increment confirmations
  */
-export async function processNewBlock(chain: 'ethereum' | 'solana'): Promise<void> {
+export async function processNewBlock(chain: 'ethereum' | 'solana' | 'tron'): Promise<void> {
   const result = await query(
     `SELECT id, user_id, wallet_id, amount, confirmations, required_confirmations, tx_hash, status 
      FROM transactions 
@@ -45,18 +47,27 @@ export async function processNewBlock(chain: 'ethereum' | 'solana'): Promise<voi
  * Create a new incoming deposit transaction log (starts as confirming)
  */
 export async function registerIncomingDeposit(event: DepositEvent): Promise<string> {
+  const currency = event.currency || 'USDT';
+
   // 1. Locate the derived wallet in the database
   const walletResult = await query(
-    'SELECT id, user_id FROM wallets WHERE deposit_address = $1 AND chain = $2',
-    [event.toAddress, event.chain]
+    'SELECT id, user_id FROM wallets WHERE deposit_address = $1 AND chain = $2 AND token_symbol = $3',
+    [event.toAddress, event.chain, currency]
   );
 
   if (walletResult.rows.length === 0) {
-    throw new Error(`Deposit address ${event.toAddress} not recognized for chain ${event.chain}`);
+    throw new Error(`Deposit address ${event.toAddress} not recognized for chain ${event.chain} and token ${currency}`);
   }
 
   const wallet = walletResult.rows[0];
-  const requiredConfs = event.chain === 'ethereum' ? CONFIRMATIONS_REQUIRED_EVM : CONFIRMATIONS_REQUIRED_SOL;
+  
+  // Calculate confirmation threshold
+  let requiredConfs = CONFIRMATIONS_REQUIRED_EVM;
+  if (event.chain === 'solana') {
+    requiredConfs = CONFIRMATIONS_REQUIRED_SOL;
+  } else if (event.chain === 'tron') {
+    requiredConfs = CONFIRMATIONS_REQUIRED_TRON;
+  }
 
   // Check if transaction was already registered
   const existing = await query(
@@ -86,14 +97,14 @@ export async function registerIncomingDeposit(event: DepositEvent): Promise<stri
         requiredConfs,
         event.fromAddress,
         event.toAddress,
-        JSON.stringify({ chain: event.chain, currency: 'USDT' }),
+        JSON.stringify({ chain: event.chain, currency }),
       ]
     );
 
     // Complete transaction immediately
     await completeDeposit(txId, wallet.id, wallet.user_id, event.amount);
   } else {
-    // EVM: Start as confirming with 1 confirmation
+    // EVM / Tron: Start as confirming with 1 confirmation
     await query(
       `INSERT INTO transactions (
         id, user_id, wallet_id, type, amount, status, tx_hash, confirmations, required_confirmations, 
@@ -108,7 +119,7 @@ export async function registerIncomingDeposit(event: DepositEvent): Promise<stri
         requiredConfs,
         event.fromAddress,
         event.toAddress,
-        JSON.stringify({ chain: event.chain, currency: 'USDT' }),
+        JSON.stringify({ chain: event.chain, currency }),
       ]
     );
   }

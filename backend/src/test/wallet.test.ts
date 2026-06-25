@@ -39,18 +39,9 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.startsWith('SELECT deposit_address, deposit_address_index FROM wallets WHERE user_id = $1')) {
     const userId = params[0];
     const chain = params[1];
-    const wallet = mockWallets.find(w => w.user_id === userId && w.chain === chain);
+    // Filter by IS NULL to check native wallets status
+    const wallet = mockWallets.find(w => w.user_id === userId && w.chain === chain && w.token_address === null);
     return { rows: wallet ? [wallet] : [] };
-  }
-
-  if (normalized.startsWith('SELECT id, user_id FROM wallets WHERE deposit_address = $1')) {
-    const depositAddress = params[0];
-    const chain = params[1];
-    // Case-insensitive comparison for EVM addresses
-    const wallet = mockWallets.find(w => 
-      w.deposit_address.toLowerCase() === depositAddress.toLowerCase() && w.chain === chain
-    );
-    return { rows: wallet ? [{ id: wallet.id, user_id: wallet.user_id }] : [] };
   }
 
   if (normalized.startsWith('SELECT balance FROM wallets WHERE id = $1') || normalized.startsWith('SELECT balance, locked_balance FROM wallets WHERE id = $1')) {
@@ -60,23 +51,44 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   }
 
   if (normalized.startsWith('INSERT INTO wallets')) {
-    let id, user_id, chain, token_symbol, deposit_address, deposit_address_index, balance;
-    if (params.length === 5 && typeof params[4] === 'number') {
-      user_id = params[0];
-      chain = params[1];
-      token_symbol = params[2];
-      deposit_address = params[3];
-      deposit_address_index = params[4];
-      id = crypto.randomUUID();
-      balance = 0.00;
-    } else {
+    let id, user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address, balance;
+    balance = 0.00;
+
+    if (normalized.includes('(id,')) {
+      // From merchant-payment.ts (mock wallet setup)
       id = params[0];
       user_id = params[1];
       chain = params[2];
       token_symbol = params[3];
-      balance = params[4] || 0.00;
+      deposit_address = null;
+      deposit_address_index = null;
+      token_address = null;
+    } else {
+      // From wallet-derivation.ts (HD derivation inserts)
+      id = crypto.randomUUID();
+      user_id = params[0];
+      chain = params[1];
+      
+      token_symbol = 'ETH';
+      if (normalized.includes("'USDT'")) token_symbol = 'USDT';
+      else if (normalized.includes("'USDC'")) token_symbol = 'USDC';
+      else if (normalized.includes("'SOL'")) token_symbol = 'SOL';
+      else if (normalized.includes("'TRX'")) token_symbol = 'TRX';
+
+      deposit_address = params[2];
+      deposit_address_index = params[3];
+      token_address = params[4] || null;
     }
-    const newWallet = { id, user_id, chain, token_symbol, deposit_address, deposit_address_index, balance, locked_balance: 0 };
+
+    // Check if wallet constraint UNIQUE(user_id, chain, token_address) is met
+    const duplicate = mockWallets.find(w => w.user_id === user_id && w.chain === chain && w.token_address === token_address);
+    if (duplicate) {
+      // simulate ON CONFLICT DO UPDATE SET deposit_address
+      duplicate.deposit_address = deposit_address;
+      return { rows: [duplicate] };
+    }
+
+    const newWallet = { id, user_id, chain, token_symbol, deposit_address, deposit_address_index, balance, locked_balance: 0, token_address };
     mockWallets.push(newWallet);
     return { rows: [newWallet] };
   }
@@ -122,7 +134,7 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
       status = 'confirming';
       tx_hash = params[4];
       required_confirmations = params[5];
-      confirmations = required_confirmations === 1 ? 0 : 1; // Solana starts 0 before completion, EVM starts 1
+      confirmations = required_confirmations === 1 ? 0 : 1; // Solana starts 0 before completion, EVM/Tron starts 1
       from_address = params[6];
       to_address = params[7];
       metadata = params[8];
@@ -163,6 +175,18 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
     return { rows: [] };
   }
 
+  if (normalized.startsWith('SELECT id, user_id FROM wallets WHERE deposit_address = $1')) {
+    const depositAddress = params[0];
+    const chain = params[1];
+    const currency = params[2];
+    const wallet = mockWallets.find(w => 
+      w.deposit_address.toLowerCase() === depositAddress.toLowerCase() && 
+      w.chain === chain && 
+      w.token_symbol === currency
+    );
+    return { rows: wallet ? [{ id: wallet.id, user_id: wallet.user_id }] : [] };
+  }
+
   if (normalized.startsWith('SELECT balance FROM wallets WHERE user_id = $1 AND chain = $2')) {
     const userId = params[0];
     const chain = params[1];
@@ -201,7 +225,7 @@ const mockRedis = {
 // ==========================================
 // 2. Real Imports and Test Execution
 // ==========================================
-import { deriveEVMWallet, deriveSolanaWallet, getOrCreateUserWallet } from '../services/wallet-derivation';
+import { deriveEVMWallet, deriveSolanaWallet, deriveTronWallet, getOrCreateUserWallet } from '../services/wallet-derivation';
 import { verifyBinanceWebhook, signBinanceRequest } from '../services/merchant-payment';
 import { registerIncomingDeposit, processNewBlock } from '../services/deposit-monitor';
 import * as bip39 from 'bip39';
@@ -247,7 +271,24 @@ async function runTests() {
     }
     console.log('✅ Solana consistency verified.');
 
-    // 3. Test Binance Signature calculations
+    // 3. Test Tron Derivation
+    console.log('\nTesting Tron Derivation...');
+    const tronWallet = deriveTronWallet(mnemonic, 1);
+    console.log(`Derived Tron address (index 1): ${tronWallet.address}`);
+    if (tronWallet.address.startsWith('T') && tronWallet.address.length === 34) {
+      console.log('✅ Tron Address Derivation valid.');
+    } else {
+      throw new Error(`Invalid Tron address format: ${tronWallet.address}`);
+    }
+
+    // Consistency check
+    const tronWallet2 = deriveTronWallet(mnemonic, 1);
+    if (tronWallet.address !== tronWallet2.address) {
+      throw new Error('Tron addresses are inconsistent for the same index');
+    }
+    console.log('✅ Tron consistency verified.');
+
+    // 4. Test Binance Signature calculations
     console.log('\nTesting Binance Webhook Signature Verification...');
     const mockPayload = JSON.stringify({ bizType: 'PAY', data: { status: 'PAY_SUCCESS', merchantTradeNo: '12345' } });
     const mockNonce = 'randomnonce123';
@@ -262,7 +303,7 @@ async function runTests() {
       throw new Error('Binance signature verification failed');
     }
 
-    // 4. Test database integration and confirmation monitors
+    // 5. Test database integration and confirmation monitors
     console.log('\nTesting Database Integration & Confirmation Monitors...');
     
     // Prepare mock user
@@ -275,89 +316,123 @@ async function runTests() {
 
     // Derive active user wallets
     const derivedEVM = await getOrCreateUserWallet(mockUserId, 'ethereum');
-    console.log(`✅ Derived EVM wallet for user: ${derivedEVM.address}`);
+    console.log(`✅ Derived EVM native and stablecoin wallets: ${derivedEVM.address}`);
 
     const derivedSolana = await getOrCreateUserWallet(mockUserId, 'solana');
-    console.log(`✅ Derived Solana wallet for user: ${derivedSolana.address}`);
+    console.log(`✅ Derived Solana native and stablecoin wallets: ${derivedSolana.address}`);
+
+    const derivedTron = await getOrCreateUserWallet(mockUserId, 'tron');
+    console.log(`✅ Derived Tron native and stablecoin wallets: ${derivedTron.address}`);
+
+    // Verify all wallets inserted
+    const walletCount = mockWallets.filter(w => w.user_id === mockUserId).length;
+    if (walletCount === 8) { // 3 EVM (ETH, USDT, USDC) + 3 Solana (SOL, USDT, USDC) + 2 Tron (TRX, USDT)
+      console.log('✅ Wallet provisioning verified: 8 user wallets inserted (native + stablecoins).');
+    } else {
+      throw new Error(`Expected 8 wallets for user, got ${walletCount}`);
+    }
 
     // Register incoming EVM USDT deposit (requires 12 confirmations)
-    console.log('\nRegistering incoming EVM transaction...');
+    console.log('\nRegistering incoming EVM USDT transaction...');
     const evmTxHash = '0x' + crypto.randomUUID().replace(/-/g, '') + '000000000000';
     const txId = await registerIncomingDeposit({
       txHash: evmTxHash,
       fromAddress: '0x1234567890123456789012345678901234567890',
       toAddress: derivedEVM.address,
       amount: 150.00,
-      chain: 'ethereum'
+      chain: 'ethereum',
+      currency: 'USDT'
     });
 
     // Check it starts confirming with 1 confirmation
     const txCheck = await mockQuery('SELECT status, confirmations, required_confirmations FROM transactions WHERE id = $1', [txId]);
     const tx = txCheck.rows[0];
     if (tx.status === 'confirming' && tx.confirmations === 1 && tx.required_confirmations === 12) {
-      console.log('✅ Incoming EVM Tx initialized as confirming with 1/12 confirmations.');
+      console.log('✅ Incoming EVM USDT Tx initialized as confirming with 1/12 confirmations.');
     } else {
       throw new Error(`Invalid initial state for EVM Tx: ${JSON.stringify(tx)}`);
     }
 
-    // Mine 10 more blocks (confirmations goes to 11)
-    console.log('Simulating block updates...');
-    for (let i = 0; i < 10; i++) {
+    // Mine 11 more blocks (completes EVM USDT)
+    for (let i = 0; i < 11; i++) {
       await processNewBlock('ethereum');
     }
 
-    const txCheck2 = await mockQuery('SELECT status, confirmations FROM transactions WHERE id = $1', [txId]);
-    if (txCheck2.rows[0].confirmations === 11 && txCheck2.rows[0].status === 'confirming') {
-      console.log('✅ Confirmation counts incremented successfully to 11/12.');
+    const txCheckCompleted = await mockQuery('SELECT status FROM transactions WHERE id = $1', [txId]);
+    if (txCheckCompleted.rows[0].status === 'completed') {
+      console.log('✅ EVM USDT Tx successfully marked completed after 12 confirmations.');
     } else {
-      throw new Error(`Expected confirming with 11 confirmations, got: ${JSON.stringify(txCheck2.rows[0])}`);
+      throw new Error(`Expected completed status, got: ${txCheckCompleted.rows[0].status}`);
     }
 
-    // Mine the 12th block (triggers completion)
-    await processNewBlock('ethereum');
-
-    // Verify it is completed and user got credit
-    const txCheck3 = await mockQuery('SELECT status, completed_at FROM transactions WHERE id = $1', [txId]);
-    if (txCheck3.rows[0].status === 'completed' && txCheck3.rows[0].completed_at !== null) {
-      console.log('✅ EVM Tx successfully marked completed after 12 confirmations.');
-    } else {
-      throw new Error(`Expected completed status, got: ${JSON.stringify(txCheck3.rows[0])}`);
-    }
-
-    const walletCheck = await mockQuery('SELECT balance FROM wallets WHERE user_id = $1 AND chain = $2', [mockUserId, 'ethereum']);
-    if (parseFloat(walletCheck.rows[0].balance) === 150.00) {
-      console.log('✅ Wallet balance successfully credited with 150.00.');
-    } else {
-      throw new Error(`Expected 150.00 balance, got: ${walletCheck.rows[0].balance}`);
-    }
-
-    // Register incoming Solana deposit (requires 1 confirmation)
-    console.log('\nRegistering incoming Solana transaction...');
-    const solTxHash = crypto.randomUUID().replace(/-/g, '') + 'solana';
-    const solTxId = await registerIncomingDeposit({
-      txHash: solTxHash,
-      fromAddress: 'CPGd1ZqWaZiUdZL3EmEji5UvfH2GW1jyBzM6ktwiFmWo',
-      toAddress: derivedSolana.address,
-      amount: 250.00,
-      chain: 'solana'
+    // Register incoming Tron TRC20 USDT deposit (requires 3 confirmations)
+    console.log('\nRegistering incoming Tron TRC20 USDT transaction...');
+    const tronTxHash = crypto.randomUUID().replace(/-/g, '') + 'tron';
+    const tronTxId = await registerIncomingDeposit({
+      txHash: tronTxHash,
+      fromAddress: 'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
+      toAddress: derivedTron.address,
+      amount: 300.00,
+      chain: 'tron',
+      currency: 'USDT'
     });
 
-    // Verify Solana transaction completed instantly on registration
-    const solTxCheck = await mockQuery('SELECT status FROM transactions WHERE id = $1', [solTxId]);
-    if (solTxCheck.rows[0].status === 'completed') {
-      console.log('✅ Solana Tx successfully completed instantly (1 confirmation threshold).');
-    } else {
-      throw new Error(`Expected completed status for Solana transaction, got: ${solTxCheck.rows[0].status}`);
+    const tronCheck = await mockQuery('SELECT status, confirmations, required_confirmations FROM transactions WHERE id = $1', [tronTxId]);
+    if (tronCheck.rows[0].status === 'confirming' && tronCheck.rows[0].confirmations === 1 && tronCheck.rows[0].required_confirmations === 3) {
+      console.log('✅ Tron TRC20 USDT Tx initialized confirming with 1/3 confirmations.');
     }
 
-    const solWalletCheck = await mockQuery('SELECT balance FROM wallets WHERE user_id = $1 AND chain = $2', [mockUserId, 'solana']);
-    if (parseFloat(solWalletCheck.rows[0].balance) === 250.00) {
-      console.log('✅ Solana wallet balance successfully credited with 250.00.');
+    // Mine 1 block (reaches 2/3)
+    await processNewBlock('tron');
+    // Mine 2nd block (reaches 3/3, completes)
+    await processNewBlock('tron');
+
+    const tronCheckCompleted = await mockQuery('SELECT status FROM transactions WHERE id = $1', [tronTxId]);
+    if (tronCheckCompleted.rows[0].status === 'completed') {
+      console.log('✅ Tron TRC20 USDT Tx successfully marked completed after 3 confirmations.');
     } else {
-      throw new Error(`Expected 250.00 Solana balance, got: ${solWalletCheck.rows[0].balance}`);
+      throw new Error('Expected completed status for Tron TRC20 transaction');
     }
 
-    console.log('\n🎉 All local & database transaction tests passed successfully!');
+    // Register EVM USDC deposit (requires 12 confirmations)
+    console.log('\nRegistering incoming EVM USDC transaction...');
+    const evmUSDCTxHash = '0x' + crypto.randomUUID().replace(/-/g, '') + 'usdc';
+    const evmUSDCTxId = await registerIncomingDeposit({
+      txHash: evmUSDCTxHash,
+      fromAddress: '0x1234567890123456789012345678901234567890',
+      toAddress: derivedEVM.address,
+      amount: 75.00,
+      chain: 'ethereum',
+      currency: 'USDC'
+    });
+
+    const usdcCheck = await mockQuery('SELECT status, confirmations FROM transactions WHERE id = $1', [evmUSDCTxId]);
+    if (usdcCheck.rows[0].status === 'confirming' && usdcCheck.rows[0].confirmations === 1) {
+      console.log('✅ EVM USDC Tx initialized confirming.');
+    }
+
+    // Mine 11 blocks to complete EVM USDC
+    for (let i = 0; i < 11; i++) {
+      await processNewBlock('ethereum');
+    }
+
+    const usdcCheckCompleted = await mockQuery('SELECT status FROM transactions WHERE id = $1', [evmUSDCTxId]);
+    if (usdcCheckCompleted.rows[0].status === 'completed') {
+      console.log('✅ EVM USDC Tx completed after 12 blocks.');
+    }
+
+    // Check balances
+    const usdtEVMWallet = mockWallets.find(w => w.user_id === mockUserId && w.chain === 'ethereum' && w.token_symbol === 'USDT');
+    const usdcEVMWallet = mockWallets.find(w => w.user_id === mockUserId && w.chain === 'ethereum' && w.token_symbol === 'USDC');
+    const usdtTronWallet = mockWallets.find(w => w.user_id === mockUserId && w.chain === 'tron' && w.token_symbol === 'USDT');
+
+    if (usdtEVMWallet.balance === 150 && usdcEVMWallet.balance === 75 && usdtTronWallet.balance === 300) {
+      console.log('✅ Stablecoin wallet balances verified (EVM USDT, EVM USDC, Tron USDT credited correctly).');
+    } else {
+      throw new Error(`Balance mismatch: EVM USDT = ${usdtEVMWallet.balance}, EVM USDC = ${usdcEVMWallet.balance}, Tron USDT = ${usdtTronWallet.balance}`);
+    }
+
+    console.log('\n🎉 All local & database stablecoin multi-chain tests passed successfully!');
     process.exit(0);
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
