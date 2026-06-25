@@ -10,7 +10,7 @@ WORKDIR /app
 # ── ধাপ ১: Dependencies ইন্সটল ────────────────────────────────
 FROM base AS deps
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install --include=dev
 
 # ── ধাপ ২: ডেভেলপমেন্ট (hot reload সহ) ────────────────────────
 FROM base AS development

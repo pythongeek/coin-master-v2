@@ -59,6 +59,9 @@ export default function BetControls() {
   const [stopOnSingleWinEnabled, setStopOnSingleWinEnabled] = useState(false);
   const [stopOnSingleWinAmount, setStopOnSingleWinAmount] = useState('');
 
+  // Strategy Presets
+  const [strategyPreset, setStrategyPreset] = useState<'none' | 'martingale' | 'anti_martingale' | 'dalembert'>('none');
+
   // Autoplay statistics
   const [betsPlayedCount, setBetsPlayedCount] = useState(0);
 
@@ -257,19 +260,41 @@ export default function BetControls() {
 
     // পরবর্তী বেট পরিমাণ নির্ধারণ করো
     let nextBetAmount = currentBetAmountRef.current;
-    if (lastResult.won) {
-      if (onWinAction === 'increase') {
-        const pct = parseFloat(onWinIncreasePercent) || 0;
-        nextBetAmount = nextBetAmount * (1 + pct / 100);
+    
+    if (strategyPreset === 'martingale') {
+      if (lastResult.won) {
+        nextBetAmount = betAmount; // রিসেট
+      } else {
+        nextBetAmount = currentBetAmountRef.current * 2; // দ্বিগুণ
+      }
+    } else if (strategyPreset === 'anti_martingale') {
+      if (lastResult.won) {
+        nextBetAmount = currentBetAmountRef.current * 2; // দ্বিগুণ
       } else {
         nextBetAmount = betAmount; // রিসেট
       }
-    } else {
-      if (onLossAction === 'increase') {
-        const pct = parseFloat(onLossIncreasePercent) || 0;
-        nextBetAmount = nextBetAmount * (1 + pct / 100);
+    } else if (strategyPreset === 'dalembert') {
+      if (lastResult.won) {
+        nextBetAmount = Math.max(betAmount, currentBetAmountRef.current - betAmount);
       } else {
-        nextBetAmount = betAmount; // রিসেট
+        nextBetAmount = currentBetAmountRef.current + betAmount;
+      }
+    } else {
+      // None / Manual
+      if (lastResult.won) {
+        if (onWinAction === 'increase') {
+          const pct = parseFloat(onWinIncreasePercent) || 0;
+          nextBetAmount = nextBetAmount * (1 + pct / 100);
+        } else {
+          nextBetAmount = betAmount; // রিসেট
+        }
+      } else {
+        if (onLossAction === 'increase') {
+          const pct = parseFloat(onLossIncreasePercent) || 0;
+          nextBetAmount = nextBetAmount * (1 + pct / 100);
+        } else {
+          nextBetAmount = betAmount; // রিসেট
+        }
       }
     }
 
@@ -553,15 +578,51 @@ export default function BetControls() {
             </div>
           </div>
 
+          {/* কৌশল প্রিসেট (Strategy Preset) */}
+          <div className="space-y-2 mb-3">
+            <p className="text-text-muted text-[10px] font-mono uppercase tracking-widest">কৌশল প্রিসেট</p>
+            <div className="relative">
+              <select
+                value={strategyPreset}
+                onChange={(e) => setStrategyPreset(e.target.value as any)}
+                disabled={isAutoPlayRunning}
+                className="input-cyber w-full py-2 px-3 text-xs font-mono appearance-none disabled:opacity-50 border border-border bg-surface"
+              >
+                <option value="none">ম্যানুয়াল (None)</option>
+                <option value="martingale">Martingale</option>
+                <option value="anti_martingale">Anti-Martingale</option>
+                <option value="dalembert">D'Alembert</option>
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-text-muted">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+              </div>
+            </div>
+            {strategyPreset === 'martingale' && (
+              <p className="text-text-muted text-[10px] font-mono mt-1 leading-tight">
+                * হারলে বেট দ্বিগুণ হবে, জিতলে বেস বেটে রিসেট হবে।
+              </p>
+            )}
+            {strategyPreset === 'anti_martingale' && (
+              <p className="text-text-muted text-[10px] font-mono mt-1 leading-tight">
+                * জিতলে বেট দ্বিগুণ হবে, হারলে বেস বেটে রিসেট হবে।
+              </p>
+            )}
+            {strategyPreset === 'dalembert' && (
+              <p className="text-text-muted text-[10px] font-mono mt-1 leading-tight">
+                * হারলে বেট এক ইউনিট বাড়বে, জিতলে এক ইউনিট কমবে।
+              </p>
+            )}
+          </div>
+
           {/* জিতলে / হারলে করণীয় */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className={`grid grid-cols-2 gap-3 transition-opacity duration-200 ${strategyPreset !== 'none' ? 'opacity-40 pointer-events-none' : ''}`}>
             {/* জিতলে করণীয় */}
             <div className="space-y-2">
               <p className="text-text-muted text-[10px] font-mono uppercase tracking-widest">জিতলে করণীয়</p>
               <div className="flex bg-surface rounded-lg border border-border p-0.5">
                 <button
                   onClick={() => setOnWinAction('reset')}
-                  disabled={isAutoPlayRunning}
+                  disabled={isAutoPlayRunning || strategyPreset !== 'none'}
                   className={`flex-1 py-1 rounded text-[11px] font-semibold font-display transition-all
                     ${onWinAction === 'reset' ? 'bg-surface2 text-brand-green' : 'text-text-secondary'}
                     disabled:opacity-50`}
@@ -570,7 +631,7 @@ export default function BetControls() {
                 </button>
                 <button
                   onClick={() => setOnWinAction('increase')}
-                  disabled={isAutoPlayRunning}
+                  disabled={isAutoPlayRunning || strategyPreset !== 'none'}
                   className={`flex-1 py-1 rounded text-[11px] font-semibold font-display transition-all
                     ${onWinAction === 'increase' ? 'bg-surface2 text-brand-green' : 'text-text-secondary'}
                     disabled:opacity-50`}
@@ -586,7 +647,7 @@ export default function BetControls() {
                     step={1}
                     value={onWinIncreasePercent}
                     onChange={(e) => setOnWinIncreasePercent(e.target.value)}
-                    disabled={isAutoPlayRunning}
+                    disabled={isAutoPlayRunning || strategyPreset !== 'none'}
                     className="input-cyber text-right pr-6 font-mono text-xs disabled:opacity-50 py-1"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted font-mono text-[9px]">%</span>
@@ -600,7 +661,7 @@ export default function BetControls() {
               <div className="flex bg-surface rounded-lg border border-border p-0.5">
                 <button
                   onClick={() => setOnLossAction('reset')}
-                  disabled={isAutoPlayRunning}
+                  disabled={isAutoPlayRunning || strategyPreset !== 'none'}
                   className={`flex-1 py-1 rounded text-[11px] font-semibold font-display transition-all
                     ${onLossAction === 'reset' ? 'bg-surface2 text-brand-green' : 'text-text-secondary'}
                     disabled:opacity-50`}
@@ -609,7 +670,7 @@ export default function BetControls() {
                 </button>
                 <button
                   onClick={() => setOnLossAction('increase')}
-                  disabled={isAutoPlayRunning}
+                  disabled={isAutoPlayRunning || strategyPreset !== 'none'}
                   className={`flex-1 py-1 rounded text-[11px] font-semibold font-display transition-all
                     ${onLossAction === 'increase' ? 'bg-surface2 text-brand-green' : 'text-text-secondary'}
                     disabled:opacity-50`}
@@ -625,7 +686,7 @@ export default function BetControls() {
                     step={1}
                     value={onLossIncreasePercent}
                     onChange={(e) => setOnLossIncreasePercent(e.target.value)}
-                    disabled={isAutoPlayRunning}
+                    disabled={isAutoPlayRunning || strategyPreset !== 'none'}
                     className="input-cyber text-right pr-6 font-mono text-xs disabled:opacity-50 py-1"
                   />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted font-mono text-[9px]">%</span>

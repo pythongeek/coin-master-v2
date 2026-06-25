@@ -15,22 +15,17 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../config/database';
 import { createToken, authMiddleware, AuthPayload } from '../middleware/auth';
+import { validateBody } from '../middleware/validation';
+import { registerSchema, loginSchema, walletAuthSchema } from '../schemas';
 
 const router = Router();
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/register — নতুন অ্যাকাউন্ট তৈরি
 // ══════════════════════════════════════════════════════════════
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', validateBody(registerSchema), async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body;
-
-    if (!username || username.length < 3) {
-      return res.status(400).json({ success: false, error: 'ইউজারনেম কমপক্ষে ৩ অক্ষরের হতে হবে।' });
-    }
-    if (!password || password.length < 6) {
-      return res.status(400).json({ success: false, error: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।' });
-    }
 
     // ইউজারনেম আগে থেকে আছে কিনা চেক
     const exists = await query('SELECT id FROM users WHERE username = $1', [username]);
@@ -64,13 +59,9 @@ router.post('/register', async (req: Request, res: Response) => {
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/login — লগইন
 // ══════════════════════════════════════════════════════════════
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', validateBody(loginSchema), async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
-
-    if (!username || !password) {
-      return res.status(400).json({ success: false, error: 'ইউজারনেম ও পাসওয়ার্ড দিন।' });
-    }
 
     const result = await query(
       'SELECT id, username, password_hash, balance, is_admin FROM users WHERE username = $1 AND is_active = true',
@@ -114,13 +105,9 @@ router.post('/login', async (req: Request, res: Response) => {
 //  POST /api/auth/wallet — MetaMask ওয়ালেট দিয়ে লগইন
 //  ওয়ালেট অ্যাড্রেস ইউনিক — প্রথমবার আসলে অটো রেজিস্ট্রেশন
 // ══════════════════════════════════════════════════════════════
-router.post('/wallet', async (req: Request, res: Response) => {
+router.post('/wallet', validateBody(walletAuthSchema), async (req: Request, res: Response) => {
   try {
     const { walletAddress, signature } = req.body;
-
-    if (!walletAddress || walletAddress.length < 10) {
-      return res.status(400).json({ success: false, error: 'ওয়ালেট অ্যাড্রেস প্রয়োজন।' });
-    }
 
     // TODO: Production-এ signature যাচাই করতে হবে (ethers.js দিয়ে)
     // এখন শুধু অ্যাড্রেস দিয়েই লগইন হবে (Development mode)

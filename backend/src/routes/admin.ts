@@ -14,6 +14,8 @@ import {
   resetToDefaults, CONFIG_LABELS, DEFAULT_CONFIG, GameConfig
 } from '../services/admin-config';
 import { query } from '../config/database';
+import { validateBody } from '../middleware/validation';
+import { adminSettingsSchema } from '../schemas';
 
 const router = Router();
 
@@ -59,33 +61,12 @@ router.get('/config', async (_req: Request, res: Response) => {
 //  PATCH /api/admin/config
 //  একটি বা একাধিক সেটিং আপডেট করো
 // ══════════════════════════════════════════════════════════════
-router.patch('/config', async (req: Request, res: Response) => {
+router.patch('/config', validateBody(adminSettingsSchema), async (req: Request, res: Response) => {
   try {
     const updates = req.body as Partial<GameConfig>;
 
     if (!updates || Object.keys(updates).length === 0) {
       return res.status(400).json({ success: false, error: 'কোনো আপডেট দেওয়া হয়নি।' });
-    }
-
-    // প্রতিটি মান ভ্যালিডেট করো
-    for (const [key, value] of Object.entries(updates)) {
-      const meta = CONFIG_LABELS[key as keyof GameConfig];
-      if (!meta) {
-        return res.status(400).json({ success: false, error: `অজানা কনফিগ কী: ${key}` });
-      }
-
-      if (meta.type === 'number') {
-        const num = parseFloat(String(value));
-        if (isNaN(num)) {
-          return res.status(400).json({ success: false, error: `${meta.label} একটি সংখ্যা হতে হবে।` });
-        }
-        if (meta.min !== undefined && num < meta.min) {
-          return res.status(400).json({ success: false, error: `${meta.label} সর্বনিম্ন ${meta.min}${meta.unit || ''} হতে হবে।` });
-        }
-        if (meta.max !== undefined && num > meta.max) {
-          return res.status(400).json({ success: false, error: `${meta.label} সর্বোচ্চ ${meta.max}${meta.unit || ''} হতে হবে।` });
-        }
-      }
     }
 
     await updateAllConfig(updates);

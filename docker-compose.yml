@@ -8,6 +8,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      target: development
     ports:
       - "3000:3000"
     environment:
@@ -29,10 +30,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: development
     ports:
       - "4000:4000"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_HOST=redis
     volumes:
       - ./backend:/app
       - /app/node_modules

@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthPayload } from '../middleware/auth';
 import { getOrCreateUserWallet } from '../services/wallet-derivation';
+import { validateBody } from '../middleware/validation';
+import { depositAddressSchema, depositMerchantSchema, withdrawSchema } from '../schemas';
 import {
   createBinancePayOrder,
   createRedotPayOrder,
@@ -21,7 +23,7 @@ interface AuthRequest extends Request {
  * POST /api/wallet/deposit/address
  * Get or derive a unique on-chain deposit address (EVM or Solana)
  */
-router.post('/deposit/address', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/deposit/address', authMiddleware, validateBody(depositAddressSchema), async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -29,10 +31,6 @@ router.post('/deposit/address', authMiddleware, async (req: AuthRequest, res: Re
     }
 
     const { chain } = req.body;
-    if (chain !== 'ethereum' && chain !== 'solana' && chain !== 'tron') {
-      return res.status(400).json({ success: false, error: 'Invalid chain. Supported: ethereum, solana, tron' });
-    }
-
     const wallet = await getOrCreateUserWallet(userId, chain);
     res.json({
       success: true,
@@ -49,7 +47,7 @@ router.post('/deposit/address', authMiddleware, async (req: AuthRequest, res: Re
  * POST /api/wallet/deposit/merchant
  * Initiate a checkout order with Binance Pay or RedotPay
  */
-router.post('/deposit/merchant', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/deposit/merchant', authMiddleware, validateBody(depositMerchantSchema), async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -57,19 +55,12 @@ router.post('/deposit/merchant', authMiddleware, async (req: AuthRequest, res: R
     }
 
     const { amount, provider, currency = 'USDT' } = req.body;
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ success: false, error: 'Valid deposit amount required' });
-    }
-
-    if (provider !== 'binance' && provider !== 'redotpay') {
-      return res.status(400).json({ success: false, error: 'Invalid provider. Supported: binance, redotpay' });
-    }
 
     let order;
     if (provider === 'binance') {
-      order = await createBinancePayOrder(userId, Number(amount), currency);
+      order = await createBinancePayOrder(userId, amount, currency);
     } else {
-      order = await createRedotPayOrder(userId, Number(amount), currency);
+      order = await createRedotPayOrder(userId, amount, currency);
     }
 
     res.json({
@@ -288,7 +279,7 @@ router.post('/deposit/simulate-block', async (req: Request, res: Response) => {
  * POST /api/wallet/withdraw
  * Initiate an automated crypto withdrawal (queued through BullMQ)
  */
-router.post('/withdraw', authMiddleware, async (req: AuthRequest, res: Response) => {
+router.post('/withdraw', authMiddleware, validateBody(withdrawSchema), async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {
@@ -296,17 +287,8 @@ router.post('/withdraw', authMiddleware, async (req: AuthRequest, res: Response)
     }
 
     const { walletId, toAddress, amount } = req.body;
-    if (!walletId || !toAddress || amount === undefined) {
-      return res.status(400).json({ success: false, error: 'Missing required parameters: walletId, toAddress, amount' });
-    }
-
-    const parsedAmount = Number(amount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'Withdrawal amount must be a positive number' });
-    }
-
     const { requestWithdrawal } = await import('../services/withdrawal-queue');
-    const result = await requestWithdrawal(userId, walletId, toAddress, parsedAmount);
+    const result = await requestWithdrawal(userId, walletId, toAddress, amount);
 
     res.json({
       success: true,

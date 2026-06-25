@@ -15,6 +15,13 @@ export const db = new Pool({
 export async function connectDB(): Promise<void> {
   try {
     const client = await db.connect();
+    
+    // Ensure KYC columns exist
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_applicant_id VARCHAR(100);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_verified_at TIMESTAMPTZ;
+    `);
+
     const result = await client.query('SELECT NOW() as now, version()');
     client.release();
 

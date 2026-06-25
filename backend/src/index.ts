@@ -14,12 +14,14 @@ import dotenv from 'dotenv';
 import { connectDB } from './config/database';
 import { redis } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
+import { geoipMiddleware } from './middleware/geoip';
 
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
 import adminRoutes from './routes/admin';
 import dashboardRoutes from './routes/dashboard';
 import walletRoutes from './routes/wallet';
+import kycRoutes from './routes/kyc';
 
 dotenv.config();
 
@@ -52,6 +54,7 @@ const limiter = rateLimit({
   message: { success: false, error: 'অনেক রিকোয়েস্ট। কিছুক্ষণ পরে চেষ্টা করুন।' },
 });
 app.use('/api', limiter);
+app.use('/api', geoipMiddleware);
 
 // ─── Routes ─────────────────────────────────────────────────
 app.use('/api/auth',  authRoutes);
@@ -59,6 +62,7 @@ app.use('/api/game',  gameRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/kyc', kycRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({

@@ -8,7 +8,7 @@ WORKDIR /app
 # ── ধাপ ১: Dependencies ───────────────────────────────────────
 FROM base AS deps
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install --include=dev
 
 # ── ধাপ ২: ডেভেলপমেন্ট (hot reload) ───────────────────────────
 FROM base AS development
@@ -32,7 +32,7 @@ RUN adduser --system --uid 1001 backend
 
 # শুধু প্রোডাকশন dependencies ইন্সটল করো
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder --chown=backend:nodejs /app/dist ./dist
 
