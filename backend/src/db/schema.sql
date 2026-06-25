@@ -146,5 +146,63 @@ CREATE TRIGGER users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
+-- ── TABLE: wallets ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS wallets (
+  id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id        UUID REFERENCES users(id) ON DELETE CASCADE,
+  chain          VARCHAR(50) NOT NULL,                       -- 'ethereum', 'solana', 'bitcoin', etc.
+  token_address  VARCHAR(255),                               -- Null for native tokens
+  token_symbol   VARCHAR(20) NOT NULL,
+  token_decimals INTEGER DEFAULT 18,
+  balance        DECIMAL(36, 18) NOT NULL DEFAULT 0.000000000000000000,
+  locked_balance DECIMAL(36, 18) NOT NULL DEFAULT 0.000000000000000000,
+  deposit_address VARCHAR(255) UNIQUE,
+  deposit_address_index INTEGER,                             -- BIP44 index
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, chain, token_address)
+);
+
+CREATE TRIGGER wallets_updated_at
+  BEFORE UPDATE ON wallets
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ── TABLE: transactions ────────────────────────────
+CREATE TABLE IF NOT EXISTS transactions (
+  id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+  wallet_id      UUID REFERENCES wallets(id) ON DELETE SET NULL,
+  type           VARCHAR(20) NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'bet', 'win', 'rakeback', 'rain', 'bonus', 'fee')),
+  amount         DECIMAL(36, 18) NOT NULL CHECK (amount > 0),
+  fee            DECIMAL(36, 18) DEFAULT 0.000000000000000000,
+  status         VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirming', 'completed', 'failed', 'cancelled')),
+  tx_hash        VARCHAR(255),
+  block_number   BIGINT,
+  confirmations  INTEGER DEFAULT 0,
+  required_confirmations INTEGER DEFAULT 6,
+  reference_id   UUID,                                       -- Links to bets, etc.
+  reference_type VARCHAR(50),                                -- e.g., 'bets', 'rain'
+  from_address   VARCHAR(255),
+  to_address     VARCHAR(255),
+  ip_address     VARCHAR(45),
+  user_agent     TEXT,
+  metadata       JSONB DEFAULT '{}',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at   TIMESTAMPTZ
+);
+
+-- ── INDEXES FOR NEW TABLES ─────────────────────────
+CREATE INDEX IF NOT EXISTS idx_wallets_user_id ON wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallets_deposit ON wallets(deposit_address);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
+
 -- ✅ স্কিমা তৈরি সম্পন্ন
-RAISE NOTICE 'CryptoFlip Database Schema Successfully Created! ✅';
+-- Use DO block for notices in normal client sessions
+DO $$
+BEGIN
+  RAISE NOTICE 'CryptoFlip Database Schema Successfully Created! ✅';
+END
+$$;
+

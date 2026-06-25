@@ -18,6 +18,8 @@ import { setupSocketHandlers } from './services/socket-manager';
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
 import adminRoutes from './routes/admin';
+import dashboardRoutes from './routes/dashboard';
+import walletRoutes from './routes/wallet';
 
 dotenv.config();
 
@@ -55,8 +57,8 @@ app.use('/api', limiter);
 app.use('/api/auth',  authRoutes);
 app.use('/api/game',  gameRoutes);
 app.use('/api/admin', adminRoutes);
-import dashboardRoutes from './routes/dashboard';
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/wallet', walletRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({
