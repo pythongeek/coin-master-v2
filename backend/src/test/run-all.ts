@@ -18,6 +18,7 @@ const testFiles = [
   'leaderboards.test.ts',
   'dashboard.test.ts',
   'audit.test.ts',
+  'concurrency.test.ts',
 ];
 
 console.log(`🚀 Running ${testFiles.length} backend tests...`);

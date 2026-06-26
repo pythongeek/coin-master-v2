@@ -35,6 +35,8 @@ import {
   resetWinStreak, getWinStreak
 } from '../config/redis';
 import { reconcileUser } from './reconciliation-engine';
+import { invalidateCache } from './cache';
+import { dispatchWebhook } from './webhook';
 
 // ── ইনপুট ও আউটপুটের ধরন ───────────────────────────────────────
 export interface BetRequest {
@@ -225,6 +227,14 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
         } catch (err) {
           console.warn('Socket emit failed for jackpot:', err);
         }
+
+        // Dispatch jackpot.won webhook
+        await dispatchWebhook('jackpot.won', {
+          userId: req.userId,
+          amount: jackpotAmount,
+          roll: jackpotRoll,
+          timestamp: new Date().toISOString()
+        });
       }
     }
 
@@ -244,6 +254,11 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     await reconcileUser(req.userId, client);
 
     await client.query('COMMIT');
+
+    // Invalidate caches for updated stats and leaderboards
+    await invalidateCache([`cache:stats:${req.userId}`, 'cache:leaderboards', 'cache:stats:active']).catch(err => {
+      console.warn('Cache invalidation failed:', err);
+    });
 
     // ── ধাপ ৯: Win Streak আপডেট করো ─────────────────────────────
     let winStreak = 0;
@@ -269,7 +284,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       message += ` 👑 আপনি $${jackpotAmount.toFixed(2)} মূল্যের জ্যাকপট জিতেছেন!`;
     }
 
-    return {
+    const resultResponse = {
       betId,
       result: outcome.result,
       choice: req.choice,
@@ -303,6 +318,11 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       },
       message,
     };
+
+    // Dispatch game.resolved webhook
+    await dispatchWebhook('game.resolved', resultResponse);
+
+    return resultResponse;
 
   } catch (error) {
     await client.query('ROLLBACK');

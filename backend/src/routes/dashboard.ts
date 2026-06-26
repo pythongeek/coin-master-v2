@@ -17,6 +17,7 @@ import { Router, Request, Response } from 'express';
 import { query } from '../config/database';
 import { authMiddleware, adminMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
+import { getOrSet } from '../services/cache';
 
 const router = Router();
 
@@ -26,87 +27,87 @@ const router = Router();
 router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    const cacheKey = `cache:stats:${userId}`;
 
-    // মোট বেট, জয়, হার, মোট বাজি, নেট P&L
-    const statsResult = await query(`
-      SELECT
-        COUNT(*)                                          AS total_bets,
-        COUNT(*) FILTER (WHERE won = true)               AS total_wins,
-        COUNT(*) FILTER (WHERE won = false)              AS total_losses,
-        COALESCE(SUM(amount), 0)                         AS total_wagered,
-        COALESCE(SUM(payout) - SUM(amount), 0)          AS net_pnl,
-        COALESCE(SUM(payout), 0)                         AS total_payout,
-        MAX(created_at)                                   AS last_bet_at,
-        -- সর্বোচ্চ টানা জয় (win streak) বের করা কঠিন, তাই সর্বোচ্চ জয়ের পরিমাণ দেখাই
-        COALESCE(MAX(payout), 0)                         AS biggest_win
-      FROM bets
-      WHERE user_id = $1 AND status = 'resolved'
-    `, [userId]);
+    const data = await getOrSet(cacheKey, 10, async () => {
+      // মোট বেট, জয়, হার, মোট বাজি, নেট P&L
+      const statsResult = await query(`
+        SELECT
+          COUNT(*)                                          AS total_bets,
+          COUNT(*) FILTER (WHERE won = true)               AS total_wins,
+          COUNT(*) FILTER (WHERE won = false)              AS total_losses,
+          COALESCE(SUM(amount), 0)                         AS total_wagered,
+          COALESCE(SUM(payout) - SUM(amount), 0)          AS net_pnl,
+          COALESCE(SUM(payout), 0)                         AS total_payout,
+          MAX(created_at)                                   AS last_bet_at,
+          -- সর্বোচ্চ টানা জয় (win streak) বের করা কঠিন, তাই সর্বোচ্চ জয়ের পরিমাণ দেখাই
+          COALESCE(MAX(payout), 0)                         AS biggest_win
+        FROM bets
+        WHERE user_id = $1 AND status = 'resolved'
+      `, [userId]);
 
-    const s = statsResult.rows[0];
-    const totalBets  = parseInt(s.total_bets);
-    const totalWins  = parseInt(s.total_wins);
-    const winRate    = totalBets > 0 ? ((totalWins / totalBets) * 100).toFixed(1) : '0.0';
+      const s = statsResult.rows[0];
+      const totalBets  = parseInt(s.total_bets);
+      const totalWins  = parseInt(s.total_wins);
+      const winRate    = totalBets > 0 ? ((totalWins / totalBets) * 100).toFixed(1) : '0.0';
 
-    // ব্যালেন্স
-    const balResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
-    const balance = parseFloat(balResult.rows[0]?.balance || '0');
+      // ব্যালেন্স
+      const balResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
+      const balance = parseFloat(balResult.rows[0]?.balance || '0');
 
-    // শেষ ১০০টি বেট হিস্ট্রি এবং স্ট্রিক্স ক্যালকুলেশন
-    const historyResult = await query(`
-      SELECT won, choice, result, amount, payout, created_at
-      FROM bets
-      WHERE user_id = $1 AND status = 'resolved'
-      ORDER BY created_at DESC
-      LIMIT 100
-    `, [userId]);
+      // শেষ ১০০টি বেট হিস্ট্রি এবং স্ট্রিক্স ক্যালকুলেশন
+      const historyResult = await query(`
+        SELECT won, choice, result, amount, payout, created_at
+        FROM bets
+        WHERE user_id = $1 AND status = 'resolved'
+        ORDER BY created_at DESC
+        LIMIT 100
+      `, [userId]);
 
-    const rows = historyResult.rows;
+      const rows = historyResult.rows;
 
-    // Current Active Streak
-    let currentStreak = 0;
-    let currentType: 'win' | 'loss' | null = null;
-    for (let i = 0; i < rows.length; i++) {
-      const won = rows[i].won;
-      if (i === 0) {
-        currentType = won ? 'win' : 'loss';
-        currentStreak = 1;
-      } else {
-        if ((won && currentType === 'win') || (!won && currentType === 'loss')) {
-          currentStreak++;
+      // Current Active Streak
+      let currentStreak = 0;
+      let currentType: 'win' | 'loss' | null = null;
+      for (let i = 0; i < rows.length; i++) {
+        const won = rows[i].won;
+        if (i === 0) {
+          currentType = won ? 'win' : 'loss';
+          currentStreak = 1;
         } else {
-          break;
+          if ((won && currentType === 'win') || (!won && currentType === 'loss')) {
+            currentStreak++;
+          } else {
+            break;
+          }
         }
       }
-    }
-    const currentStreakSigned = currentType === 'win' ? currentStreak : (currentType === 'loss' ? -currentStreak : 0);
+      const currentStreakSigned = currentType === 'win' ? currentStreak : (currentType === 'loss' ? -currentStreak : 0);
 
-    // Max Win & Loss Streaks
-    let maxWinStreak = 0;
-    let maxLossStreak = 0;
-    let tempWin = 0;
-    let tempLoss = 0;
+      // Max Win & Loss Streaks
+      let maxWinStreak = 0;
+      let maxLossStreak = 0;
+      let tempWin = 0;
+      let tempLoss = 0;
 
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const won = rows[i].won;
-      if (won) {
-        tempWin++;
-        tempLoss = 0;
-        if (tempWin > maxWinStreak) {
-          maxWinStreak = tempWin;
-        }
-      } else {
-        tempLoss++;
-        tempWin = 0;
-        if (tempLoss > maxLossStreak) {
-          maxLossStreak = tempLoss;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const won = rows[i].won;
+        if (won) {
+          tempWin++;
+          tempLoss = 0;
+          if (tempWin > maxWinStreak) {
+            maxWinStreak = tempWin;
+          }
+        } else {
+          tempLoss++;
+          tempWin = 0;
+          if (tempLoss > maxLossStreak) {
+            maxLossStreak = tempLoss;
+          }
         }
       }
-    }
 
-    res.json({
-      success: true,
-      data: {
+      return {
         balance,
         totalBets,
         totalWins,
@@ -130,7 +131,12 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
           payout: parseFloat(r.payout),
           createdAt: r.created_at,
         })),
-      },
+      };
+    });
+
+    res.json({
+      success: true,
+      data,
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
@@ -225,24 +231,24 @@ router.get('/history/:userId', authMiddleware, async (req: Request, res: Respons
 // ══════════════════════════════════════════════════════════════
 router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
-    const [
-      totalUsers, todayUsers,
-      totalBets, todayBets,
-      houseProfit, activeRains,
-    ] = await Promise.all([
-      query('SELECT COUNT(*) FROM users WHERE is_active = true'),
-      query("SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '24 hours'"),
-      query("SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume FROM bets WHERE status='resolved'"),
-      query(`SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume
-             FROM bets WHERE status='resolved' AND created_at > NOW() - INTERVAL '24 hours'`),
-      // হাউজের মোট আয় = মোট বাজি - মোট পেআউট
-      query("SELECT COALESCE(SUM(amount) - SUM(payout), 0) AS profit FROM bets WHERE status='resolved'"),
-      query("SELECT COUNT(*) FROM crypto_rain_events WHERE status='active' AND expires_at > NOW()"),
-    ]);
+    const cacheKey = 'cache:stats:active';
+    const data = await getOrSet(cacheKey, 15, async () => {
+      const [
+        totalUsers, todayUsers,
+        totalBets, todayBets,
+        houseProfit, activeRains,
+      ] = await Promise.all([
+        query('SELECT COUNT(*) FROM users WHERE is_active = true'),
+        query("SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '24 hours'"),
+        query("SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume FROM bets WHERE status='resolved'"),
+        query(`SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume
+               FROM bets WHERE status='resolved' AND created_at > NOW() - INTERVAL '24 hours'`),
+        // হাউজের মোট আয় = মোট বাজি - মোট পেআউট
+        query("SELECT COALESCE(SUM(amount) - SUM(payout), 0) AS profit FROM bets WHERE status='resolved'"),
+        query("SELECT COUNT(*) FROM crypto_rain_events WHERE status='active' AND expires_at > NOW()"),
+      ]);
 
-    res.json({
-      success: true,
-      data: {
+      return {
         users: {
           total:   parseInt(totalUsers.rows[0].count),
           today:   parseInt(todayUsers.rows[0].count),
@@ -256,7 +262,12 @@ router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'suppor
         houseProfit:   parseFloat(houseProfit.rows[0].profit),
         activeRains:   parseInt(activeRains.rows[0].count),
         timestamp:     new Date().toISOString(),
-      },
+      };
+    });
+
+    res.json({
+      success: true,
+      data,
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });

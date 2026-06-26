@@ -17,6 +17,7 @@ import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
 import { startAuditBackupWorker } from './services/audit-backup';
+import { startWebhookWorker } from './services/webhook';
 
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
@@ -87,6 +88,9 @@ async function start() {
   
   // Start periodic S3/local audit backup (every 1 hour)
   startAuditBackupWorker(3600000);
+
+  // Start webhook dispatcher worker
+  startWebhookWorker();
 
   httpServer.listen(PORT, () => {
     console.log('\n╔════════════════════════════════════╗');
