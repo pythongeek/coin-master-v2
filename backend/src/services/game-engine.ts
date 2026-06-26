@@ -19,7 +19,9 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+
 import {
   generateServerSeed, hashServerSeed, resolveFlip,
   generateClientSeed, FlipResult, FlipOutcome, SeedPair
@@ -58,6 +60,10 @@ export interface BetResponse {
   newBalance: number;
   winStreak: number;
   cryptoRainTriggered: boolean;
+  jackpotWon?: boolean;
+  jackpotAmount?: number;
+  jackpotRoll?: number;
+  jackpotPool?: number;
   // Provably Fair ডেটা (ইউজার ভেরিফাই করতে পারবে)
   verification: {
     serverSeedHash: string;   // খেলার আগে দেওয়া হয়েছিল
@@ -67,6 +73,10 @@ export interface BetResponse {
     rawHash: string;
     roll: number;
     winChance: number;
+    jackpotSignature?: string;
+    jackpotHash?: string;
+    jackpotRoll?: number;
+    jackpotHitChance?: number;
   };
   message: string;  // বাংলায় ফলাফলের বার্তা
 }
@@ -145,8 +155,35 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     );
     const won = outcome.won;
 
+    // ── Progressive Jackpot Accumulator & Roll ────────────────
+    let jackpotWon = false;
+    let jackpotAmount = 0;
+    let jackpotRoll = -1;
+    let finalJackpotPool = config.jackpotPool;
+
+    if (config.jackpotEnabled && req.amount >= config.jackpotMinBet) {
+      const contribution = req.amount * (config.jackpotContributionPercent / 100);
+      const tempPool = config.jackpotPool + contribution;
+      
+      const jackpotSignature = `${clientSeed}:${nonce}:jackpot`;
+      const jackpotHash = crypto.createHmac('sha256', serverSeed).update(jackpotSignature).digest('hex');
+      const rawJackpotVal = parseInt(jackpotHash.slice(0, 8), 16);
+      jackpotRoll = rawJackpotVal % config.jackpotHitChance;
+
+      if (jackpotRoll === 777) {
+        jackpotWon = true;
+        jackpotAmount = parseFloat(tempPool.toFixed(8));
+        finalJackpotPool = config.jackpotStartPool;
+      } else {
+        finalJackpotPool = tempPool;
+      }
+    }
+
     // ── шаг ৭: ব্যালেন্স ও ওয়াগার/রেকব্যাক আপডেট করো ─────────────────────────────
-    const balanceChange = won ? outcome.payout - req.amount : -req.amount;
+    let balanceChange = won ? outcome.payout - req.amount : -req.amount;
+    if (jackpotWon) {
+      balanceChange += jackpotAmount;
+    }
     const newBalance = parseFloat((currentBalance + balanceChange).toFixed(8));
 
     const newTotalWagered = totalWagered + req.amount;
@@ -159,7 +196,39 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       [newBalance, newTotalWagered, newPendingRakeback, req.userId]
     );
 
-    // ── ধাপ ৮: বেট ডাটাবেসে সেভ করো ────────────────────────────
+    // Save final jackpot pool value to admin_settings table
+    if (config.jackpotEnabled && req.amount >= config.jackpotMinBet) {
+      await client.query(
+        "INSERT INTO admin_settings (key, value, updated_at) VALUES ('jackpot_pool', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+        [String(finalJackpotPool.toFixed(8))]
+      );
+
+      if (jackpotWon) {
+        // Record jackpot transaction log
+        const txId = uuidv4();
+        await client.query(
+          `INSERT INTO transactions (id, user_id, wallet_id, type, amount, status, metadata, completed_at)
+           VALUES ($1, $2, NULL, 'jackpot', $3, 'completed', '{}', NOW())`,
+          [txId, req.userId, jackpotAmount]
+        );
+
+        // Emit socket notification to all connected clients
+        try {
+          const { io } = require('../index');
+          if (io) {
+            io.emit('jackpot_hit', {
+              userId: req.userId,
+              amount: jackpotAmount,
+              roll: jackpotRoll
+            });
+          }
+        } catch (err) {
+          console.warn('Socket emit failed for jackpot:', err);
+        }
+      }
+    }
+
+    // ──剧৮: বেট ডাটাবেসে সেভ করো ────────────────────────────
     const betId = uuidv4();
     await client.query(
       `INSERT INTO bets
@@ -193,9 +262,12 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     }
 
     // ── ধাপ ১০: বার্তা তৈরি করো ─────────────────────────────────
-    const message = won
+    let message = won
       ? `🎉 জিতেছেন! +$${outcome.payout.toFixed(2)} আপনার ওয়ালেটে যোগ হয়েছে।`
       : `😔 হেরেছেন! -$${req.amount.toFixed(2)} বেট।`;
+    if (jackpotWon) {
+      message += ` 👑 আপনি $${jackpotAmount.toFixed(2)} মূল্যের জ্যাকপট জিতেছেন!`;
+    }
 
     return {
       betId,
@@ -212,6 +284,10 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       newBalance,
       winStreak,
       cryptoRainTriggered,
+      jackpotWon,
+      jackpotAmount,
+      jackpotRoll,
+      jackpotPool: finalJackpotPool,
       verification: {
         serverSeedHash,
         serverSeed,  // এখন প্রকাশ করা হলো
@@ -220,6 +296,10 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
         rawHash: outcome.rawHash,
         roll: outcome.roll,
         winChance: outcome.winChance,
+        jackpotSignature: config.jackpotEnabled && req.amount >= config.jackpotMinBet ? `${clientSeed}:${nonce}:jackpot` : undefined,
+        jackpotHash: config.jackpotEnabled && req.amount >= config.jackpotMinBet ? crypto.createHmac('sha256', serverSeed).update(`${clientSeed}:${nonce}:jackpot`).digest('hex') : undefined,
+        jackpotRoll: config.jackpotEnabled && req.amount >= config.jackpotMinBet ? jackpotRoll : undefined,
+        jackpotHitChance: config.jackpotEnabled && req.amount >= config.jackpotMinBet ? config.jackpotHitChance : undefined
       },
       message,
     };

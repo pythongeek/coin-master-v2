@@ -50,22 +50,66 @@ router.post('/bet', gameLimiter, validateBody(betSchema), async (req: Request, r
 // ══════════════════════════════════════════════════════════════
 router.post('/verify', gameLimiter, validateBody(verifySchema), (req: Request, res: Response) => {
   try {
-    const { serverSeed, clientSeed, nonce, serverSeedHash, choice, targetMultiplier, houseEdge } = req.body;
+    const { serverSeed, clientSeed, nonce, serverSeedHash, choice, targetMultiplier, houseEdge, jackpotHitChance } = req.body;
 
     const result = verifyFlip({
       serverSeed,
       clientSeed,
-      nonce,
+      nonce: Number(nonce),
       serverSeedHash,
       choice,
       targetMultiplier: targetMultiplier || 2.0,
       houseEdge: houseEdge || 2.0,
     });
 
-    res.json({ success: true, data: result });
+    // Jackpot verification calculation
+    const hitChance = Number(jackpotHitChance || 10000);
+    const crypto = require('crypto');
+    const jackpotSignature = `${clientSeed}:${nonce}:jackpot`;
+    const jackpotHash = crypto.createHmac('sha256', serverSeed).update(jackpotSignature).digest('hex');
+    const rawJackpotVal = parseInt(jackpotHash.slice(0, 8), 16);
+    const jackpotRoll = rawJackpotVal % hitChance;
+    const jackpotWon = jackpotRoll === 777;
+
+    const extendedData = {
+      ...result,
+      jackpot: {
+        signature: jackpotSignature,
+        hash: jackpotHash,
+        roll: jackpotRoll,
+        hitChance,
+        won: jackpotWon,
+        explanation: `HMAC-SHA256("${serverSeed}", "${jackpotSignature}") = ${jackpotHash.slice(0,8)}... → Mod ${hitChance} = ${jackpotRoll} (${jackpotWon ? 'WON JACKPOT! 🎉' : 'No jackpot hit'})`
+      }
+    };
+
+    res.json({ success: true, data: extendedData });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(400).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/game/jackpot — বর্তমান প্রোগ্রেসিভ জ্যাকপট পুল দেখো
+// ══════════════════════════════════════════════════════════════
+router.get('/jackpot', async (_req: Request, res: Response) => {
+  try {
+    const config = await getConfig();
+    res.json({
+      success: true,
+      data: {
+        jackpotPool: config.jackpotPool,
+        jackpotMinBet: config.jackpotMinBet,
+        jackpotContributionPercent: config.jackpotContributionPercent,
+        jackpotEnabled: config.jackpotEnabled,
+        jackpotHitChance: config.jackpotHitChance,
+        jackpotStartPool: config.jackpotStartPool
+      }
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
   }
 });
 

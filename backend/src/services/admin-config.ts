@@ -64,11 +64,23 @@ export interface GameConfig {
   /** কত গেমের পর সার্ভার সিড স্বয়ংক্রিয়ভাবে পরিবর্তন হবে */
   seedRotationAfterGames: number;
 
-  // ── মেইনটেন্যান্স মোড ──────────────────────────────────────────
-  /** গেম বন্ধ আছে কিনা */
   maintenanceMode: boolean;
   /** বন্ধ থাকলে ইউজারদের কী বার্তা দেখাবে */
   maintenanceMessage: string;
+
+  // ── প্রোগ্রেসিভ জ্যাকপট সেটিং ──────────────────────────────
+  /** প্রোগ্রেসিভ জ্যাকপট চালু আছে কিনা */
+  jackpotEnabled: boolean;
+  /** জ্যাকপটের জন্য সর্বনিম্ন বেট পরিমাণ */
+  jackpotMinBet: number;
+  /** বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে */
+  jackpotContributionPercent: number;
+  /** জ্যাকপট জয়ের সম্ভাবনা (১/X) */
+  jackpotHitChance: number;
+  /** জ্যাকপট শুরুর পুলের পরিমাণ */
+  jackpotStartPool: number;
+  /** জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থ */
+  jackpotPool: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -107,6 +119,14 @@ export const DEFAULT_CONFIG: GameConfig = {
   // মেইনটেন্যান্স
   maintenanceMode: false,
   maintenanceMessage: 'সাইটটি আপগ্রেডের জন্য সাময়িকভাবে বন্ধ আছে। শীঘ্রই আসছে!',
+
+  // প্রোগ্রেসিভ জ্যাকপট
+  jackpotEnabled: true,
+  jackpotMinBet: 1.0,
+  jackpotContributionPercent: 1.0,
+  jackpotHitChance: 10000,
+  jackpotStartPool: 10.0,
+  jackpotPool: 10.0,
 };
 
 // ── কনফিগ কী → বাংলা লেবেল ম্যাপিং (UI-র জন্য) ───────────────
@@ -129,6 +149,12 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   seedRotationAfterGames: { label: 'সিড রোটেশন', description: 'কত গেমের পর স্বয়ংক্রিয়ভাবে নতুন সার্ভার সিড তৈরি হবে।', unit: 'গেম', min: 10, max: 1000, type: 'number', category: 'নিরাপত্তা' },
   maintenanceMode:        { label: 'মেইনটেন্যান্স মোড', description: 'চালু করলে ইউজাররা গেম খেলতে পারবে না।', type: 'boolean', category: 'সিস্টেম' },
   maintenanceMessage:     { label: 'মেইনটেন্যান্স বার্তা', description: 'মেইনটেন্যান্স মোডে ইউজারদের কী বার্তা দেখাবে।', type: 'string', category: 'সিস্টেম' },
+  jackpotEnabled:         { label: 'জ্যাকপট চালু', description: 'প্রোগ্রেসিভ জ্যাকপট সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'জ্যাকপট' },
+  jackpotMinBet:          { label: 'জ্যাকপট সর্বনিম্ন বেট', description: 'জ্যাকপটে অংশ নেওয়ার জন্য সর্বনিম্ন বেট পরিমাণ।', unit: '$', min: 0.01, max: 100, type: 'number', category: 'জ্যাকপট' },
+  jackpotContributionPercent: { label: 'জ্যাকপট কন্ট্রিবিউশন (%)', description: 'প্রতি বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'জ্যাকপট' },
+  jackpotHitChance:       { label: 'জ্যাকপট জয়ের সুযোগ (১/X)', description: 'জ্যাকপট জয়ের সম্ভাবনা (১/X chance)। যেমন ১০০০০ দিলে প্রতি ১০,০০০ গেমে গড়ে একবার জিতবে।', unit: 'টি গেম', min: 2, max: 1000000, type: 'number', category: 'জ্যাকপট' },
+  jackpotStartPool:       { label: 'জ্যাকপট শুরুর মান', description: 'জ্যাকপট জয়ের পর পুলটি যে প্রারম্ভিক অ্যামাউন্টে রিসেট হবে।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'জ্যাকপট' },
+  jackpotPool:            { label: 'জ্যাকপট পুল ব্যালেন্স', description: 'জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থের পরিমাণ।', unit: '$', min: 0, max: 1000000, type: 'number', category: 'জ্যাকপট' },
 };
 
 // ═══════════════════════════════════════════════════════════════

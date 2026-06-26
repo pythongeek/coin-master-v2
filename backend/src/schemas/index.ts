@@ -123,6 +123,11 @@ export const verifySchema = z.object({
     .number()
     .positive()
     .optional(),
+  jackpotHitChance: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional(),
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -259,4 +264,27 @@ export const adminSettingsSchema = z.object({
     .optional(),
   maintenanceMode: z.boolean().optional(),
   maintenanceMessage: z.string().optional(),
+  jackpotEnabled: z.boolean().optional(),
+  jackpotMinBet: z.coerce
+    .number()
+    .min(0.01, 'জ্যাকপট সর্বনিম্ন বেট $০.০১ হতে হবে।')
+    .optional(),
+  jackpotContributionPercent: z.coerce
+    .number()
+    .min(0, 'জন্ট্রিবিউশন শতকরা ০ এর নিচে হতে পারবে না।')
+    .max(10, 'জন্ট্রিবিউশন শতকরা ১০ এর উপরে হতে পারবে না।')
+    .optional(),
+  jackpotHitChance: z.coerce
+    .number()
+    .int()
+    .min(2, 'জ্যাকপট জয়ের সুযোগ কমপক্ষে ১/২ হতে হবে।')
+    .optional(),
+  jackpotStartPool: z.coerce
+    .number()
+    .min(0.01, 'জ্যাকপট শুরুর পুলের পরিমাণ কমপক্ষে $০.০১ হতে হবে।')
+    .optional(),
+  jackpotPool: z.coerce
+    .number()
+    .min(0, 'জ্যাকপট পুল নেতিবাচক হতে পারবে না।')
+    .optional(),
 });
