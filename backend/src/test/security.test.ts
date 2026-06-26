@@ -1,0 +1,162 @@
+import { Request, Response, NextFunction } from 'express';
+import { csrfMiddleware } from '../middleware/security';
+
+// Express Mock generators
+function createMockRequest(
+  method: string,
+  headers: Record<string, string> = {}
+): Request {
+  return {
+    method,
+    headers,
+  } as unknown as Request;
+}
+
+function createMockResponse() {
+  let statusCode = 200;
+  let jsonResponse: any = null;
+
+  const res = {
+    status(code: number) {
+      statusCode = code;
+      return this;
+    },
+    json(data: any) {
+      jsonResponse = data;
+      return this;
+    },
+  } as unknown as Response;
+
+  return {
+    res,
+    getStatusCode: () => statusCode,
+    getResponse: () => jsonResponse,
+  };
+}
+
+function createMockNext() {
+  let called = 0;
+  const next = (() => {
+    called += 1;
+  }) as NextFunction;
+  return {
+    next,
+    getCalls: () => called,
+  };
+}
+
+async function runTests() {
+  console.log('🧪 Starting CSRF Protection Middleware Tests...');
+  const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+  try {
+    // ══════════════════════════════════════════════════════════════
+    //  SCENARIO 1: Safe HTTP Methods Bypass Validation
+    // ══════════════════════════════════════════════════════════════
+    console.log('\nScenario 1: Testing Safe methods bypass (GET, HEAD)...');
+    
+    const req1 = createMockRequest('GET');
+    const m1 = createMockResponse();
+    const n1 = createMockNext();
+
+    await csrfMiddleware(req1, m1.res, n1.next);
+
+    if (n1.getCalls() === 1 && m1.getStatusCode() === 200) {
+      console.log('✅ GET request successfully bypassed CSRF checks.');
+    } else {
+      throw new Error(`Expected GET to pass. Status: ${m1.getStatusCode()}, Next calls: ${n1.getCalls()}`);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  SCENARIO 2: Mutating Requests Missing Headers Blocked
+    // ══════════════════════════════════════════════════════════════
+    console.log('\nScenario 2: Testing Mutating POST without security headers...');
+
+    const req2 = createMockRequest('POST', {
+      origin: allowedOrigin,
+    });
+    const m2 = createMockResponse();
+    const n2 = createMockNext();
+
+    await csrfMiddleware(req2, m2.res, n2.next);
+
+    if (n2.getCalls() === 0 && m2.getStatusCode() === 403) {
+      const resp = m2.getResponse();
+      if (!resp.success && resp.error.includes('CSRF ভ্যালিডেশন')) {
+        console.log('✅ POST request without browser security headers successfully blocked with 403.');
+      } else {
+        throw new Error(`Unexpected block payload: ${JSON.stringify(resp)}`);
+      }
+    } else {
+      throw new Error(`Expected POST to be blocked. Status: ${m2.getStatusCode()}, Next calls: ${n2.getCalls()}`);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  SCENARIO 3: Mutating Requests from Illegal Origins Blocked
+    // ══════════════════════════════════════════════════════════════
+    console.log('\nScenario 3: Testing Mutating POST from illegal origin...');
+
+    const req3 = createMockRequest('POST', {
+      origin: 'https://evil-attacker-site.com',
+      'x-requested-with': 'XMLHttpRequest',
+    });
+    const m3 = createMockResponse();
+    const n3 = createMockNext();
+
+    await csrfMiddleware(req3, m3.res, n3.next);
+
+    if (n3.getCalls() === 0 && m3.getStatusCode() === 403) {
+      console.log('✅ POST from unauthorized origin successfully blocked.');
+    } else {
+      throw new Error(`Expected illegal origin POST to be blocked. Status: ${m3.getStatusCode()}`);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  SCENARIO 4: Valid Mutating Requests Passed
+    // ══════════════════════════════════════════════════════════════
+    console.log('\nScenario 4: Testing Valid mutating POST requests...');
+
+    const req4 = createMockRequest('POST', {
+      origin: allowedOrigin,
+      'x-requested-with': 'XMLHttpRequest',
+    });
+    const m4 = createMockResponse();
+    const n4 = createMockNext();
+
+    await csrfMiddleware(req4, m4.res, n4.next);
+
+    if (n4.getCalls() === 1 && m4.getStatusCode() === 200) {
+      console.log('✅ Valid POST from matching origin with header successfully allowed.');
+    } else {
+      throw new Error(`Expected valid POST request to pass. Status: ${m4.getStatusCode()}`);
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  SCENARIO 5: Referer Check Fallback
+    // ══════════════════════════════════════════════════════════════
+    console.log('\nScenario 5: Testing Referer origin check when Origin header is missing...');
+
+    const req5 = createMockRequest('POST', {
+      referer: `${allowedOrigin}/dashboard`,
+      'x-csrf-token': 'token123',
+    });
+    const m5 = createMockResponse();
+    const n5 = createMockNext();
+
+    await csrfMiddleware(req5, m5.res, n5.next);
+
+    if (n5.getCalls() === 1 && m5.getStatusCode() === 200) {
+      console.log('✅ Referer verification succeeded and allowed matching origin referrer request.');
+    } else {
+      throw new Error(`Expected referer check to pass. Status: ${m5.getStatusCode()}`);
+    }
+
+    console.log('\n🎉 All CSRF protection integration tests passed successfully!');
+    process.exit(0);
+  } catch (error) {
+    console.error('\n❌ Test failed with error:', error);
+    process.exit(1);
+  }
+}
+
+runTests();

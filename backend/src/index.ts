@@ -15,6 +15,7 @@ import { redis } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
+import { csrfMiddleware, helmetConfig } from './middleware/security';
 
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
@@ -39,7 +40,7 @@ const io = new SocketIOServer(httpServer, {
 });
 
 // ─── Middleware ──────────────────────────────────────────────
-app.use(helmet({ crossOriginEmbedderPolicy: false }));
+app.use(helmet(helmetConfig));
 app.use(cors({
   origin: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
   credentials: true,
@@ -50,6 +51,7 @@ app.use(express.urlencoded({ extended: true }));
 // Rate Limiting
 app.use('/api', globalLimiter);
 app.use('/api', geoipMiddleware);
+app.use('/api', csrfMiddleware);
 
 // ─── Routes ─────────────────────────────────────────────────
 app.use('/api/auth',  authRoutes);
