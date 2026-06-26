@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS users (
   is_active      BOOLEAN NOT NULL DEFAULT true,
   is_admin       BOOLEAN NOT NULL DEFAULT false,
   kyc_status     VARCHAR(20) NOT NULL DEFAULT 'unverified' CHECK (kyc_status IN ('unverified', 'pending', 'verified', 'rejected')),
+  kyc_applicant_id VARCHAR(100),
+  kyc_verified_at TIMESTAMPTZ,
+  role           VARCHAR(20) NOT NULL DEFAULT 'user',
+  two_factor_secret TEXT,
+  two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+  two_factor_temp_secret TEXT,
   self_excluded_until TIMESTAMPTZ,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -220,6 +226,82 @@ CREATE TABLE IF NOT EXISTS ledger_alerts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ledger_alerts_user_id ON ledger_alerts(user_id);
+
+-- ── TABLE: audit_logs ─────────────────────────────
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id BIGSERIAL PRIMARY KEY,
+  table_name VARCHAR(50) NOT NULL,
+  record_id UUID NOT NULL,
+  action VARCHAR(20) NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+  old_data JSONB,
+  new_data JSONB,
+  changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  ip_address INET,
+  user_agent TEXT,
+  archived_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_table_record ON audit_logs(table_name, record_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+-- Trigger for audit logging
+CREATE OR REPLACE FUNCTION audit_trigger()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_changed_by UUID;
+    v_ip INET;
+    v_user_agent TEXT;
+BEGIN
+    BEGIN
+        v_changed_by := NULLIF(current_setting('audit.user_id', true), '')::UUID;
+    EXCEPTION WHEN OTHERS THEN
+        v_changed_by := NULL;
+    END;
+
+    BEGIN
+        v_ip := NULLIF(current_setting('audit.ip_address', true), '')::INET;
+    EXCEPTION WHEN OTHERS THEN
+        v_ip := NULL;
+    END;
+
+    BEGIN
+        v_user_agent := NULLIF(current_setting('audit.user_agent', true), '');
+    EXCEPTION WHEN OTHERS THEN
+        v_user_agent := NULL;
+    END;
+
+    IF TG_OP = 'DELETE' THEN
+        INSERT INTO audit_logs (table_name, record_id, action, old_data, changed_by, ip_address, user_agent)
+        VALUES (TG_TABLE_NAME, OLD.id, 'DELETE', row_to_json(OLD), v_changed_by, v_ip, v_user_agent);
+        RETURN OLD;
+    ELSIF TG_OP = 'UPDATE' THEN
+        INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data, changed_by, ip_address, user_agent)
+        VALUES (TG_TABLE_NAME, OLD.id, 'UPDATE', row_to_json(OLD), row_to_json(NEW), v_changed_by, v_ip, v_user_agent);
+        RETURN NEW;
+    ELSIF TG_OP = 'INSERT' THEN
+        INSERT INTO audit_logs (table_name, record_id, action, new_data, changed_by, ip_address, user_agent)
+        VALUES (TG_TABLE_NAME, NEW.id, 'INSERT', row_to_json(NEW), v_changed_by, v_ip, v_user_agent);
+        RETURN NEW;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS users_audit ON users;
+CREATE TRIGGER users_audit AFTER INSERT OR UPDATE OR DELETE ON users
+    FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+
+DROP TRIGGER IF EXISTS wallets_audit ON wallets;
+CREATE TRIGGER wallets_audit AFTER INSERT OR UPDATE OR DELETE ON wallets
+    FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+
+DROP TRIGGER IF EXISTS bets_audit ON bets;
+CREATE TRIGGER bets_audit AFTER INSERT OR UPDATE OR DELETE ON bets
+    FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+
+DROP TRIGGER IF EXISTS transactions_audit ON transactions;
+CREATE TRIGGER transactions_audit AFTER INSERT OR UPDATE OR DELETE ON transactions
+    FOR EACH ROW EXECUTE FUNCTION audit_trigger();
 
 -- ✅ স্কিমা তৈরি সম্পন্ন
 -- Use DO block for notices in normal client sessions
