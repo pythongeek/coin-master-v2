@@ -1,23 +1,41 @@
 /**
  * ═══════════════════════════════════════════════════════════════
- *  AUTH ROUTES — রেজিস্ট্রেশন, লগইন, ওয়ালেট কানেক্ট
+ *  AUTH ROUTES — রেজিস্ট্রেশন, লগইন, ওয়ালেট কানেক্ট, ২এফএ (2FA)
  * ═══════════════════════════════════════════════════════════════
  *
  *  POST /api/auth/register      → নতুন অ্যাকাউন্ট তৈরি
- *  POST /api/auth/login         → ইমেইল/পাসওয়ার্ড দিয়ে লগইন
- *  POST /api/auth/wallet        → MetaMask/Phantom ওয়ালেট দিয়ে লগইন
+ *  POST /api/auth/login         → ইমেইল/পাসওয়ার্ড দিয়ে লগইন
+ *  POST /api/auth/wallet        → MetaMask/Phantom ওয়ালেট দিয়ে লগইন
  *  GET  /api/auth/me            → বর্তমান ইউজারের তথ্য
+ *  POST /api/auth/2fa/setup     → ২এফএ সেটআপ কি জেনারেট করা
+ *  POST /api/auth/2fa/verify    → ২এফএ সেটআপ ভেরিফাই ও এনেবল করা
+ *  POST /api/auth/2fa/disable   → ২এফএ ডিজেবল করা
+ *  POST /api/auth/2fa/login     → ২এফএ কোড দিয়ে লগইন সম্পন্ন করা
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 import { query } from '../config/database';
 import { createToken, authMiddleware, AuthPayload } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { authLimiter } from '../middleware/rate-limiter';
-import { registerSchema, loginSchema, walletAuthSchema } from '../schemas';
+import {
+  registerSchema,
+  loginSchema,
+  walletAuthSchema,
+  twoFactorVerifySchema,
+  twoFactorDisableSchema,
+  twoFactorLoginSchema,
+} from '../schemas';
+import {
+  encryptSecret,
+  decryptSecret,
+  verifyTotp,
+  generateTotpSecret,
+} from '../utils/totp';
 
 const router = Router();
 
@@ -49,7 +67,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       success: true,
       token,
       user: { userId, username, balance: 10.00 },
-      message: `স্বাগতম ${username}! আপনার অ্যাকাউন্টে $10.00 ওয়েলকাম বোনাস যোগ করা হয়েছে।`,
+      message: `স্বাগতম ${username}! আপনার অ্যাকাউন্টে $10.00 ওয়েলকাম বোনাস যোগ করা হয়েছে।`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -65,19 +83,34 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
     const { username, password } = req.body;
 
     const result = await query(
-      'SELECT id, username, password_hash, balance, is_admin, role FROM users WHERE username = $1 AND is_active = true',
+      'SELECT id, username, password_hash, balance, is_admin, role, two_factor_enabled FROM users WHERE username = $1 AND is_active = true',
       [username]
     );
 
     if (!result.rows.length) {
-      return res.status(401).json({ success: false, error: 'ইউজারনেম বা পাসওয়ার্ড ভুল।' });
+      return res.status(401).json({ success: false, error: 'ইউজারনেম বা পাসওয়ার্ড ভুল।' });
     }
 
     const user = result.rows[0];
     const passwordOk = await bcrypt.compare(password, user.password_hash);
 
     if (!passwordOk) {
-      return res.status(401).json({ success: false, error: 'ইউজারনেম বা পাসওয়ার্ড ভুল।' });
+      return res.status(401).json({ success: false, error: 'ইউজারনেম বা পাসওয়ার্ড ভুল।' });
+    }
+
+    // ২এফএ চালু থাকলে টেম্পোরারি টোকেন রিটার্ন করো
+    if (user.two_factor_enabled) {
+      const tempToken = jwt.sign(
+        { userId: user.id, username: user.username, isAdmin: user.is_admin, role: user.role, isTemp: true },
+        process.env.JWT_SECRET || 'dev_secret',
+        { expiresIn: '5m' }
+      );
+      return res.json({
+        success: true,
+        require2FA: true,
+        tempToken,
+        message: '২এফএ যাচাইকরণ প্রয়োজন।',
+      });
     }
 
     const token = createToken({
@@ -104,23 +137,22 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
 });
 
 // ══════════════════════════════════════════════════════════════
-//  POST /api/auth/wallet — MetaMask ওয়ালেট দিয়ে লগইন
-//  ওয়ালেট অ্যাড্রেস ইউনিক — প্রথমবার আসলে অটো রেজিস্ট্রেশন
+//  POST /api/auth/wallet — MetaMask ওয়ালেট দিয়ে লগইন
 // ══════════════════════════════════════════════════════════════
 router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: Request, res: Response) => {
   try {
     const { walletAddress, signature } = req.body;
 
-    // TODO: Production-এ signature যাচাই করতে হবে (ethers.js দিয়ে)
-    // এখন শুধু অ্যাড্রেস দিয়েই লগইন হবে (Development mode)
+    // TODO: Production-এ signature যাচাই করতে হবে (ethers.js দিয়ে)
+    // এখন শুধু অ্যাড্রেস দিয়েই লগইন হবে (Development mode)
     void signature;
 
     let user = await query(
-      'SELECT id, username, balance, is_admin, role FROM users WHERE wallet_address = $1',
+      'SELECT id, username, balance, is_admin, role, two_factor_enabled FROM users WHERE wallet_address = $1',
       [walletAddress.toLowerCase()]
     );
 
-    // নতুন ওয়ালেট হলে অটো রেজিস্ট্রেশন
+    // নতুন ওয়ালেট হলে অটো রেজিস্ট্রেশন
     if (!user.rows.length) {
       const userId = uuidv4();
       const username = `player_${walletAddress.slice(2, 8).toLowerCase()}`;
@@ -131,10 +163,26 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         [userId, username, walletAddress.toLowerCase()]
       );
 
-      user = await query('SELECT id, username, balance, is_admin, role FROM users WHERE id = $1', [userId]);
+      user = await query('SELECT id, username, balance, is_admin, role, two_factor_enabled FROM users WHERE id = $1', [userId]);
     }
 
     const u = user.rows[0];
+
+    // ২এফএ চালু থাকলে টেম্পোরারি টোকেন রিটার্ন করো
+    if (u.two_factor_enabled) {
+      const tempToken = jwt.sign(
+        { userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role, isTemp: true },
+        process.env.JWT_SECRET || 'dev_secret',
+        { expiresIn: '5m' }
+      );
+      return res.json({
+        success: true,
+        require2FA: true,
+        tempToken,
+        message: '২এফএ যাচাইকরণ প্রয়োজন।',
+      });
+    }
+
     const token = createToken({ userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role });
 
     res.json({
@@ -146,6 +194,188 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         balance: parseFloat(u.balance),
         walletAddress: walletAddress.toLowerCase(),
         isAdmin: u.is_admin,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/2fa/setup — ২এফএ সেটআপ কি জেনারেট করো
+// ══════════════════════════════════════════════════════════════
+router.post('/2fa/setup', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { userId, username } = (req as Request & { user: AuthPayload }).user;
+
+    const userResult = await query('SELECT email FROM users WHERE id = $1', [userId]);
+    if (!userResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
+    }
+
+    const email = userResult.rows[0].email || `${username}@coinmaster.internal`;
+    const { secret, otpauthUrl } = generateTotpSecret(email);
+    const encryptedSecret = encryptSecret(secret);
+
+    await query(
+      'UPDATE users SET two_factor_temp_secret = $1 WHERE id = $2',
+      [encryptedSecret, userId]
+    );
+
+    res.json({
+      success: true,
+      secret,
+      otpauthUrl,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/2fa/verify — ২এফএ সেটআপ ভেরিফাই ও এনেবল করো
+// ══════════════════════════════════════════════════════════════
+router.post('/2fa/verify', authMiddleware, validateBody(twoFactorVerifySchema), async (req: Request, res: Response) => {
+  try {
+    const { userId } = (req as Request & { user: AuthPayload }).user;
+    const { token } = req.body;
+
+    const userResult = await query(
+      'SELECT two_factor_temp_secret FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (!userResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
+    }
+
+    const tempSecretEncrypted = userResult.rows[0].two_factor_temp_secret;
+    if (!tempSecretEncrypted) {
+      return res.status(400).json({ success: false, error: '২এফএ সেটআপ প্রথমে শুরু করুন।' });
+    }
+
+    const tempSecret = decryptSecret(tempSecretEncrypted);
+    const isValid = verifyTotp(tempSecret, token);
+
+    if (!isValid) {
+      return res.status(400).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
+    }
+
+    await query(
+      'UPDATE users SET two_factor_secret = two_factor_temp_secret, two_factor_enabled = true, two_factor_temp_secret = NULL WHERE id = $1',
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      message: '২এফএ সফলভাবে চালু করা হয়েছে।',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/2fa/disable — ২এফএ ডিজেবল করো
+// ══════════════════════════════════════════════════════════════
+router.post('/2fa/disable', authMiddleware, validateBody(twoFactorDisableSchema), async (req: Request, res: Response) => {
+  try {
+    const { userId } = (req as Request & { user: AuthPayload }).user;
+    const { token } = req.body;
+
+    const userResult = await query(
+      'SELECT two_factor_secret, two_factor_enabled FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (!userResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
+    }
+
+    const { two_factor_secret: secretEncrypted, two_factor_enabled: enabled } = userResult.rows[0];
+    if (!enabled || !secretEncrypted) {
+      return res.status(400).json({ success: false, error: '২এফএ চালু নেই।' });
+    }
+
+    const secret = decryptSecret(secretEncrypted);
+    const isValid = verifyTotp(secret, token);
+
+    if (!isValid) {
+      return res.status(400).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
+    }
+
+    await query(
+      'UPDATE users SET two_factor_secret = NULL, two_factor_enabled = false WHERE id = $1',
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      message: '২এফএ সফলভাবে বন্ধ করা হয়েছে।',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/2fa/login — ২এফএ কোড ভেরিফাই করে লগইন করো
+// ══════════════════════════════════════════════════════════════
+router.post('/2fa/login', authLimiter, validateBody(twoFactorLoginSchema), async (req: Request, res: Response) => {
+  try {
+    const { tempToken, token } = req.body;
+
+    let decoded: any;
+    try {
+      decoded = jwt.verify(tempToken, process.env.JWT_SECRET || 'dev_secret');
+    } catch {
+      return res.status(401).json({ success: false, error: 'টেম্পোরারি টোকেন অবৈধ বা মেয়াদোত্তীর্ণ।' });
+    }
+
+    if (!decoded.isTemp || !decoded.userId) {
+      return res.status(401).json({ success: false, error: 'টেম্পোরারি টোকেন অবৈধ।' });
+    }
+
+    const userResult = await query(
+      'SELECT id, username, balance, is_admin, role, two_factor_secret, two_factor_enabled FROM users WHERE id = $1 AND is_active = true',
+      [decoded.userId]
+    );
+
+    if (!userResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি বা নিষ্ক্রিয়।' });
+    }
+
+    const user = userResult.rows[0];
+    if (!user.two_factor_enabled || !user.two_factor_secret) {
+      return res.status(400).json({ success: false, error: 'এই ইউজারের জন্য ২এফএ চালু নেই।' });
+    }
+
+    const secret = decryptSecret(user.two_factor_secret);
+    const isValid = verifyTotp(secret, token);
+
+    if (!isValid) {
+      return res.status(401).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
+    }
+
+    const authToken = createToken({
+      userId: user.id,
+      username: user.username,
+      isAdmin: user.is_admin,
+      role: user.role,
+    });
+
+    res.json({
+      success: true,
+      token: authToken,
+      user: {
+        userId: user.id,
+        username: user.username,
+        balance: parseFloat(user.balance),
+        isAdmin: user.is_admin,
       },
     });
   } catch (err: unknown) {
@@ -167,7 +397,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
+      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
     }
 
     const u = result.rows[0];

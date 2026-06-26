@@ -27,7 +27,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') as AuthPayload;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') as AuthPayload & { isTemp?: boolean };
+    if (decoded.isTemp) {
+      return res.status(401).json({ success: false, error: '২এফএ যাচাইকরণ সম্পন্ন করুন।' });
+    }
     (req as Request & { user: AuthPayload }).user = decoded;
     next();
   } catch {
