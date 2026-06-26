@@ -8,13 +8,13 @@ import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 
 import { connectDB } from './config/database';
 import { redis } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
 import { geoipMiddleware } from './middleware/geoip';
+import { globalLimiter } from './middleware/rate-limiter';
 
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
@@ -48,12 +48,7 @@ app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Rate Limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
-  message: { success: false, error: 'অনেক রিকোয়েস্ট। কিছুক্ষণ পরে চেষ্টা করুন।' },
-});
-app.use('/api', limiter);
+app.use('/api', globalLimiter);
 app.use('/api', geoipMiddleware);
 
 // ─── Routes ─────────────────────────────────────────────────

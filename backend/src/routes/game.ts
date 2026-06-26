@@ -15,6 +15,7 @@ import { placeBet, getBetHistory } from '../services/game-engine';
 import { verifyFlip } from '../services/provably-fair';
 import { getConfig } from '../services/admin-config';
 import { validateBody } from '../middleware/validation';
+import { gameLimiter } from '../middleware/rate-limiter';
 import { betSchema, verifySchema } from '../schemas';
 
 const router = Router();
@@ -22,7 +23,7 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 //  POST /api/game/bet — বেট ধরো
 // ══════════════════════════════════════════════════════════════
-router.post('/bet', validateBody(betSchema), async (req: Request, res: Response) => {
+router.post('/bet', gameLimiter, validateBody(betSchema), async (req: Request, res: Response) => {
   try {
     const { userId, choice, amount, clientSeed, targetMultiplier } = req.body;
 
@@ -47,7 +48,7 @@ router.post('/bet', validateBody(betSchema), async (req: Request, res: Response)
 //  ইউজার গেম শেষে দেখতে পারবে রেজাল্টটি সত্যিই ফেয়ার ছিল কিনা।
 //  তাকে শুধু serverSeed, clientSeed, nonce দিতে হবে।
 // ══════════════════════════════════════════════════════════════
-router.post('/verify', validateBody(verifySchema), (req: Request, res: Response) => {
+router.post('/verify', gameLimiter, validateBody(verifySchema), (req: Request, res: Response) => {
   try {
     const { serverSeed, clientSeed, nonce, serverSeedHash, choice, targetMultiplier, houseEdge } = req.body;
 

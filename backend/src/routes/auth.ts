@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { query } from '../config/database';
 import { createToken, authMiddleware, AuthPayload } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
+import { authLimiter } from '../middleware/rate-limiter';
 import { registerSchema, loginSchema, walletAuthSchema } from '../schemas';
 
 const router = Router();
@@ -23,7 +24,7 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/register — নতুন অ্যাকাউন্ট তৈরি
 // ══════════════════════════════════════════════════════════════
-router.post('/register', validateBody(registerSchema), async (req: Request, res: Response) => {
+router.post('/register', authLimiter, validateBody(registerSchema), async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body;
 
@@ -59,7 +60,7 @@ router.post('/register', validateBody(registerSchema), async (req: Request, res:
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/login — লগইন
 // ══════════════════════════════════════════════════════════════
-router.post('/login', validateBody(loginSchema), async (req: Request, res: Response) => {
+router.post('/login', authLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
@@ -105,7 +106,7 @@ router.post('/login', validateBody(loginSchema), async (req: Request, res: Respo
 //  POST /api/auth/wallet — MetaMask ওয়ালেট দিয়ে লগইন
 //  ওয়ালেট অ্যাড্রেস ইউনিক — প্রথমবার আসলে অটো রেজিস্ট্রেশন
 // ══════════════════════════════════════════════════════════════
-router.post('/wallet', validateBody(walletAuthSchema), async (req: Request, res: Response) => {
+router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: Request, res: Response) => {
   try {
     const { walletAddress, signature } = req.body;
 
