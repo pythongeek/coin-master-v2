@@ -130,4 +130,40 @@ router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/audit-logs — সাম্প্রতিক অডিট লগগুলো দেখাও
+// ══════════════════════════════════════════════════════════════
+router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = parseInt(req.query.offset as string) || 0;
+    
+    // Recent logs
+    const result = await query(
+      `SELECT a.id, a.table_name, a.record_id, a.action, a.old_data, a.new_data, 
+              a.changed_by, u.username as changed_by_username, a.ip_address, a.user_agent, a.created_at
+       FROM audit_logs a
+       LEFT JOIN users u ON a.changed_by = u.id
+       ORDER BY a.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const countResult = await query('SELECT COUNT(*) as total FROM audit_logs');
+    const total = parseInt(countResult.rows[0].total || '0');
+
+    res.json({
+      success: true,
+      logs: result.rows,
+      pagination: {
+        total,
+        limit,
+        offset,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 export default router;

@@ -26,6 +26,86 @@ export async function connectDB(): Promise<void> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_temp_secret TEXT;
     `);
 
+    // Ensure audit_logs table, indexes and trigger function exist
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        table_name VARCHAR(50) NOT NULL,
+        record_id UUID NOT NULL,
+        action VARCHAR(20) NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+        old_data JSONB,
+        new_data JSONB,
+        changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        ip_address INET,
+        user_agent TEXT,
+        archived_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_table_record ON audit_logs(table_name, record_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+      CREATE OR REPLACE FUNCTION audit_trigger()
+      RETURNS TRIGGER AS $$
+      DECLARE
+          v_changed_by UUID;
+          v_ip INET;
+          v_user_agent TEXT;
+      BEGIN
+          BEGIN
+              v_changed_by := NULLIF(current_setting('audit.user_id', true), '')::UUID;
+          EXCEPTION WHEN OTHERS THEN
+              v_changed_by := NULL;
+          END;
+
+          BEGIN
+              v_ip := NULLIF(current_setting('audit.ip_address', true), '')::INET;
+          EXCEPTION WHEN OTHERS THEN
+              v_ip := NULL;
+          END;
+
+          BEGIN
+              v_user_agent := NULLIF(current_setting('audit.user_agent', true), '');
+          EXCEPTION WHEN OTHERS THEN
+              v_user_agent := NULL;
+          END;
+
+          IF TG_OP = 'DELETE' THEN
+              INSERT INTO audit_logs (table_name, record_id, action, old_data, changed_by, ip_address, user_agent)
+              VALUES (TG_TABLE_NAME, OLD.id, 'DELETE', row_to_json(OLD), v_changed_by, v_ip, v_user_agent);
+              RETURN OLD;
+          ELSIF TG_OP = 'UPDATE' THEN
+              INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data, changed_by, ip_address, user_agent)
+              VALUES (TG_TABLE_NAME, OLD.id, 'UPDATE', row_to_json(OLD), row_to_json(NEW), v_changed_by, v_ip, v_user_agent);
+              RETURN NEW;
+          ELSIF TG_OP = 'INSERT' THEN
+              INSERT INTO audit_logs (table_name, record_id, action, new_data, changed_by, ip_address, user_agent)
+              VALUES (TG_TABLE_NAME, NEW.id, 'INSERT', row_to_json(NEW), v_changed_by, v_ip, v_user_agent);
+              RETURN NEW;
+          END IF;
+      END;
+      $$ LANGUAGE plpgsql;
+    `);
+
+    // Helper to drop and create triggers on tables if they exist
+    const tablesToAudit = ['users', 'wallets', 'bets', 'transactions'];
+    for (const table of tablesToAudit) {
+      const tableCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = $1
+        );
+      `, [table]);
+      
+      if (tableCheck.rows[0].exists) {
+        await client.query(`
+          DROP TRIGGER IF EXISTS ${table}_audit ON ${table};
+          CREATE TRIGGER ${table}_audit AFTER INSERT OR UPDATE OR DELETE ON ${table}
+            FOR EACH ROW EXECUTE FUNCTION audit_trigger();
+        `);
+      }
+    }
+
     const result = await client.query('SELECT NOW() as now, version()');
     client.release();
 
@@ -52,5 +132,56 @@ export async function query(text: string, params?: unknown[]) {
   } catch (error) {
     console.error('❌ Database query error:', error);
     throw error;
+  }
+}
+
+/**
+ * Run a database query inside a transaction, setting session audit variables.
+ */
+export async function queryAudited(
+  userId: string | null,
+  ip: string | null,
+  userAgent: string | null,
+  text: string,
+  params?: unknown[]
+) {
+  const start = Date.now();
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    if (userId) {
+      await client.query(`SELECT set_config('audit.user_id', $1, true)`, [userId]);
+    } else {
+      await client.query(`SELECT set_config('audit.user_id', '', true)`);
+    }
+    
+    if (ip) {
+      await client.query(`SELECT set_config('audit.ip_address', $1, true)`, [ip]);
+    } else {
+      await client.query(`SELECT set_config('audit.ip_address', '', true)`);
+    }
+    
+    if (userAgent) {
+      await client.query(`SELECT set_config('audit.user_agent', $1, true)`, [userAgent]);
+    } else {
+      await client.query(`SELECT set_config('audit.user_agent', '', true)`);
+    }
+    
+    const result = await client.query(text, params);
+    await client.query('COMMIT');
+    
+    const duration = Date.now() - start;
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🗄️ Audited Query: ${text.substring(0, 50)}... | ${duration}ms`);
+    }
+    
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Audited database query error:', error);
+    throw error;
+  } finally {
+    client.release();
   }
 }

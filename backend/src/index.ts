@@ -16,6 +16,7 @@ import { setupSocketHandlers } from './services/socket-manager';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
+import { startAuditBackupWorker } from './services/audit-backup';
 
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
@@ -79,6 +80,9 @@ const PORT = process.env.BACKEND_PORT || 4000;
 async function start() {
   await connectDB();
   void redis;  // redis কানেক্ট হয় import এর সময়
+  
+  // Start periodic S3/local audit backup (every 1 hour)
+  startAuditBackupWorker(3600000);
 
   httpServer.listen(PORT, () => {
     console.log('\n╔════════════════════════════════════╗');
