@@ -1,12 +1,21 @@
-import { Queue, Worker, Job } from 'bullmq';
 import crypto from 'crypto';
 import { redisConfig } from '../config/redis';
 import { query } from '../config/database';
 
-// Initialize BullMQ Webhook Queue
-export const webhookQueue = new Queue('webhooks', {
-  connection: redisConfig
-});
+let webhookQueue: any = null;
+
+/**
+ * Get or initialize the BullMQ Webhook Queue dynamically.
+ */
+export function getWebhookQueue(): any {
+  if (!webhookQueue) {
+    const { Queue } = require('bullmq');
+    webhookQueue = new Queue('webhooks', {
+      connection: redisConfig
+    });
+  }
+  return webhookQueue;
+}
 
 /**
  * Generate HMAC-SHA256 signature for webhook verification.
@@ -39,8 +48,10 @@ export async function dispatchWebhook(event: string, data: any): Promise<void> {
       return;
     }
 
+    const queue = getWebhookQueue();
+
     for (const sub of result.rows) {
-      await webhookQueue.add(
+      await queue.add(
         'send-webhook',
         {
           subscriptionId: sub.id,
@@ -66,14 +77,16 @@ export async function dispatchWebhook(event: string, data: any): Promise<void> {
 }
 
 // BullMQ Webhook Delivery Worker
-let worker: Worker | null = null;
+let worker: any = null;
 
 export function startWebhookWorker(): void {
   if (worker) return;
 
+  const { Worker } = require('bullmq');
+
   worker = new Worker(
     'webhooks',
-    async (job: Job) => {
+    async (job: any) => {
       const { subscriptionId, url, secret, event, data } = job.data;
       const payloadString = JSON.stringify({
         id: job.id,
@@ -145,11 +158,11 @@ export function startWebhookWorker(): void {
     }
   );
 
-  worker.on('failed', (job, err) => {
+  worker.on('failed', (job: any, err: Error) => {
     console.warn(`⚠️ Webhook job ${job?.id} failed:`, err.message);
   });
 
-  worker.on('completed', (job) => {
+  worker.on('completed', (job: any) => {
     if (process.env.NODE_ENV === 'development') {
       console.log(`✅ Webhook job ${job.id} completed successfully.`);
     }

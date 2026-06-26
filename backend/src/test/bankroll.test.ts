@@ -100,10 +100,17 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
     return { rows: mockSettings };
   }
 
-  if (normalized.startsWith('SELECT balance FROM users WHERE id = $1')) {
+  if (normalized.includes('FROM users WHERE id = $1')) {
     const id = params[0];
     const user = mockUsers.find(u => u.id === id);
-    return { rows: user ? [user] : [] };
+    return {
+      rows: user ? [{
+        balance: String(user.balance),
+        total_wagered: String(user.total_wagered || '0.00'),
+        pending_rakeback: String(user.pending_rakeback || '0.00'),
+        is_active: user.is_active
+      }] : []
+    };
   }
 
   if (normalized.startsWith('SELECT COUNT(*) as count FROM bets WHERE user_id = $1')) {
@@ -114,7 +121,7 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
 
   if (normalized.startsWith('UPDATE users SET balance = $1')) {
     const balance = Number(params[0]);
-    const id = params[1];
+    const id = params[params.length - 1];
     const user = mockUsers.find(u => u.id === id);
     if (user) {
       user.balance = balance;
