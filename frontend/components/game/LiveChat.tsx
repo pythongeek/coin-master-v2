@@ -1,16 +1,16 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  LIVE CHAT — রিয়েল-টাইম চ্যাট ও ক্রিপ্টো রেইন
+ *  LIVE CHAT — রিয়েল-টাইম চ্যাট ও লাইভ উইন স্ট্যাটস
  * ═══════════════════════════════════════════════════════════════
  *
- *  Socket.io দিয়ে চালিত লাইভ চ্যাট।
- *  Crypto Rain ট্রিগার হলে এখানে ক্লেইম বাটন দেখায়।
+ *  Socket.io দিয়ে চালিত লাইভ চ্যাট ও বিগ উইন ট্র্যাকার।
+ *  Crypto Rain ক্লেইম করার প্যানেল এবং বিগ উইনস ফিল্টার।
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { Users, CloudRain, Check, Loader2, Send, CheckCheck } from 'lucide-react';
+import { Users, CloudRain, Check, Loader2, Send, CheckCheck, Trophy } from 'lucide-react';
 import { useGameStore, ChatMessage } from '@/lib/store';
 import { getSocket } from '@/lib/socket';
 
@@ -20,14 +20,17 @@ export default function LiveChat() {
     hasClaimedRain, setHasClaimedRain, user,
   } = useGameStore();
 
+  const [activeTab, setActiveTab] = useState<'chat' | 'stats'>('chat');
   const [message, setMessage]   = useState('');
   const [claiming, setClaiming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // নতুন বার্তা আসলে নিচে স্ক্রোল করো
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
+    if (activeTab === 'chat') {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages, activeTab]);
 
   // ── বার্তা পাঠাও ───────────────────────────────────────────
   const sendMessage = () => {
@@ -61,14 +64,19 @@ export default function LiveChat() {
     return '';
   };
 
+  // ফিল্টার করা উইন মেসেজ সমূহ
+  const winMessages = chatMessages.filter(
+    (msg) => msg.type === 'win' || msg.type === 'rain'
+  );
+
   return (
-    <div className="glass-card flex flex-col h-full" style={{ minHeight: '460px' }}>
+    <div className="glass-card flex flex-col h-full" style={{ minHeight: '460px', height: '100%' }}>
 
       {/* ── হেডার ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-surface/50">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-brand-green animate-pulse" />
-          <span className="heading-display text-xs text-brand-green">LIVE CHAT</span>
+          <span className="heading-display text-xs text-brand-green">COMMUNITY</span>
         </div>
         <div className="flex items-center gap-1.5 text-text-muted text-xs font-mono">
           <Users size={13} />
@@ -76,8 +84,33 @@ export default function LiveChat() {
         </div>
       </div>
 
-      {/* ── Crypto Rain ব্যানার ────────────────────────────── */}
-      {activeRain && (
+      {/* ── ট্যাবস ─────────────────────────────────────────── */}
+      <div className="flex bg-surface2 border-b border-border p-1">
+        <button
+          onClick={() => setActiveTab('chat')}
+          className={`flex-1 py-1.5 text-center text-xs font-display font-semibold rounded-lg transition-all ${
+            activeTab === 'chat'
+              ? 'bg-surface text-brand-green border border-border shadow-elevate-sm'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          LIVE CHAT
+        </button>
+        <button
+          onClick={() => setActiveTab('stats')}
+          className={`flex-1 py-1.5 text-center text-xs font-display font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === 'stats'
+              ? 'bg-surface text-brand-green border border-border shadow-elevate-sm'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          <Trophy size={12} />
+          BIG WINS
+        </button>
+      </div>
+
+      {/* ── Crypto Rain ব্যানার (চ্যাট ট্যাব সক্রিয় থাকলেই দেখাবে) ── */}
+      {activeRain && activeTab === 'chat' && (
         <div className="mx-3 mt-3 rounded-xl border border-brand-gold/50 bg-brand-gold/10 p-3
                         animate-pulse-soft">
           <div className="flex items-center justify-between gap-2">
@@ -129,57 +162,112 @@ export default function LiveChat() {
         </div>
       )}
 
-      {/* ── বার্তার তালিকা ─────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1 min-h-0">
-        {chatMessages.length === 0 && (
-          <p className="text-center text-text-muted text-xs font-mono py-8">
-            চ্যাট শুরু করুন...
-          </p>
+      {/* ── কন্টেন্ট এরিয়া ───────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5 min-h-0">
+        
+        {/* চ্যাট মোড */}
+        {activeTab === 'chat' && (
+          <>
+            {chatMessages.length === 0 && (
+              <p className="text-center text-text-muted text-xs font-mono py-8">
+                চ্যাট শুরু করুন...
+              </p>
+            )}
+
+            {chatMessages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`px-2 py-1 rounded text-xs leading-relaxed ${msgBg(msg.type)}`}
+              >
+                <span className="font-mono font-bold text-brand-info">{msg.username}: </span>
+                <span className={`font-mono ${msgColor(msg.type)}`}>{msg.message}</span>
+              </div>
+            ))}
+            <div ref={bottomRef} />
+          </>
         )}
 
-        {chatMessages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`px-2 py-1 rounded text-xs leading-relaxed ${msgBg(msg.type)}`}
-          >
-            <span className="font-mono font-bold text-brand-info">{msg.username}: </span>
-            <span className={`font-mono ${msgColor(msg.type)}`}>{msg.message}</span>
+        {/* উইন স্ট্যাটস মোড */}
+        {activeTab === 'stats' && (
+          <div className="space-y-2 py-1 animate-fade-in">
+            {winMessages.length === 0 ? (
+              <p className="text-center text-text-muted text-xs font-mono py-8">
+                কোনো বিগ উইন রেকর্ড পাওয়া যায়নি।
+              </p>
+            ) : (
+              winMessages.slice().reverse().map((msg) => (
+                <div 
+                  key={msg.id} 
+                  className={`p-3 border rounded-xl flex items-center justify-between gap-3 shadow-elevate-sm transition-all ${
+                    msg.type === 'win' 
+                      ? 'border-brand-green/20 bg-brand-green/[0.02]' 
+                      : 'border-brand-gold/20 bg-brand-gold/[0.02]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${
+                      msg.type === 'win' 
+                        ? 'border-brand-green/25 bg-brand-green/10 text-brand-green' 
+                        : 'border-brand-gold/25 bg-brand-gold/10 text-brand-gold'
+                    }`}>
+                      {msg.type === 'win' ? <Trophy size={14} /> : <CloudRain size={14} />}
+                    </div>
+                    <div>
+                      <p className="font-mono text-xs font-bold text-text-primary">{msg.username}</p>
+                      <p className="text-[9px] text-text-muted font-mono">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className={`font-mono text-xs font-bold ${
+                      msg.type === 'win' ? 'text-brand-green' : 'text-brand-gold'
+                    }`}>
+                      {msg.type === 'win' ? 'WIN' : 'RAIN'}
+                    </p>
+                    <p className="text-[10px] text-text-secondary font-mono leading-none">
+                      {msg.message.replace(/🎉|💸/g, '').trim()}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-        ))}
-
-        <div ref={bottomRef} />
-      </div>
-
-      {/* ── বার্তা ইনপুট ───────────────────────────────────── */}
-      <div className="px-3 pb-3 pt-2 border-t border-border">
-        {user ? (
-          <div className="flex gap-2">
-            <input
-              className="input-cyber flex-1 text-sm py-2"
-              placeholder="বার্তা লিখুন..."
-              value={message}
-              onChange={(e) => setMessage(e.target.value.slice(0, 200))}
-              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-              maxLength={200}
-              aria-label="চ্যাট বার্তা"
-            />
-            <button
-              onClick={sendMessage}
-              disabled={!message.trim()}
-              className="px-3 py-2 rounded-lg bg-brand-green/15 border border-brand-green/30
-                         text-brand-green hover:bg-brand-green/25 transition-all
-                         disabled:opacity-40 flex items-center justify-center"
-              aria-label="বার্তা পাঠান"
-            >
-              <Send size={15} />
-            </button>
-          </div>
-        ) : (
-          <p className="text-center text-text-muted text-xs font-mono py-1">
-            চ্যাট করতে লগইন করুন
-          </p>
         )}
       </div>
+
+      {/* ── চ্যাট বার্তা ইনপুট (শুধুমাত্র চ্যাট ট্যাব সক্রিয় থাকলেই দেখাবে) ── */}
+      {activeTab === 'chat' && (
+        <div className="px-3 pb-3 pt-2 border-t border-border bg-surface/50">
+          {user ? (
+            <div className="flex gap-2">
+              <input
+                className="input-cyber flex-1 text-sm py-2"
+                placeholder="বার্তা লিখুন..."
+                value={message}
+                onChange={(e) => setMessage(e.target.value.slice(0, 200))}
+                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                maxLength={200}
+                aria-label="চ্যাট বার্তা"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!message.trim()}
+                className="px-3 py-2 rounded-lg bg-brand-green/15 border border-brand-green/30
+                           text-brand-green hover:bg-brand-green/25 transition-all
+                           disabled:opacity-40 flex items-center justify-center shrink-0"
+                aria-label="বার্তা পাঠান"
+              >
+                <Send size={15} />
+              </button>
+            </div>
+          ) : (
+            <p className="text-center text-text-muted text-xs font-mono py-1">
+              চ্যাট করতে লগইন করুন
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

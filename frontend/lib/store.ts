@@ -107,6 +107,13 @@ interface GameStore {
   notifications: Array<{ id: string; message: string; type: 'win' | 'lose' | 'rain' | 'info' }>;
   addNotification: (msg: string, type: 'win' | 'lose' | 'rain' | 'info') => void;
   removeNotification: (id: string) => void;
+
+  // ── সেটিংস ────────────────────────────────────────────────
+  settings: { sound: boolean; animationSpeed: 'normal' | 'fast' };
+  showSettings: boolean;
+  loadSettings: () => void;
+  updateSettings: (settings: Partial<{ sound: boolean; animationSpeed: 'normal' | 'fast' }>) => void;
+  toggleSettings: () => void;
 }
 
 // ── স্টোর তৈরি ─────────────────────────────────────────────────
@@ -198,4 +205,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set((state) => ({
       notifications: state.notifications.filter((n) => n.id !== id),
     })),
+
+  // ── সেটিংস ────────────────────────────────────────────────
+  settings: {
+    sound: true,
+    animationSpeed: 'normal',
+  },
+  showSettings: false,
+
+  loadSettings: () => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('cf_settings');
+        if (stored) {
+          set({ settings: { ...get().settings, ...JSON.parse(stored) } });
+        }
+      } catch (e) {
+        console.error('Failed to load settings', e);
+      }
+    }
+  },
+
+  updateSettings: (newSettings) => {
+    const updated = { ...get().settings, ...newSettings };
+    set({ settings: updated });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('cf_settings', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to save settings', e);
+      }
+    }
+  },
+
+  toggleSettings: () => set((state) => ({ showSettings: !state.showSettings })),
 }));
