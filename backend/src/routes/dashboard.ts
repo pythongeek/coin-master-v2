@@ -52,6 +52,58 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
     const balResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
     const balance = parseFloat(balResult.rows[0]?.balance || '0');
 
+    // শেষ ১০০টি বেট হিস্ট্রি এবং স্ট্রিক্স ক্যালকুলেশন
+    const historyResult = await query(`
+      SELECT won, choice, result, amount, payout, created_at
+      FROM bets
+      WHERE user_id = $1 AND status = 'resolved'
+      ORDER BY created_at DESC
+      LIMIT 100
+    `, [userId]);
+
+    const rows = historyResult.rows;
+
+    // Current Active Streak
+    let currentStreak = 0;
+    let currentType: 'win' | 'loss' | null = null;
+    for (let i = 0; i < rows.length; i++) {
+      const won = rows[i].won;
+      if (i === 0) {
+        currentType = won ? 'win' : 'loss';
+        currentStreak = 1;
+      } else {
+        if ((won && currentType === 'win') || (!won && currentType === 'loss')) {
+          currentStreak++;
+        } else {
+          break;
+        }
+      }
+    }
+    const currentStreakSigned = currentType === 'win' ? currentStreak : (currentType === 'loss' ? -currentStreak : 0);
+
+    // Max Win & Loss Streaks
+    let maxWinStreak = 0;
+    let maxLossStreak = 0;
+    let tempWin = 0;
+    let tempLoss = 0;
+
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const won = rows[i].won;
+      if (won) {
+        tempWin++;
+        tempLoss = 0;
+        if (tempWin > maxWinStreak) {
+          maxWinStreak = tempWin;
+        }
+      } else {
+        tempLoss++;
+        tempWin = 0;
+        if (tempLoss > maxLossStreak) {
+          maxLossStreak = tempLoss;
+        }
+      }
+    }
+
     res.json({
       success: true,
       data: {
@@ -65,6 +117,19 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
         totalPayout:   parseFloat(s.total_payout),
         biggestWin:    parseFloat(s.biggest_win),
         lastBetAt:     s.last_bet_at,
+        streaks: {
+          current: currentStreakSigned,
+          maxWin: maxWinStreak,
+          maxLoss: maxLossStreak,
+        },
+        last100Flips: rows.map(r => ({
+          won: r.won,
+          choice: r.choice,
+          result: r.result,
+          amount: parseFloat(r.amount),
+          payout: parseFloat(r.payout),
+          createdAt: r.created_at,
+        })),
       },
     });
   } catch (err: unknown) {
