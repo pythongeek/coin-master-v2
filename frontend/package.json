@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:ci": "echo \"No frontend unit tests specified\""
   },
   "dependencies": {
     "@react-three/drei": "^9.114.3",

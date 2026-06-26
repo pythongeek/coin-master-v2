@@ -6,7 +6,10 @@
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "lint": "eslint src/**/*.ts"
+    "lint": "eslint src/**/*.ts",
+    "test": "ts-node src/test/run-all.ts",
+    "test:ci": "ts-node src/test/run-all.ts",
+    "test:integration": "ts-node src/test/run-all.ts"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.0",

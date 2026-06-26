@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cryptoflip-api
+  namespace: production
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: cryptoflip-api
+  template:
+    metadata:
+      labels:
+        app: cryptoflip-api
+    spec:
+      containers:
+      - name: api
+        image: your-registry/cryptoflip-api:latest
+        ports:
+        - containerPort: 4000
+        envFrom:
+        - secretRef:
+            name: cryptoflip-secrets
+        - configMapRef:
+            name: cryptoflip-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 4000
+          initialDelaySeconds: 10
+          periodSeconds: 5

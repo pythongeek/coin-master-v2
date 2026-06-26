@@ -1,0 +1,47 @@
+groups:
+  - name: cryptoflip
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "HTTP 5xx error rate has exceeded 10% on backend API instances."
+
+      - alert: DatabaseConnectionExhausted
+        expr: pg_stat_activity_count / pg_settings_max_connections > 0.8
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connections near limit"
+          description: "Active database connections are over 80% of max allowed slots."
+
+      - alert: SuspiciousBettingPattern
+        expr: rate(unusual_betting_patterns_total[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Potential fraud detected"
+          description: "System flagged an unusual number of anomalous betting patterns."
+
+      - alert: HotWalletLowBalance
+        expr: hot_wallet_balance / hot_wallet_threshold < 1.5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hot wallet balance is low"
+          description: "Available hot wallet balance is approaching the threshold limit."
+
+      - alert: KYCQueueBacklog
+        expr: kyc_pending_count > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KYC verification backlog"
+          description: "The number of pending user KYC applications exceeds 100."
