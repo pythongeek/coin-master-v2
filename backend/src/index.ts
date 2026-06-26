@@ -24,6 +24,8 @@ import adminRoutes from './routes/admin';
 import dashboardRoutes from './routes/dashboard';
 import walletRoutes from './routes/wallet';
 import kycRoutes from './routes/kyc';
+import leaderboardsRoutes from './routes/leaderboards';
+
 
 dotenv.config();
 
@@ -61,6 +63,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/kyc', kycRoutes);
+app.use('/api/game/leaderboards', leaderboardsRoutes);
+
 
 app.get('/health', (_req, res) => {
   res.json({
