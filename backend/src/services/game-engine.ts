@@ -101,14 +101,26 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
   try {
     await client.query('BEGIN');
 
-    // ── ধাপ ৪: ইউজারের ব্যালেন্স চেক করো (Row Lock সহ) ──────────────────────
+    // ── 🔍 VIP Rakeback Helper ──
+    const getVipRakebackPercent = (wagered: number): number => {
+      if (wagered <= 1000) return 0.05;
+      if (wagered <= 10000) return 0.10;
+      if (wagered <= 50000) return 0.15;
+      if (wagered <= 250000) return 0.20;
+      return 0.25;
+    };
+
+    // ── шаг ৪: ইউজারের ব্যালেন্স চেক করো (Row Lock সহ) ──────────────────────
     const userResult = await client.query(
-      'SELECT balance FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
+      'SELECT balance, total_wagered, pending_rakeback FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
       [req.userId]
     );
     if (!userResult.rows.length) throw new Error('ইউজার পাওয়া যায়নি।');
 
     const currentBalance = parseFloat(userResult.rows[0].balance);
+    const totalWagered = parseFloat(userResult.rows[0].total_wagered || '0');
+    const pendingRakeback = parseFloat(userResult.rows[0].pending_rakeback || '0');
+
     if (currentBalance < req.amount) {
       throw new Error(`অপর্যাপ্ত ব্যালেন্স। আপনার কাছে আছে: $${currentBalance.toFixed(2)}`);
     }
@@ -133,13 +145,18 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     );
     const won = outcome.won;
 
-    // ── ধাপ ৭: ব্যালেন্স আপডেট করো ─────────────────────────────
+    // ── шаг ৭: ব্যালেন্স ও ওয়াগার/রেকব্যাক আপডেট করো ─────────────────────────────
     const balanceChange = won ? outcome.payout - req.amount : -req.amount;
     const newBalance = parseFloat((currentBalance + balanceChange).toFixed(8));
 
+    const newTotalWagered = totalWagered + req.amount;
+    const rakebackRate = getVipRakebackPercent(newTotalWagered);
+    const rakebackAmount = req.amount * (config.houseEdgePercent / 100) * rakebackRate;
+    const newPendingRakeback = parseFloat((pendingRakeback + rakebackAmount).toFixed(8));
+
     await client.query(
-      'UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2',
-      [newBalance, req.userId]
+      'UPDATE users SET balance = $1, total_wagered = $2, pending_rakeback = $3, updated_at = NOW() WHERE id = $4',
+      [newBalance, newTotalWagered, newPendingRakeback, req.userId]
     );
 
     // ── ধাপ ৮: বেট ডাটাবেসে সেভ করো ────────────────────────────

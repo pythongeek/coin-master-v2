@@ -16,7 +16,7 @@ export async function connectDB(): Promise<void> {
   try {
     const client = await db.connect();
     
-    // Ensure KYC, Role and 2FA columns exist
+    // Ensure KYC, Role, 2FA, and VIP Rakeback columns exist
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_applicant_id VARCHAR(100);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_verified_at TIMESTAMPTZ;
@@ -24,6 +24,8 @@ export async function connectDB(): Promise<void> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_temp_secret TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wagered DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_rakeback DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000;
     `);
 
     // Ensure audit_logs table, indexes and trigger function exist

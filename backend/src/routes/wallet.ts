@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { authMiddleware, AuthPayload } from '../middleware/auth';
 import { getOrCreateUserWallet } from '../services/wallet-derivation';
 import { validateBody } from '../middleware/validation';
@@ -10,7 +11,7 @@ import {
   verifyRedotPayWebhook,
   processMerchantDeposit,
 } from '../services/merchant-payment';
-import { query } from '../config/database';
+import { query, db } from '../config/database';
 
 const router = Router();
 
@@ -299,6 +300,74 @@ router.post('/withdraw', authMiddleware, validateBody(withdrawSchema), async (re
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     res.status(400).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * POST /api/wallet/rakeback/claim
+ * Claim accumulated pending rakeback into user balance
+ */
+router.post('/rakeback/claim', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Lock user row and fetch pending_rakeback
+    const userResult = await client.query(
+      'SELECT balance, pending_rakeback FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
+      [userId]
+    );
+    
+    if (!userResult.rows.length) {
+      throw new Error('ইউজার পাওয়া যায়নি।');
+    }
+    
+    const pendingRakeback = parseFloat(userResult.rows[0].pending_rakeback || '0');
+    if (pendingRakeback <= 0) {
+      throw new Error('ক্লেম করার জন্য কোনো রেকব্যাক উপলব্ধ নেই।');
+    }
+    
+    const currentBalance = parseFloat(userResult.rows[0].balance);
+    const newBalance = parseFloat((currentBalance + pendingRakeback).toFixed(8));
+    
+    // Inject audit log settings for the transaction
+    await client.query(`SELECT set_config('audit.user_id', $1, true)`, [userId]);
+    await client.query(`SELECT set_config('audit.ip_address', $1, true)`, [req.ip || '']);
+    await client.query(`SELECT set_config('audit.user_agent', $1, true)`, [req.headers['user-agent'] || '']);
+    
+    // Update user balance and pending rakeback
+    await client.query(
+      'UPDATE users SET balance = $1, pending_rakeback = 0.00000000, updated_at = NOW() WHERE id = $2',
+      [newBalance, userId]
+    );
+    
+    // Insert transaction record
+    const txId = uuidv4();
+    await client.query(
+      `INSERT INTO transactions (id, user_id, wallet_id, type, amount, status, metadata, completed_at, ip_address, user_agent)
+       VALUES ($1, $2, NULL, 'rakeback', $3, 'completed', '{}', NOW(), $4, $5)`,
+      [txId, userId, pendingRakeback, req.ip || null, req.headers['user-agent'] || null]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      amount: pendingRakeback,
+      newBalance,
+      message: `অভিনন্দন! আপনার $${pendingRakeback.toFixed(4)} রেকব্যাক ব্যালেন্সে যোগ করা হয়েছে।`
+    });
+  } catch (err: unknown) {
+    await client.query('ROLLBACK');
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ success: false, error: errorMsg });
+  } finally {
+    client.release();
   }
 });
 

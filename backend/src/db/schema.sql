@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
   two_factor_secret TEXT,
   two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
   two_factor_temp_secret TEXT,
+  total_wagered  DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000,
+  pending_rakeback DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000,
   self_excluded_until TIMESTAMPTZ,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
