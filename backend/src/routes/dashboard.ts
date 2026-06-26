@@ -15,7 +15,7 @@
 
 import { Router, Request, Response } from 'express';
 import { query } from '../config/database';
-import { authMiddleware, adminMiddleware, AuthPayload } from '../middleware/auth';
+import { authMiddleware, adminMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
 
 const router = Router();
@@ -158,7 +158,7 @@ router.get('/history/:userId', authMiddleware, async (req: Request, res: Respons
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/admin/live — লাইভ প্ল্যাটফর্ম স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/admin/live', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
     const [
       totalUsers, todayUsers,
@@ -201,7 +201,7 @@ router.get('/admin/live', authMiddleware, adminMiddleware, async (_req: Request,
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/admin/users — সব ইউজারের তালিকা
 // ══════════════════════════════════════════════════════════════
-router.get('/admin/users', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
   try {
     const page  = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -248,7 +248,7 @@ router.get('/admin/users', authMiddleware, adminMiddleware, async (req: Request,
 // ══════════════════════════════════════════════════════════════
 //  PATCH /api/dashboard/admin/users/:id — ইউজার ফ্রিজ/আনফ্রিজ
 // ══════════════════════════════════════════════════════════════
-router.patch('/admin/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { isActive, balance } = req.body;
@@ -293,7 +293,7 @@ router.patch('/admin/users/:id', authMiddleware, adminMiddleware, async (req: Re
 //  POST /api/dashboard/admin/seed/rotate — সার্ভার সিড রোটেট
 //  নিরাপত্তার জন্য এডমিন যেকোনো সময় নতুন সিড তৈরি করতে পারবে
 // ══════════════════════════════════════════════════════════════
-router.post('/admin/seed/rotate', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+router.post('/admin/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
   try {
     const newSeed     = generateServerSeed();
     const newSeedHash = hashServerSeed(newSeed);

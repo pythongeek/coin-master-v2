@@ -16,10 +16,11 @@ export async function connectDB(): Promise<void> {
   try {
     const client = await db.connect();
     
-    // Ensure KYC columns exist
+    // Ensure KYC and Role columns exist
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_applicant_id VARCHAR(100);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS kyc_verified_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user';
     `);
 
     const result = await client.query('SELECT NOW() as now, version()');

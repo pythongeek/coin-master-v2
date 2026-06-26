@@ -16,6 +16,7 @@ import {
 import { query } from '../config/database';
 import { validateBody } from '../middleware/validation';
 import { adminLimiter } from '../middleware/rate-limiter';
+import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { adminSettingsSchema } from '../schemas';
 
 const router = Router();
@@ -24,7 +25,7 @@ const router = Router();
 //  GET /api/admin/config
 //  সব বর্তমান সেটিং দেখো (লেবেল সহ)
 // ══════════════════════════════════════════════════════════════
-router.get('/config', adminLimiter, async (_req: Request, res: Response) => {
+router.get('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
     const config = await getConfig();
 
@@ -62,7 +63,7 @@ router.get('/config', adminLimiter, async (_req: Request, res: Response) => {
 //  PATCH /api/admin/config
 //  একটি বা একাধিক সেটিং আপডেট করো
 // ══════════════════════════════════════════════════════════════
-router.patch('/config', adminLimiter, validateBody(adminSettingsSchema), async (req: Request, res: Response) => {
+router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(adminSettingsSchema), async (req: Request, res: Response) => {
   try {
     const updates = req.body as Partial<GameConfig>;
 
@@ -87,7 +88,7 @@ router.patch('/config', adminLimiter, validateBody(adminSettingsSchema), async (
 //  POST /api/admin/config/reset
 //  সব সেটিং ডিফল্টে ফিরিয়ে দাও
 // ══════════════════════════════════════════════════════════════
-router.post('/config/reset', adminLimiter, async (_req: Request, res: Response) => {
+router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
   try {
     await resetToDefaults();
     res.json({
@@ -104,7 +105,7 @@ router.post('/config/reset', adminLimiter, async (_req: Request, res: Response) 
 //  GET /api/admin/stats
 //  লাইভ গেম স্ট্যাটিস্টিক্স
 // ══════════════════════════════════════════════════════════════
-router.get('/stats', adminLimiter, async (_req: Request, res: Response) => {
+router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
     const [totalBets, todayBets, totalUsers, activeRain] = await Promise.all([
       query('SELECT COUNT(*) as count, SUM(amount) as volume FROM bets'),

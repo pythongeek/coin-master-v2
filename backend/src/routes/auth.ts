@@ -43,7 +43,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       [userId, username, email || null, passwordHash]
     );
 
-    const token = createToken({ userId, username, isAdmin: false });
+    const token = createToken({ userId, username, isAdmin: false, role: 'user' });
 
     res.status(201).json({
       success: true,
@@ -65,7 +65,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
     const { username, password } = req.body;
 
     const result = await query(
-      'SELECT id, username, password_hash, balance, is_admin FROM users WHERE username = $1 AND is_active = true',
+      'SELECT id, username, password_hash, balance, is_admin, role FROM users WHERE username = $1 AND is_active = true',
       [username]
     );
 
@@ -84,6 +84,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       userId: user.id,
       username: user.username,
       isAdmin: user.is_admin,
+      role: user.role,
     });
 
     res.json({
@@ -115,7 +116,7 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
     void signature;
 
     let user = await query(
-      'SELECT id, username, balance, is_admin FROM users WHERE wallet_address = $1',
+      'SELECT id, username, balance, is_admin, role FROM users WHERE wallet_address = $1',
       [walletAddress.toLowerCase()]
     );
 
@@ -130,11 +131,11 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         [userId, username, walletAddress.toLowerCase()]
       );
 
-      user = await query('SELECT id, username, balance, is_admin FROM users WHERE id = $1', [userId]);
+      user = await query('SELECT id, username, balance, is_admin, role FROM users WHERE id = $1', [userId]);
     }
 
     const u = user.rows[0];
-    const token = createToken({ userId: u.id, username: u.username, isAdmin: u.is_admin });
+    const token = createToken({ userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role });
 
     res.json({
       success: true,
