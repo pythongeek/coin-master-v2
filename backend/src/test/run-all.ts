@@ -19,6 +19,7 @@ const testFiles = [
   'dashboard.test.ts',
   'audit.test.ts',
   'affiliate.test.ts',
+  'promo.test.ts',
   'concurrency.test.ts',
 ];
 

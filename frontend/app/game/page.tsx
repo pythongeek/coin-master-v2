@@ -34,6 +34,7 @@ import LiveChat from '@/components/game/LiveChat';
 import SquadFlip from '@/components/game/SquadFlip';
 import ProvablyFairWidget from '@/components/game/ProvablyFair';
 import AffiliatePanel from '@/components/game/AffiliatePanel';
+import PromoWidget from '@/components/game/PromoWidget';
 import SettingsModal from '@/components/game/SettingsModal';
 import LoginModal from '@/components/layout/LoginModal';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
@@ -226,6 +227,9 @@ export default function GamePage() {
 
             {/* Affiliate & Referrals Panel */}
             <AffiliatePanel />
+
+            {/* Promo Codes & Welcome Bonuses Widget */}
+            <PromoWidget />
           </aside>
 
           {/* ── কেন্দ্র কলাম: 3D Arena + হিস্ট্রি + রেজাল্ট ── */}

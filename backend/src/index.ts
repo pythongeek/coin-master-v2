@@ -27,6 +27,7 @@ import walletRoutes from './routes/wallet';
 import kycRoutes from './routes/kyc';
 import leaderboardsRoutes from './routes/leaderboards';
 import affiliateRoutes from './routes/affiliate';
+import promoRoutes from './routes/promo';
 
 
 dotenv.config();
@@ -65,6 +66,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/wallet', affiliateRoutes);
+app.use('/api/wallet', promoRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/game/leaderboards', leaderboardsRoutes);
 

@@ -1,6 +1,7 @@
 import { db, query } from '../config/database';
 import { reconcileUser } from './reconciliation-engine';
 import crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 const CONFIRMATIONS_REQUIRED_EVM = 12;
 const CONFIRMATIONS_REQUIRED_TRON = 3;
@@ -131,7 +132,7 @@ export async function registerIncomingDeposit(event: DepositEvent): Promise<stri
 /**
  * Mark a transaction completed and credit user wallets safely (Serializable/Locked)
  */
-async function completeDeposit(
+export async function completeDeposit(
   txId: string,
   walletId: string,
   userId: string,
@@ -156,12 +157,77 @@ async function completeDeposit(
     );
 
     // 3. Update users table virtual balance for backward-compatibility with game engine
-    await client.query(
+     await client.query(
       `UPDATE users 
        SET balance = balance + $1, updated_at = NOW() 
        WHERE id = $2`,
       [amount, userId]
     );
+
+    // 3.1 Check for active deposit-match promos
+    const activePromo = await client.query(
+      `SELECT up.promo_code_id, pc.code, pc.value, pc.max_bonus_amount 
+       FROM user_promos up 
+       JOIN promo_codes pc ON up.promo_code_id = pc.id 
+       WHERE up.user_id = $1 AND up.status = 'active'
+       FOR UPDATE`,
+      [userId]
+    );
+
+    if (activePromo.rows.length > 0) {
+      const promo = activePromo.rows[0];
+      const matchRate = parseFloat(promo.value);
+      let bonusAmount = amount * matchRate;
+      
+      if (promo.max_bonus_amount) {
+        const maxBonus = parseFloat(promo.max_bonus_amount);
+        if (bonusAmount > maxBonus) {
+          bonusAmount = maxBonus;
+        }
+      }
+
+      bonusAmount = parseFloat(bonusAmount.toFixed(8));
+
+      if (bonusAmount > 0) {
+        // Credit the user's balance with matching bonus
+        await client.query(
+          `UPDATE users 
+           SET balance = balance + $1, updated_at = NOW() 
+           WHERE id = $2`,
+          [bonusAmount, userId]
+        );
+
+        // Also credit the wallet's balance
+        await client.query(
+          `UPDATE wallets 
+           SET balance = balance + $1, updated_at = NOW() 
+           WHERE id = $2`,
+          [bonusAmount, walletId]
+        );
+
+        // Mark user_promos entry as claimed
+        await client.query(
+          `UPDATE user_promos 
+           SET status = 'claimed', claimed_amount = $1, used_at = NOW() 
+           WHERE user_id = $2 AND promo_code_id = $3`,
+          [bonusAmount, userId, promo.promo_code_id]
+        );
+
+        // Record matching bonus transaction log
+        const bonusTxId = uuidv4();
+        await client.query(
+          `INSERT INTO transactions (id, user_id, wallet_id, type, amount, status, reference_id, reference_type, completed_at)
+           VALUES ($1, $2, $3, 'bonus', $4, 'completed', $5, 'deposit', NOW())`,
+          [bonusTxId, userId, walletId, bonusAmount, txId]
+        );
+
+        // Invalidate cache in Redis for the balance
+        const { invalidateCache } = require('./cache');
+        await invalidateCache([`balance:${userId}`, `cache:stats:${userId}`]).catch((err: unknown) => {
+          console.warn('Cache invalidation failed for deposit match bonus:', err);
+        });
+      }
+    }
 
     // 4. Set transaction status to completed
     await client.query(
