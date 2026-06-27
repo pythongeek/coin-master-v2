@@ -41,7 +41,7 @@ const mockUsers = [
 async function mockQuery(text: string, params: any[] = []): Promise<any> {
   const normalized = text.trim().replace(/\s+/g, ' ');
 
-  if (normalized.startsWith('SELECT balance, total_wagered, pending_rakeback FROM users')) {
+  if (normalized.includes('FROM users') && normalized.includes('balance')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
     

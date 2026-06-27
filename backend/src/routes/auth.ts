@@ -44,7 +44,7 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 router.post('/register', authLimiter, validateBody(registerSchema), async (req: Request, res: Response) => {
   try {
-    const { username, email, password } = req.body;
+    const { username, email, password, referralCode } = req.body;
 
     // ইউজারনেম আগে থেকে আছে কিনা চেক
     const exists = await query('SELECT id FROM users WHERE username = $1', [username]);
@@ -52,13 +52,34 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       return res.status(400).json({ success: false, error: 'এই ইউজারনেম ইতিমধ্যে ব্যবহৃত।' });
     }
 
+    let referredById: string | null = null;
+    if (referralCode && referralCode.trim() !== '') {
+      const referrer = await query('SELECT id FROM users WHERE referral_code = $1', [referralCode]);
+      if (referrer.rows.length === 0) {
+        return res.status(400).json({ success: false, error: 'প্রদত্ত রেফারেল কোডটি সঠিক নয়।' });
+      }
+      referredById = referrer.rows[0].id;
+    }
+
+    // Generate unique referral code
+    let userReferralCode = '';
+    let isUnique = false;
+    while (!isUnique) {
+      const rand = Math.floor(100000 + Math.random() * 900000);
+      userReferralCode = `CF${rand}`;
+      const check = await query('SELECT id FROM users WHERE referral_code = $1', [userReferralCode]);
+      if (check.rows.length === 0) {
+        isUnique = true;
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 12);
     const userId = uuidv4();
 
     await query(
-      `INSERT INTO users (id, username, email, password_hash, balance)
-       VALUES ($1, $2, $3, $4, 10.00)`,  // নতুন ইউজার পাবে $10 বোনাস
-      [userId, username, email || null, passwordHash]
+      `INSERT INTO users (id, username, email, password_hash, balance, referred_by, referral_code)
+       VALUES ($1, $2, $3, $4, 10.00, $5, $6)`,  // নতুন ইউজার পাবে $10 বোনাস
+      [userId, username, email || null, passwordHash, referredById, userReferralCode]
     );
 
     const token = createToken({ userId, username, isAdmin: false, role: 'user' });
@@ -157,10 +178,22 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
       const userId = uuidv4();
       const username = `player_${walletAddress.slice(2, 8).toLowerCase()}`;
 
+      // Generate unique referral code
+      let userReferralCode = '';
+      let isUnique = false;
+      while (!isUnique) {
+        const rand = Math.floor(100000 + Math.random() * 900000);
+        userReferralCode = `CF${rand}`;
+        const check = await query('SELECT id FROM users WHERE referral_code = $1', [userReferralCode]);
+        if (check.rows.length === 0) {
+          isUnique = true;
+        }
+      }
+
       await query(
-        `INSERT INTO users (id, username, wallet_address, balance)
-         VALUES ($1, $2, $3, 5.00)`,
-        [userId, username, walletAddress.toLowerCase()]
+        `INSERT INTO users (id, username, wallet_address, balance, referral_code)
+         VALUES ($1, $2, $3, 5.00, $4)`,
+        [userId, username, walletAddress.toLowerCase(), userReferralCode]
       );
 
       user = await query('SELECT id, username, balance, is_admin, role, two_factor_enabled FROM users WHERE id = $1', [userId]);

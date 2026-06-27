@@ -26,7 +26,47 @@ export async function connectDB(): Promise<void> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_temp_secret TEXT;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wagered DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_rakeback DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50) UNIQUE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS referred_by UUID REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_affiliate_balance DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS total_affiliate_earned DECIMAL(18, 8) NOT NULL DEFAULT 0.00000000;
     `);
+
+    // Ensure transactions table constraint includes affiliate_reward and jackpot
+    const txTableCheck = await client.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'transactions'
+      );
+    `);
+    if (txTableCheck.rows[0].exists) {
+      await client.query(`
+        ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
+        ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK (type IN ('deposit', 'withdrawal', 'bet', 'win', 'rakeback', 'rain', 'bonus', 'fee', 'affiliate_reward', 'jackpot'));
+      `);
+    }
+
+    // Populate referral_code for users who do not have one
+    const usersWithoutCode = await client.query(
+      'SELECT id FROM users WHERE referral_code IS NULL'
+    );
+    for (const row of usersWithoutCode.rows) {
+      let code = '';
+      let isUnique = false;
+      while (!isUnique) {
+        const rand = Math.floor(100000 + Math.random() * 900000);
+        code = `CF${rand}`;
+        const check = await client.query('SELECT id FROM users WHERE referral_code = $1', [code]);
+        if (check.rows.length === 0) {
+          isUnique = true;
+        }
+      }
+      await client.query(
+        'UPDATE users SET referral_code = $1 WHERE id = $2',
+        [code, row.id]
+      );
+    }
+
 
     // Ensure default jackpot settings exist in admin_settings
     await client.query(`

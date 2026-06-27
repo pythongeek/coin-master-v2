@@ -124,7 +124,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
 
     // ── шаг ৪: ইউজারের ব্যালেন্স চেক করো (Row Lock সহ) ──────────────────────
     const userResult = await client.query(
-      'SELECT balance, total_wagered, pending_rakeback FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
+      'SELECT balance, total_wagered, pending_rakeback, referred_by FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
       [req.userId]
     );
     if (!userResult.rows.length) throw new Error('ইউজার পাওয়া যায়নি।');
@@ -132,6 +132,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     const currentBalance = parseFloat(userResult.rows[0].balance);
     const totalWagered = parseFloat(userResult.rows[0].total_wagered || '0');
     const pendingRakeback = parseFloat(userResult.rows[0].pending_rakeback || '0');
+    const referredBy = userResult.rows[0].referred_by;
 
     if (currentBalance < req.amount) {
       throw new Error(`অপর্যাপ্ত ব্যালেন্স। আপনার কাছে আছে: $${currentBalance.toFixed(2)}`);
@@ -198,6 +199,28 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       [newBalance, newTotalWagered, newPendingRakeback, req.userId]
     );
 
+    // ── Update Referrer's Affiliate Balance ──
+    if (referredBy) {
+      const referrerResult = await client.query(
+        'SELECT pending_affiliate_balance, total_affiliate_earned FROM users WHERE id = $1 FOR UPDATE',
+        [referredBy]
+      );
+      if (referrerResult.rows.length) {
+        const currentAffiliatePending = parseFloat(referrerResult.rows[0].pending_affiliate_balance || '0');
+        const currentAffiliateTotal = parseFloat(referrerResult.rows[0].total_affiliate_earned || '0');
+        
+        // Affiliate commission: 10% of the house commission (which is houseEdge% of bet amount)
+        const affiliateReward = req.amount * (config.houseEdgePercent / 100) * 0.10;
+        const newAffiliatePending = parseFloat((currentAffiliatePending + affiliateReward).toFixed(8));
+        const newAffiliateTotal = parseFloat((currentAffiliateTotal + affiliateReward).toFixed(8));
+        
+        await client.query(
+          'UPDATE users SET pending_affiliate_balance = $1, total_affiliate_earned = $2, updated_at = NOW() WHERE id = $3',
+          [newAffiliatePending, newAffiliateTotal, referredBy]
+        );
+      }
+    }
+
     // Save final jackpot pool value to admin_settings table
     if (config.jackpotEnabled && req.amount >= config.jackpotMinBet) {
       await client.query(
@@ -256,7 +279,12 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     await client.query('COMMIT');
 
     // Invalidate caches for updated stats and leaderboards
-    await invalidateCache([`cache:stats:${req.userId}`, 'cache:leaderboards', 'cache:stats:active']).catch(err => {
+    const keysToInvalidate = [`cache:stats:${req.userId}`, 'cache:leaderboards', 'cache:stats:active'];
+    if (referredBy) {
+      keysToInvalidate.push(`cache:stats:${referredBy}`);
+      keysToInvalidate.push(`balance:${referredBy}`);
+    }
+    await invalidateCache(keysToInvalidate).catch(err => {
       console.warn('Cache invalidation failed:', err);
     });
 

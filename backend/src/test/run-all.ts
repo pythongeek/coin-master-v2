@@ -18,6 +18,7 @@ const testFiles = [
   'leaderboards.test.ts',
   'dashboard.test.ts',
   'audit.test.ts',
+  'affiliate.test.ts',
   'concurrency.test.ts',
 ];
 

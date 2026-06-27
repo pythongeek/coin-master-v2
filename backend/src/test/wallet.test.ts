@@ -3,6 +3,16 @@ import Module from 'module';
 
 const originalRequire = Module.prototype.require;
 Module.prototype.require = function (id: string) {
+  if (id === 'ioredis') {
+    return class MockRedis {
+      on() { return this; }
+      set() { return 'OK'; }
+      get() { return null; }
+      incr() { return 1; }
+      del() {}
+      expire() {}
+    };
+  }
   if (id === 'bullmq') {
     return {
       Queue: class MockQueue {},

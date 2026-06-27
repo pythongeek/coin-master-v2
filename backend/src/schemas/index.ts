@@ -22,6 +22,11 @@ export const registerSchema = z.object({
   password: z
     .string()
     .min(6, 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।'),
+  referralCode: z
+    .string()
+    .max(50, 'রেফারেল কোড সর্বোচ্চ ৫০ অক্ষরের হতে হবে।')
+    .optional()
+    .or(z.literal('')),
 });
 
 export const loginSchema = z.object({

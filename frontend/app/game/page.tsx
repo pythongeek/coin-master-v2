@@ -33,6 +33,7 @@ import BetControls from '@/components/game/BetControls';
 import LiveChat from '@/components/game/LiveChat';
 import SquadFlip from '@/components/game/SquadFlip';
 import ProvablyFairWidget from '@/components/game/ProvablyFair';
+import AffiliatePanel from '@/components/game/AffiliatePanel';
 import SettingsModal from '@/components/game/SettingsModal';
 import LoginModal from '@/components/layout/LoginModal';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
@@ -222,6 +223,9 @@ export default function GamePage() {
 
             {/* Provably Fair (collapsible) */}
             <ProvablyFairWidget />
+
+            {/* Affiliate & Referrals Panel */}
+            <AffiliatePanel />
           </aside>
 
           {/* ── কেন্দ্র কলাম: 3D Arena + হিস্ট্রি + রেজাল্ট ── */}
