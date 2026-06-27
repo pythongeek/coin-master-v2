@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { authMiddleware, AuthPayload } from '../middleware/auth';
+import { fraudGuard } from '../middleware/fraud-guard';
 import { getOrCreateUserWallet } from '../services/wallet-derivation';
 import { validateBody } from '../middleware/validation';
 import { depositAddressSchema, depositMerchantSchema, withdrawSchema } from '../schemas';
@@ -280,7 +281,7 @@ router.post('/deposit/simulate-block', async (req: Request, res: Response) => {
  * POST /api/wallet/withdraw
  * Initiate an automated crypto withdrawal (queued through BullMQ)
  */
-router.post('/withdraw', authMiddleware, validateBody(withdrawSchema), async (req: AuthRequest, res: Response) => {
+router.post('/withdraw', authMiddleware, validateBody(withdrawSchema), fraudGuard, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {

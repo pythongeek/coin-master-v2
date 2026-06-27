@@ -166,4 +166,61 @@ router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_a
   }
 });
 
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/fraud-logs — প্রতারণা সনাক্তকরণ লগগুলো দেখাও
+// ══════════════════════════════════════════════════════════════
+router.get('/fraud-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const result = await query(
+      `SELECT fl.id, fl.user_id, fl.type, fl.ip_address, fl.fingerprint, fl.details, fl.created_at, u.username 
+       FROM fraud_logs fl 
+       JOIN users u ON fl.user_id = u.id 
+       ORDER BY fl.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const countResult = await query('SELECT COUNT(*) as total FROM fraud_logs');
+    const total = parseInt(countResult.rows[0].total || '0');
+
+    res.json({
+      success: true,
+      logs: result.rows,
+      pagination: {
+        total,
+        limit,
+        offset,
+      }
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/admin/users/:id/unflag — ইউজার আন-ফ্ল্যাগ করো
+// ══════════════════════════════════════════════════════════════
+router.post('/users/:id/unflag', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    await query('UPDATE users SET is_flagged = false WHERE id = $1', [id]);
+    await query('DELETE FROM fraud_logs WHERE user_id = $1', [id]);
+
+    const { invalidateCache } = require('../services/cache');
+    await invalidateCache([`balance:${id}`, `cache:stats:${id}`]).catch((err: unknown) => {
+      console.warn('Cache invalidation failed for unflagging:', err);
+    });
+
+    res.json({
+      success: true,
+      message: 'ইউজার অ্যাকাউন্টটি সফলভাবে আন-ফ্ল্যাগ করা হয়েছে।'
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 export default router;

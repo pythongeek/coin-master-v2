@@ -18,6 +18,7 @@ import {
 } from '@/lib/wallet';
 import { useGameStore } from '@/lib/store';
 import { storeToken } from '@/lib/socket';
+import { getBrowserFingerprint } from '@/utils/fingerprint';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -44,6 +45,7 @@ export default function LoginModal({ onClose }: Props) {
       balance:       data.user.balance as number,
       isAdmin:       (data.user.isAdmin as boolean) || false,
       walletAddress: data.user.walletAddress as string | undefined,
+      isFlagged:     (data.user.isFlagged as boolean) || false,
     });
     localStorage.setItem('cf_user', JSON.stringify(data.user));
     onClose();
@@ -59,10 +61,11 @@ export default function LoginModal({ onClose }: Props) {
     setError('');
     try {
       const conn = await connectMetaMask();
+      const fingerprint = await getBrowserFingerprint();
       const res = await fetch(`${API}/api/auth/wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature }),
+        body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
       });
       const data = await res.json();
       if (data.success) handleSuccess(data);
@@ -83,10 +86,11 @@ export default function LoginModal({ onClose }: Props) {
     setError('');
     try {
       const conn = await connectPhantom();
+      const fingerprint = await getBrowserFingerprint();
       const res = await fetch(`${API}/api/auth/wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature }),
+        body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
       });
       const data = await res.json();
       if (data.success) handleSuccess(data);
@@ -107,10 +111,11 @@ export default function LoginModal({ onClose }: Props) {
     setLoading(true);
     try {
       const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+      const fingerprint = isRegister ? await getBrowserFingerprint() : undefined;
       const res = await fetch(`${API}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, fingerprint }),
       });
       const data = await res.json();
       if (data.success) handleSuccess(data);

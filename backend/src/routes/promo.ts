@@ -3,6 +3,7 @@ import { authMiddleware, AuthPayload } from '../middleware/auth';
 import { query, db } from '../config/database';
 import { invalidateCache } from '../services/cache';
 import { v4 as uuidv4 } from 'uuid';
+import { fraudGuard } from '../middleware/fraud-guard';
 
 const router = Router();
 
@@ -39,7 +40,7 @@ router.get('/promo/active', authMiddleware, async (req: any, res: Response) => {
  * POST /api/wallet/promo/claim
  * Claim a promo code (instant bonus or pending deposit match activation)
  */
-router.post('/promo/claim', authMiddleware, async (req: any, res: Response) => {
+router.post('/promo/claim', authMiddleware, fraudGuard, async (req: any, res: Response) => {
   const userId = req.user?.userId;
   if (!userId) {
     return res.status(401).json({ success: false, error: 'অননুমোদিত।' });

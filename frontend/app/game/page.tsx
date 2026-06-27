@@ -23,7 +23,7 @@ import Link from 'next/link';
 import confetti from 'canvas-confetti';
 import {
   Coins, Dices, Users, Trophy, XCircle, Loader2,
-  LayoutDashboard, LogOut, Settings,
+  LayoutDashboard, LogOut, Settings, AlertTriangle,
 } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { useSocketEvents } from '@/lib/useSocketEvents';
@@ -214,13 +214,27 @@ export default function GamePage() {
             </div>
 
             {/* বেট কন্ট্রোলস অথবা স্কোয়াড */}
-            {showSquad ? (
-              <SquadFlip />
-            ) : (
-              <div className="glass-card p-5">
-                <BetControls />
-              </div>
-            )}
+            <div className="relative">
+              {showSquad ? (
+                <SquadFlip />
+              ) : (
+                <div className="glass-card p-5">
+                  <BetControls />
+                </div>
+              )}
+
+              {user?.isFlagged && (
+                <div className="absolute inset-0 bg-void/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center border border-brand-red/30 rounded-xl z-20">
+                  <div className="w-12 h-12 rounded-full bg-brand-red/10 flex items-center justify-center text-brand-red mb-3 animate-pulse">
+                    <AlertTriangle size={24} />
+                  </div>
+                  <h4 className="heading-display text-sm text-brand-red mb-1">অ্যাকাউন্ট স্থগিত করা হয়েছে</h4>
+                  <p className="text-[11px] font-mono text-text-secondary leading-relaxed">
+                    আপনার অ্যাকাউন্টটি অস্বাভাবিক কার্যকলাপে জড়িত থাকায় সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাকাউন্ট পুনরায় সক্রিয় করতে কাস্টমার সাপোর্টে যোগাযোগ করুন।
+                  </p>
+                </div>
+              )}
+            </div>
 
             {/* Provably Fair (collapsible) */}
             <ProvablyFairWidget />

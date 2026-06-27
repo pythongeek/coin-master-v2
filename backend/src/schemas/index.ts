@@ -27,6 +27,9 @@ export const registerSchema = z.object({
     .max(50, 'রেফারেল কোড সর্বোচ্চ ৫০ অক্ষরের হতে হবে।')
     .optional()
     .or(z.literal('')),
+  fingerprint: z
+    .string()
+    .optional(),
 });
 
 export const loginSchema = z.object({
@@ -43,6 +46,9 @@ export const walletAuthSchema = z.object({
     .string()
     .min(10, 'সঠিক ওয়ালেট অ্যাড্রেস প্রয়োজন।'),
   signature: z
+    .string()
+    .optional(),
+  fingerprint: z
     .string()
     .optional(),
 });

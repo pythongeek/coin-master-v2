@@ -17,13 +17,14 @@ import { getConfig } from '../services/admin-config';
 import { validateBody } from '../middleware/validation';
 import { gameLimiter } from '../middleware/rate-limiter';
 import { betSchema, verifySchema } from '../schemas';
+import { fraudGuard } from '../middleware/fraud-guard';
 
 const router = Router();
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/game/bet — বেট ধরো
 // ══════════════════════════════════════════════════════════════
-router.post('/bet', gameLimiter, validateBody(betSchema), async (req: Request, res: Response) => {
+router.post('/bet', gameLimiter, validateBody(betSchema), fraudGuard, async (req: Request, res: Response) => {
   try {
     const { userId, choice, amount, clientSeed, targetMultiplier } = req.body;
 

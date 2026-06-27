@@ -44,7 +44,8 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 router.post('/register', authLimiter, validateBody(registerSchema), async (req: Request, res: Response) => {
   try {
-    const { username, email, password, referralCode } = req.body;
+    const { username, email, password, referralCode, fingerprint } = req.body;
+    const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
 
     // ইউজারনেম আগে থেকে আছে কিনা চেক
     const exists = await query('SELECT id FROM users WHERE username = $1', [username]);
@@ -73,21 +74,66 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       }
     }
 
+    // Fraud check parameters
+    let shouldFlag = false;
+    let fraudDetails: string[] = [];
+
+    // 1. Check duplicate fingerprint
+    if (fingerprint && fingerprint.trim() !== '') {
+      const dupFingerprint = await query(
+        'SELECT username FROM users WHERE fingerprint = $1 AND is_flagged = false LIMIT 1',
+        [fingerprint]
+      );
+      if (dupFingerprint.rows.length > 0) {
+        shouldFlag = true;
+        fraudDetails.push(`আরেকটি অ্যাকাউন্টের সাথে ব্রাউজার ফিঙ্গারপ্রিন্ট মিলেছে: ${dupFingerprint.rows[0].username}`);
+      }
+    }
+
+    // 2. Check registration IP count in past 24 hours
+    if (ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+      const dupIpCount = await query(
+        "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+        [ipAddress]
+      );
+      if (parseInt(dupIpCount.rows[0].count || '0') >= 3) {
+        shouldFlag = true;
+        fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ৩টির বেশি অ্যাকাউন্ট তৈরি করার চেষ্টা করা হয়েছে।`);
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 12);
     const userId = uuidv4();
 
     await query(
-      `INSERT INTO users (id, username, email, password_hash, balance, referred_by, referral_code)
-       VALUES ($1, $2, $3, $4, 10.00, $5, $6)`,  // নতুন ইউজার পাবে $10 বোনাস
-      [userId, username, email || null, passwordHash, referredById, userReferralCode]
+      `INSERT INTO users (id, username, email, password_hash, balance, referred_by, referral_code, fingerprint, registration_ip, is_flagged)
+       VALUES ($1, $2, $3, $4, 10.00, $5, $6, $7, $8, $9)`,  // নতুন ইউজার পাবে $10 বোনাস
+      [userId, username, email || null, passwordHash, referredById, userReferralCode, fingerprint || null, ipAddress, shouldFlag]
     );
+
+    // Record fraud flags
+    if (shouldFlag) {
+      for (const detail of fraudDetails) {
+        await query(
+          `INSERT INTO fraud_logs (user_id, type, ip_address, fingerprint, details)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            userId,
+            detail.includes('ফিঙ্গারপ্রিন্ট') ? 'multi_account_fingerprint' : 'multi_account_ip',
+            ipAddress,
+            fingerprint || null,
+            detail
+          ]
+        );
+      }
+    }
 
     const token = createToken({ userId, username, isAdmin: false, role: 'user' });
 
     res.status(201).json({
       success: true,
       token,
-      user: { userId, username, balance: 10.00 },
+      user: { userId, username, balance: 10.00, isFlagged: shouldFlag },
       message: `স্বাগতম ${username}! আপনার অ্যাকাউন্টে $10.00 ওয়েলকাম বোনাস যোগ করা হয়েছে।`,
     });
   } catch (err: unknown) {
@@ -162,14 +208,15 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
 // ══════════════════════════════════════════════════════════════
 router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: Request, res: Response) => {
   try {
-    const { walletAddress, signature } = req.body;
+    const { walletAddress, signature, fingerprint } = req.body;
+    const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
 
     // TODO: Production-এ signature যাচাই করতে হবে (ethers.js দিয়ে)
     // এখন শুধু অ্যাড্রেস দিয়েই লগইন হবে (Development mode)
     void signature;
 
     let user = await query(
-      'SELECT id, username, balance, is_admin, role, two_factor_enabled FROM users WHERE wallet_address = $1',
+      'SELECT id, username, balance, is_admin, role, two_factor_enabled, is_flagged FROM users WHERE wallet_address = $1',
       [walletAddress.toLowerCase()]
     );
 
@@ -190,13 +237,58 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         }
       }
 
+      // Fraud check parameters
+      let shouldFlag = false;
+      let fraudDetails: string[] = [];
+
+      // 1. Check duplicate fingerprint
+      if (fingerprint && fingerprint.trim() !== '') {
+        const dupFingerprint = await query(
+          'SELECT username FROM users WHERE fingerprint = $1 AND is_flagged = false LIMIT 1',
+          [fingerprint]
+        );
+        if (dupFingerprint.rows.length > 0) {
+          shouldFlag = true;
+          fraudDetails.push(`আরেকটি অ্যাকাউন্টের সাথে ব্রাউজার ফিঙ্গারপ্রিন্ট মিলেছে: ${dupFingerprint.rows[0].username}`);
+        }
+      }
+
+      // 2. Check registration IP count in past 24 hours
+      if (ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+        const dupIpCount = await query(
+          "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+          [ipAddress]
+        );
+        if (parseInt(dupIpCount.rows[0].count || '0') >= 3) {
+          shouldFlag = true;
+          fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ৩টির বেশি অ্যাকাউন্ট তৈরি করার চেষ্টা করা হয়েছে।`);
+        }
+      }
+
       await query(
-        `INSERT INTO users (id, username, wallet_address, balance, referral_code)
-         VALUES ($1, $2, $3, 5.00, $4)`,
-        [userId, username, walletAddress.toLowerCase(), userReferralCode]
+        `INSERT INTO users (id, username, wallet_address, balance, referral_code, fingerprint, registration_ip, is_flagged)
+         VALUES ($1, $2, $3, 5.00, $4, $5, $6, $7)`,
+        [userId, username, walletAddress.toLowerCase(), userReferralCode, fingerprint || null, ipAddress, shouldFlag]
       );
 
-      user = await query('SELECT id, username, balance, is_admin, role, two_factor_enabled FROM users WHERE id = $1', [userId]);
+      // Record fraud flags
+      if (shouldFlag) {
+        for (const detail of fraudDetails) {
+          await query(
+            `INSERT INTO fraud_logs (user_id, type, ip_address, fingerprint, details)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              userId,
+              detail.includes('ফিঙ্গারপ্রিন্ট') ? 'multi_account_fingerprint' : 'multi_account_ip',
+              ipAddress,
+              fingerprint || null,
+              detail
+            ]
+          );
+        }
+      }
+
+      user = await query('SELECT id, username, balance, is_admin, role, two_factor_enabled, is_flagged FROM users WHERE id = $1', [userId]);
     }
 
     const u = user.rows[0];
@@ -227,6 +319,7 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         balance: parseFloat(u.balance),
         walletAddress: walletAddress.toLowerCase(),
         isAdmin: u.is_admin,
+        isFlagged: u.is_flagged,
       },
     });
   } catch (err: unknown) {

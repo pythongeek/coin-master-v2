@@ -144,6 +144,29 @@ export async function connectDB(): Promise<void> {
       ON CONFLICT (code) DO NOTHING;
     `);
 
+    // Alter users table to add fingerprint, registration_ip, and is_flagged columns
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(255);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS registration_ip VARCHAR(45);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN NOT NULL DEFAULT false;
+    `);
+
+    // Ensure Fraud Logs table exists
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS fraud_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(50) NOT NULL,
+        ip_address VARCHAR(45) NOT NULL,
+        fingerprint VARCHAR(255),
+        details TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_fraud_logs_user_id ON fraud_logs(user_id);
+      CREATE INDEX IF NOT EXISTS idx_fraud_logs_created_at ON fraud_logs(created_at DESC);
+    `);
+
     // Ensure audit_logs table, indexes and trigger function exist
     await client.query(`
       CREATE TABLE IF NOT EXISTS audit_logs (
