@@ -10,9 +10,11 @@
 import { useState, useEffect } from 'react';
 import { Users, Share2, Copy, Trophy, Percent, Loader2, CheckCircle2, Wallet, ChevronDown, ChevronUp } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export default function AffiliatePanel() {
   const { user, token, updateBalance } = useGameStore();
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [claiming, setClaiming] = useState(false);
@@ -94,7 +96,7 @@ export default function AffiliatePanel() {
         // রিয়েল-টাইমে ডাটা রি-লোডিং
         fetchAffiliateData();
       } else {
-        alert(data.error || 'ক্লেইম ব্যর্থ হয়েছে।');
+        alert(data.error || t('serverError'));
       }
     } catch (err) {
       console.error('Claim error:', err);
@@ -119,8 +121,8 @@ export default function AffiliatePanel() {
             <Users size={16} />
           </div>
           <div className="text-left">
-            <div className="heading-display text-sm text-brand-gold">AFFILIATES</div>
-            <div className="text-text-muted text-xs font-mono">রেফারেল প্রোগ্রাম ও কমিশন</div>
+            <div className="heading-display text-sm text-brand-gold">{t('affiliates')}</div>
+            <div className="text-text-muted text-xs font-mono">{t('affiliateSubtitle')}</div>
           </div>
         </div>
         <span className="text-text-muted">
@@ -140,10 +142,10 @@ export default function AffiliatePanel() {
               <div className="bg-void rounded-lg p-3.5 border border-brand-gold/20 space-y-2.5">
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-text-secondary font-mono flex items-center gap-1.5">
-                    <Share2 size={12} className="text-brand-gold" /> আপনার রেফারেল লিংক:
+                    <Share2 size={12} className="text-brand-gold" /> {t('referralLink')}:
                   </span>
                   <span className="text-[10px] text-brand-gold font-mono px-2 py-0.5 bg-brand-gold/10 rounded">
-                    ১০% লাইফটাইম কমিশন
+                    {t('commissionRate')}: 10%
                   </span>
                 </div>
                 <div className="flex gap-2">
@@ -157,7 +159,7 @@ export default function AffiliatePanel() {
                     className="px-3.5 py-2.5 bg-brand-gold text-void rounded-lg hover:bg-brand-gold/85 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold font-mono"
                   >
                     {copied ? <CheckCircle2 size={14} /> : <Copy size={14} />}
-                    {copied ? 'কপিড!' : 'কপি'}
+                    {copied ? t('copied') : t('copyLink')}
                   </button>
                 </div>
               </div>
@@ -165,14 +167,14 @@ export default function AffiliatePanel() {
               {/* স্ট্যাটিস্টিকস গ্রিড */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-void border border-border p-3 rounded-lg text-center">
-                  <div className="text-[10px] font-mono text-text-muted mb-1">মোট রেফারেল</div>
+                  <div className="text-[10px] font-mono text-text-muted mb-1">{t('totalReferred')}</div>
                   <div className="text-lg font-display font-bold text-white flex items-center justify-center gap-1">
                     <Users size={14} className="text-brand-gold/70" />
                     {stats.referralsCount}
                   </div>
                 </div>
                 <div className="bg-void border border-border p-3 rounded-lg text-center">
-                  <div className="text-[10px] font-mono text-text-muted mb-1">রেফারেলদের মোট বাজি</div>
+                  <div className="text-[10px] font-mono text-text-muted mb-1">{t('totalEarnings')}</div>
                   <div className="text-lg font-display font-bold text-white">
                     ${stats.referralsWagered.toFixed(2)}
                   </div>
@@ -182,12 +184,12 @@ export default function AffiliatePanel() {
               {/* ক্লেইমেবল কার্ড */}
               <div className="glass-card bg-[#111A24] border border-border p-4 rounded-xl flex items-center justify-between">
                 <div>
-                  <div className="text-xs text-text-muted font-mono">ক্লেইমযোগ্য ব্যালেন্স</div>
+                  <div className="text-xs text-text-muted font-mono">{t('availableWithdraw')}</div>
                   <div className="text-2xl font-mono font-black text-brand-green mt-1">
                     ${stats.pendingBalance.toFixed(4)}
                   </div>
                   <div className="text-[10px] text-text-muted font-mono mt-0.5">
-                    মোট উপার্জিত: ${stats.totalEarned.toFixed(2)}
+                    {t('withdrawn')}: ${stats.totalEarned.toFixed(2)}
                   </div>
                 </div>
                 <button
@@ -198,18 +200,18 @@ export default function AffiliatePanel() {
                              disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2"
                 >
                   {claiming ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />}
-                  ক্লেইম করুন
+                  {t('withdrawBtn')}
                 </button>
               </div>
 
               {/* বিস্তারিত ব্যাখ্যা */}
               <div className="text-[11px] font-mono text-text-muted leading-relaxed bg-void/50 p-3 rounded-lg border border-border/50">
                 <p className="flex items-center gap-1.5 font-bold text-text-secondary mb-1">
-                  <Percent size={12} className="text-brand-gold" /> রেফারেল বোনাস কীভাবে কাজ করে?
+                  <Percent size={12} className="text-brand-gold" /> FAQ
                 </p>
-                <p>১. আপনার লিংকের মাধ্যমে বন্ধুরা সাইনআপ করলে তারা $১০.০০ বোনাস পাবে।</p>
-                <p>২. তাদের প্রতি বাজির হাউজ কমিশনের (২% হাউজ এজ) এর ১০% অংশ আপনার অ্যাফিলিয়েট একাউন্টে জমা হবে।</p>
-                <p>৩. যেকোনো সময় আপনি সেই কমিশন ক্লেইম করে গেমের মেইন ব্যালেন্সে ট্রান্সফার করতে পারবেন।</p>
+                <p>1. Refer friends using your link and they get $10.00 FREE bonus credit.</p>
+                <p>2. Earn 10% lifetime commission on their wagers house edge share.</p>
+                <p>3. Withdraw commissions instantly to your main gaming balance.</p>
               </div>
             </>
           )}

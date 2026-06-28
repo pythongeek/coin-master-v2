@@ -20,6 +20,7 @@ import { useGameStore } from '@/lib/store';
 import { storeToken } from '@/lib/socket';
 import { getBrowserFingerprint } from '@/utils/fingerprint';
 import { trackEvent, identifyUser } from '@/utils/analytics';
+import { useTranslation } from '@/hooks/useTranslation';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -29,6 +30,7 @@ interface Props {
 
 export default function LoginModal({ onClose }: Props) {
   const { setUser, setToken } = useGameStore();
+  const { t } = useTranslation();
   const [mode, setMode] = useState<'choose' | 'wallet-connecting' | 'email'>('choose');
   const [isRegister, setIsRegister] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', email: '' });
@@ -89,7 +91,7 @@ export default function LoginModal({ onClose }: Props) {
       if (data.success) {
         handleSuccess(data);
       } else {
-        setError(data.error || 'কানেক্ট করতে সমস্যা হয়েছে।');
+        setError(data.error || t('connectError'));
         trackEvent('wallet_auth_failed', { wallet: 'metamask', error: data.error || 'API Error' });
       }
     } catch (err: unknown) {
@@ -120,7 +122,7 @@ export default function LoginModal({ onClose }: Props) {
       if (data.success) {
         handleSuccess(data);
       } else {
-        setError(data.error || 'কানেক্ট করতে সমস্যা হয়েছে।');
+        setError(data.error || t('connectError'));
         trackEvent('wallet_auth_failed', { wallet: 'phantom', error: data.error || 'API Error' });
       }
     } catch (err: unknown) {
@@ -135,7 +137,7 @@ export default function LoginModal({ onClose }: Props) {
   const handleEmailAuth = async () => {
     setError('');
     if (!form.username || !form.password) {
-      setError('ইউজারনেম ও পাসওয়ার্ড দিন।');
+      setError(t('fieldsRequired'));
       return;
     }
     setLoading(true);
@@ -151,12 +153,12 @@ export default function LoginModal({ onClose }: Props) {
       if (data.success) {
         handleSuccess(data);
       } else {
-        setError(data.error || 'কিছু একটা ভুল হয়েছে।');
+        setError(data.error || t('serverError'));
         trackEvent('email_auth_failed', { isRegister, error: data.error || 'API Error' });
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      setError('সার্ভারে কানেক্ট করা যায়নি। ব্যাকএন্ড চালু আছে কিনা চেক করুন।');
+      setError(t('serverError'));
       trackEvent('email_auth_failed', { isRegister, error: errMsg });
     }
     setLoading(false);
@@ -185,8 +187,8 @@ export default function LoginModal({ onClose }: Props) {
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-brand-green/10 text-brand-green mb-3">
             <Coins size={24} />
           </div>
-          <h2 className="heading-display text-xl text-brand">CRYPTOFLIP-এ যোগ দিন</h2>
-          <p className="text-text-muted text-xs font-mono mt-1">নতুন রেজিস্ট্রেশনে $5-$10 ওয়েলকাম বোনাস</p>
+          <h2 className="heading-display text-xl text-brand">{t('authTitle')}</h2>
+          <p className="text-text-muted text-xs font-mono mt-1">{t('authSubtitle')}</p>
         </div>
 
         {error && (
@@ -208,13 +210,13 @@ export default function LoginModal({ onClose }: Props) {
               <div className="w-9 h-9 rounded-lg bg-brand-gold/10 flex items-center justify-center text-xl shrink-0">🦊</div>
               <div className="text-left flex-1">
                 <div className="font-display font-semibold text-sm text-text-primary">MetaMask</div>
-                <div className="text-text-muted text-xs font-mono">Ethereum / BSC ওয়ালেট</div>
+                <div className="text-text-muted text-xs font-mono">Ethereum / BSC</div>
               </div>
               {connectingType === 'metamask' && (
                 <Loader2 size={14} className="text-brand-gold animate-spin" />
               )}
               {!isMetaMaskInstalled() && connectingType !== 'metamask' && (
-                <span className="flex items-center gap-1 text-text-muted text-xs">ইন্সটল করুন <ArrowRight size={12} /></span>
+                <span className="flex items-center gap-1 text-text-muted text-xs">{t('install')} <ArrowRight size={12} /></span>
               )}
             </button>
 
@@ -229,20 +231,20 @@ export default function LoginModal({ onClose }: Props) {
               <div className="w-9 h-9 rounded-lg bg-brand-maroon/10 flex items-center justify-center text-xl shrink-0">👻</div>
               <div className="text-left flex-1">
                 <div className="font-display font-semibold text-sm text-text-primary">Phantom</div>
-                <div className="text-text-muted text-xs font-mono">Solana ওয়ালেট</div>
+                <div className="text-text-muted text-xs font-mono">Solana</div>
               </div>
               {connectingType === 'phantom' && (
                 <Loader2 size={14} className="text-brand-maroon animate-spin" />
               )}
               {!isPhantomInstalled() && connectingType !== 'phantom' && (
-                <span className="flex items-center gap-1 text-text-muted text-xs">ইন্সটল করুন <ArrowRight size={12} /></span>
+                <span className="flex items-center gap-1 text-text-muted text-xs">{t('install')} <ArrowRight size={12} /></span>
               )}
             </button>
 
             {/* বিভাজক */}
             <div className="flex items-center gap-3 py-2">
               <div className="flex-1 h-px bg-border" />
-              <span className="text-text-muted text-xs font-mono">অথবা</span>
+              <span className="text-text-muted text-xs font-mono">{t('or')}</span>
               <div className="flex-1 h-px bg-border" />
             </div>
 
@@ -256,8 +258,8 @@ export default function LoginModal({ onClose }: Props) {
                 <Mail size={17} />
               </div>
               <div className="text-left flex-1">
-                <div className="font-display font-semibold text-sm text-text-primary">ইউজারনেম/পাসওয়ার্ড</div>
-                <div className="text-text-muted text-xs font-mono">ওয়ালেট ছাড়াই খেলুন</div>
+                <div className="font-display font-semibold text-sm text-text-primary">{t('emailUsername')}</div>
+                <div className="text-text-muted text-xs font-mono">{t('playWithoutWallet')}</div>
               </div>
             </button>
           </div>
@@ -270,12 +272,12 @@ export default function LoginModal({ onClose }: Props) {
               className="flex items-center gap-1 text-text-muted text-xs font-mono hover:text-text-secondary mb-2"
             >
               <ArrowLeft size={12} />
-              ফিরে যান
+              {t('back')}
             </button>
 
             <input
               className="input-cyber"
-              placeholder="ইউজারনেম"
+              placeholder={t('username')}
               value={form.username}
               onChange={(e) => setForm(p => ({ ...p, username: e.target.value }))}
             />
@@ -283,7 +285,7 @@ export default function LoginModal({ onClose }: Props) {
             {isRegister && (
               <input
                 className="input-cyber"
-                placeholder="ইমেইল (ঐচ্ছিক)"
+                placeholder={t('email') + ' (Optional)'}
                 value={form.email}
                 onChange={(e) => setForm(p => ({ ...p, email: e.target.value }))}
               />

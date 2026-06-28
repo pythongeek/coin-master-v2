@@ -38,12 +38,15 @@ import PromoWidget from '@/components/game/PromoWidget';
 import SettingsModal from '@/components/game/SettingsModal';
 import SupportChat from '@/components/game/SupportChat';
 import LoginModal from '@/components/layout/LoginModal';
+import LanguageSelector from '@/components/layout/LanguageSelector';
+import { useTranslation } from '@/hooks/useTranslation';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
 import { shortenAddress } from '@/lib/wallet';
 
 const Coin3D = lazy(() => import('@/components/game/Coin3D'));
 
 export default function GamePage() {
+  const { t } = useTranslation();
   const {
     user, gameStatus, lastResult, betHistory, onlineCount,
     logout, loadSettings, showSettings, toggleSettings,
@@ -131,7 +134,7 @@ export default function GamePage() {
           {user ? (
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <div className="text-text-muted text-xs font-mono">ব্যালেন্স</div>
+                <div className="text-text-muted text-xs font-mono">{t('balance')}</div>
                 <div className="balance-number text-lg">${user.balance.toFixed(2)}</div>
               </div>
               <div className="w-px h-8 bg-border" />
@@ -142,40 +145,43 @@ export default function GamePage() {
                 </div>
                 <div className="flex items-center gap-1 justify-end">
                   <span className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse-soft" />
-                  <span className="text-text-secondary text-xs font-mono">{onlineCount} অনলাইন</span>
+                  <span className="text-text-secondary text-xs font-mono">{onlineCount} {t('onlineCount')}</span>
                 </div>
               </div>
+              <div className="w-px h-8 bg-border hidden sm:block" />
+              <LanguageSelector />
               <button
                 onClick={toggleSettings}
                 className="flex items-center gap-1.5 text-text-muted hover:text-brand-gold text-xs font-mono transition-colors"
-                aria-label="সেটিংস"
+                aria-label="Settings"
               >
                 <Settings size={14} />
               </button>
               <Link href="/dashboard" className="flex items-center gap-1.5 text-text-muted hover:text-brand-info text-xs font-mono">
                 <LayoutDashboard size={13} />
-                <span className="hidden sm:inline">ড্যাশবোর্ড</span>
+                <span className="hidden sm:inline">{t('dashboardTitle')}</span>
               </Link>
               <button
                 onClick={handleLogout}
                 className="flex items-center gap-1.5 text-text-muted hover:text-brand-red text-xs font-mono"
               >
                 <LogOut size={13} />
-                <span className="hidden sm:inline">লগআউট</span>
+                <span className="hidden sm:inline">{t('logout')}</span>
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <span className="text-text-muted text-xs font-mono">{onlineCount} দর্শক</span>
+              <span className="text-text-muted text-xs font-mono">{onlineCount} {t('onlineCount')}</span>
+              <LanguageSelector />
               <button
                 onClick={toggleSettings}
                 className="text-text-muted hover:text-brand-gold text-xs font-mono transition-colors"
-                aria-label="সেটিংস"
+                aria-label="Settings"
               >
                 <Settings size={14} />
               </button>
               <button onClick={() => setShowLogin(true)} className="btn-brand text-sm py-2 px-4">
-                লগইন / ওয়ালেট কানেক্ট
+                {t('connectWallet')}
               </button>
             </div>
           )}
@@ -200,7 +206,7 @@ export default function GamePage() {
                 }`}
               >
                 <Dices size={14} />
-                একক বেট
+                {t('singleBet')}
               </button>
               <button
                 onClick={() => setShowSquad(true)}
@@ -211,7 +217,7 @@ export default function GamePage() {
                 }`}
               >
                 <Users size={14} />
-                স্কোয়াড ফ্লিপ
+                {t('squadFlip')}
               </button>
             </div>
 

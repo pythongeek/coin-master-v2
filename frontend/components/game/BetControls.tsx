@@ -16,11 +16,13 @@ import { Lock, RotateCw, Coins, Play, Square } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { getSocket } from '@/lib/socket';
 import { trackEvent } from '@/utils/analytics';
+import { useTranslation } from '@/hooks/useTranslation';
 
 // দ্রুত বেট পরিমাণ বেছে নেওয়ার প্রিসেট
 const BET_PRESETS = [0.10, 0.50, 1.00, 5.00, 10.00, 50.00];
 
 export default function BetControls() {
+  const { t } = useTranslation();
   const {
     user, gameStatus, currentChoice, betAmount,
     setCurrentChoice, setBetAmount, setGameStatus,
@@ -161,14 +163,14 @@ export default function BetControls() {
     });
 
     if (reason) {
-      useGameStore.getState().addNotification(`অটো-প্লে বন্ধ: ${reason}`, 'info');
+      useGameStore.getState().addNotification(`${t('autoplayStopped')}: ${reason}`, 'info');
     }
   };
 
   const executeAutoplayBet = (amount: number) => {
     if (!user) return;
     if (user.balance < amount) {
-      stopAutoPlay("ব্যালেন্স অপর্যাপ্ত!");
+      stopAutoPlay(t('insufficientBalance'));
       return;
     }
 
@@ -195,7 +197,7 @@ export default function BetControls() {
     if (!user) return;
     if (betAmount <= 0) return;
     if (betAmount > user.balance) {
-      useGameStore.getState().addNotification(`❌ ব্যালেন্স অপর্যাপ্ত!`, 'info');
+      useGameStore.getState().addNotification(`❌ ${t('insufficientBalance')}`, 'info');
       trackEvent('autoplay_start_failed', { reason: 'insufficient_balance', betAmount });
       return;
     }
@@ -385,7 +387,7 @@ export default function BetControls() {
             }
             disabled:opacity-50 disabled:cursor-not-allowed`}
         >
-          MANUAL
+          {t('manual')}
         </button>
         <button
           onClick={() => {
@@ -400,14 +402,14 @@ export default function BetControls() {
             }
             disabled:opacity-50 disabled:cursor-not-allowed`}
         >
-          AUTO
+          {t('auto')}
         </button>
       </div>
 
       {/* ── ① হেডস / টেইলস বাছাই ─────────────────────────── */}
       <div>
         <p className="text-text-muted text-xs font-mono mb-3 uppercase tracking-widest">
-          আপনার পছন্দ
+          {t('yourChoice')}
         </p>
         <div className="grid grid-cols-2 gap-3">
           {/* HEADS বাটন */}
@@ -426,7 +428,7 @@ export default function BetControls() {
             aria-pressed={currentChoice === 'heads'}
           >
             <span className="text-3xl">🪷</span>
-            <span>HEADS</span>
+            <span>{t('heads')}</span>
             {currentChoice === 'heads' && (
               <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 rounded-full bg-brand-green" />
             )}
@@ -448,7 +450,7 @@ export default function BetControls() {
             aria-pressed={currentChoice === 'tails'}
           >
             <span className="text-3xl">🐯</span>
-            <span>TAILS</span>
+            <span>{t('tails')}</span>
             {currentChoice === 'tails' && (
               <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 rounded-full bg-brand-maroon" />
             )}
@@ -460,11 +462,11 @@ export default function BetControls() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <p className="text-text-muted text-xs font-mono uppercase tracking-widest">
-            {activeTab === 'auto' ? 'বেস বেট পরিমাণ' : 'বেট পরিমাণ'}
+            {t('betAmount')}
           </p>
           {user && (
             <p className="text-text-muted text-xs font-mono">
-              ব্যালেন্স: <span className="text-brand-green">${user.balance.toFixed(2)}</span>
+              {t('balance')}: <span className="text-brand-green">${user.balance.toFixed(2)}</span>
             </p>
           )}
         </div>
@@ -481,16 +483,16 @@ export default function BetControls() {
             onChange={(e) => setBetAmount(Math.max(0.01, parseFloat(e.target.value) || 0))}
             disabled={isSpinning || isAutoPlayRunning}
             className="input-cyber pl-8 text-right text-lg font-mono disabled:opacity-50"
-            aria-label="বেট পরিমাণ"
+            aria-label={t('betAmount')}
           />
         </div>
 
         {/* +/- হেল্পার বাটন */}
         <div className="flex gap-2 mb-3">
           {[
-            { label: '½',   action: halfBet },
-            { label: '2×',  action: doubleBet },
-            { label: 'MAX', action: maxBet },
+            { label: t('presetHalf'),   action: halfBet },
+            { label: t('presetDouble'),  action: doubleBet },
+            { label: t('presetMax'), action: maxBet },
           ].map(({ label, action }) => (
             <button
               key={label}
@@ -530,7 +532,7 @@ export default function BetControls() {
       {/* ── ③ টার্গেট মাল্টিপ্লায়ার ও জয়ের সম্ভাবনা ── */}
       <div className="grid grid-cols-2 gap-3 pt-1">
         <div>
-          <label className="text-text-muted text-xs font-mono mb-2 uppercase block tracking-widest">টার্গেট গুণক</label>
+          <label className="text-text-muted text-xs font-mono mb-2 uppercase block tracking-widest">{t('multiplier')}</label>
           <div className="relative">
             <input
               type="text"
@@ -544,7 +546,7 @@ export default function BetControls() {
           </div>
         </div>
         <div>
-          <label className="text-text-muted text-xs font-mono mb-2 uppercase block tracking-widest">জয়ের সম্ভাবনা</label>
+          <label className="text-text-muted text-xs font-mono mb-2 uppercase block tracking-widest">{t('winChance')}</label>
           <div className="relative">
             <input
               type="text"
@@ -791,7 +793,7 @@ export default function BetControls() {
                     disabled={isAutoPlayRunning}
                     className="w-3.5 h-3.5 rounded border-border text-brand-green focus:ring-0 bg-void"
                   />
-                  <span className="text-[11px] text-text-secondary font-display">একক জয়ের লিমিট</span>
+                  <span className="text-[11px] text-text-secondary font-display">{t('singleWin')}</span>
                 </label>
                 {stopOnSingleWinEnabled && (
                   <div className="relative w-24 animate-lift-in">
@@ -835,27 +837,27 @@ export default function BetControls() {
         {isAutoPlayRunning ? (
           <>
             <Square size={20} fill="currentColor" strokeWidth={0} />
-            অটো-প্লে বন্ধ করুন ({betsPlayedCount}/{isInfiniteBets ? '∞' : (parseInt(totalBetsInput) || 10)})
+            {t('stopAutoplay')} ({betsPlayedCount}/{isInfiniteBets ? '∞' : (parseInt(totalBetsInput) || 10)})
           </>
         ) : isSpinning ? (
           <>
             <span className="w-5 h-5 border-2 border-text-muted border-t-transparent rounded-full animate-spin" />
-            ঘুরছে...
+            {t('spinning')}
           </>
         ) : isResult ? (
           <>
             <RotateCw size={20} strokeWidth={2.25} />
-            আবার খেলুন
+            {t('flipBtn')}
           </>
         ) : activeTab === 'auto' ? (
           <>
             <Play size={20} fill="currentColor" strokeWidth={0} />
-            অটো-প্লে শুরু করুন
+            {t('startAutoplay')}
           </>
         ) : (
           <>
             <Coins size={20} strokeWidth={2.25} />
-            FLIP
+            {t('flipBtn')}
           </>
         )}
       </button>

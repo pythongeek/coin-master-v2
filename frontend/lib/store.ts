@@ -116,6 +116,10 @@ interface GameStore {
   loadSettings: () => void;
   updateSettings: (settings: Partial<{ sound: boolean; animationSpeed: 'normal' | 'fast' }>) => void;
   toggleSettings: () => void;
+
+  // ── ভাষা (Language / i18n) ──
+  locale: string;
+  setLocale: (locale: string) => void;
 }
 
 // ── স্টোর তৈরি ─────────────────────────────────────────────────
@@ -222,6 +226,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (stored) {
           set({ settings: { ...get().settings, ...JSON.parse(stored) } });
         }
+        const storedLocale = localStorage.getItem('cf_locale');
+        if (storedLocale) {
+          set({ locale: storedLocale });
+        }
       } catch (e) {
         console.error('Failed to load settings', e);
       }
@@ -241,4 +249,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   toggleSettings: () => set((state) => ({ showSettings: !state.showSettings })),
+
+  // ── ভাষা (Language / i18n) ──
+  locale: 'en',
+  setLocale: (locale) => {
+    set({ locale });
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('cf_locale', locale);
+      } catch (e) {
+        console.error('Failed to save locale', e);
+      }
+    }
+  },
 }));
