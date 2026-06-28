@@ -51,7 +51,7 @@ const mockUsers: any[] = [
 async function mockQuery(text: string, params: any[] = []): Promise<any> {
   const normalized = text.trim().replace(/\s+/g, ' ');
   
-  if (normalized.includes('SELECT id, username, password_hash, balance, is_admin, role, two_factor_enabled FROM users WHERE username = $1')) {
+  if (normalized.includes('SELECT id, username, email, password_hash, balance, is_admin, role, two_factor_enabled FROM users WHERE username = $1')) {
     const username = params[0];
     const user = mockUsers.find(u => u.username === username && u.is_active);
     return { rows: user ? [user] : [] };

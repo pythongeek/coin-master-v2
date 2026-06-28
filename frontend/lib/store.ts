@@ -22,6 +22,7 @@ export interface User {
   isAdmin: boolean;
   walletAddress?: string;
   isFlagged?: boolean;
+  email?: string;
 }
 
 export interface BetResult {

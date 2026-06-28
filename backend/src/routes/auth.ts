@@ -133,7 +133,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     res.status(201).json({
       success: true,
       token,
-      user: { userId, username, balance: 10.00, isFlagged: shouldFlag },
+      user: { userId, username, email: email || null, balance: 10.00, isFlagged: shouldFlag },
       message: `স্বাগতম ${username}! আপনার অ্যাকাউন্টে $10.00 ওয়েলকাম বোনাস যোগ করা হয়েছে।`,
     });
   } catch (err: unknown) {
@@ -150,7 +150,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
     const { username, password } = req.body;
 
     const result = await query(
-      'SELECT id, username, password_hash, balance, is_admin, role, two_factor_enabled FROM users WHERE username = $1 AND is_active = true',
+      'SELECT id, username, email, password_hash, balance, is_admin, role, two_factor_enabled FROM users WHERE username = $1 AND is_active = true',
       [username]
     );
 
@@ -193,6 +193,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       user: {
         userId: user.id,
         username: user.username,
+        email: user.email,
         balance: parseFloat(user.balance),
         isAdmin: user.is_admin,
       },

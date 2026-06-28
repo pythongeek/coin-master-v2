@@ -46,6 +46,7 @@ export default function LoginModal({ onClose }: Props) {
       isAdmin:       (data.user.isAdmin as boolean) || false,
       walletAddress: data.user.walletAddress as string | undefined,
       isFlagged:     (data.user.isFlagged as boolean) || false,
+      email:         data.user.email as string | undefined,
     });
     localStorage.setItem('cf_user', JSON.stringify(data.user));
     onClose();

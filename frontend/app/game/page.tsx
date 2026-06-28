@@ -36,6 +36,7 @@ import ProvablyFairWidget from '@/components/game/ProvablyFair';
 import AffiliatePanel from '@/components/game/AffiliatePanel';
 import PromoWidget from '@/components/game/PromoWidget';
 import SettingsModal from '@/components/game/SettingsModal';
+import SupportChat from '@/components/game/SupportChat';
 import LoginModal from '@/components/layout/LoginModal';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
 import { shortenAddress } from '@/lib/wallet';
@@ -110,6 +111,7 @@ export default function GamePage() {
   return (
     <>
       <NotificationStack />
+      <SupportChat />
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       {showSettings && <SettingsModal />}
 
