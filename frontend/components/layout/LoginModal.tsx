@@ -10,7 +10,7 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Coins, Loader2, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
 import {
   isMetaMaskInstalled, isPhantomInstalled,
@@ -19,6 +19,7 @@ import {
 import { useGameStore } from '@/lib/store';
 import { storeToken } from '@/lib/socket';
 import { getBrowserFingerprint } from '@/utils/fingerprint';
+import { trackEvent, identifyUser } from '@/utils/analytics';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -35,6 +36,10 @@ export default function LoginModal({ onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [connectingType, setConnectingType] = useState<'metamask' | 'phantom' | null>(null);
 
+  useEffect(() => {
+    trackEvent('login_modal_open');
+  }, []);
+
   // ── সফল লগইন হ্যান্ডল করো ─────────────────────────────────────
   const handleSuccess = (data: { token: string; user: Record<string, unknown> }) => {
     storeToken(data.token);
@@ -49,6 +54,18 @@ export default function LoginModal({ onClose }: Props) {
       email:         data.user.email as string | undefined,
     });
     localStorage.setItem('cf_user', JSON.stringify(data.user));
+
+    // অ্যানালিটিক্স সিঙ্ক
+    identifyUser(data.user.userId as string, {
+      username: data.user.username as string,
+      email: data.user.email as string | undefined,
+      walletAddress: data.user.walletAddress as string | undefined,
+    });
+    trackEvent(isRegister ? 'signup_success' : 'login_success', {
+      method: data.user.walletAddress ? 'wallet' : 'email',
+      userId: data.user.userId,
+    });
+
     onClose();
   };
 
@@ -69,10 +86,16 @@ export default function LoginModal({ onClose }: Props) {
         body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
       });
       const data = await res.json();
-      if (data.success) handleSuccess(data);
-      else setError(data.error || 'কানেক্ট করতে সমস্যা হয়েছে।');
+      if (data.success) {
+        handleSuccess(data);
+      } else {
+        setError(data.error || 'কানেক্ট করতে সমস্যা হয়েছে।');
+        trackEvent('wallet_auth_failed', { wallet: 'metamask', error: data.error || 'API Error' });
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'MetaMask কানেক্ট করতে সমস্যা হয়েছে।');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg);
+      trackEvent('wallet_auth_failed', { wallet: 'metamask', error: errMsg });
     }
     setConnectingType(null);
   };
@@ -94,10 +117,16 @@ export default function LoginModal({ onClose }: Props) {
         body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
       });
       const data = await res.json();
-      if (data.success) handleSuccess(data);
-      else setError(data.error || 'কানেক্ট করতে সমস্যা হয়েছে।');
+      if (data.success) {
+        handleSuccess(data);
+      } else {
+        setError(data.error || 'কানেক্ট করতে সমস্যা হয়েছে।');
+        trackEvent('wallet_auth_failed', { wallet: 'phantom', error: data.error || 'API Error' });
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Phantom কানেক্ট করতে সমস্যা হয়েছে।');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setError(errMsg);
+      trackEvent('wallet_auth_failed', { wallet: 'phantom', error: errMsg });
     }
     setConnectingType(null);
   };
@@ -119,10 +148,16 @@ export default function LoginModal({ onClose }: Props) {
         body: JSON.stringify({ ...form, fingerprint }),
       });
       const data = await res.json();
-      if (data.success) handleSuccess(data);
-      else setError(data.error || 'কিছু একটা ভুল হয়েছে।');
-    } catch {
+      if (data.success) {
+        handleSuccess(data);
+      } else {
+        setError(data.error || 'কিছু একটা ভুল হয়েছে।');
+        trackEvent('email_auth_failed', { isRegister, error: data.error || 'API Error' });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       setError('সার্ভারে কানেক্ট করা যায়নি। ব্যাকএন্ড চালু আছে কিনা চেক করুন।');
+      trackEvent('email_auth_failed', { isRegister, error: errMsg });
     }
     setLoading(false);
   };

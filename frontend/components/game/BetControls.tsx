@@ -15,6 +15,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Lock, RotateCw, Coins, Play, Square } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { getSocket } from '@/lib/socket';
+import { trackEvent } from '@/utils/analytics';
 
 // দ্রুত বেট পরিমাণ বেছে নেওয়ার প্রিসেট
 const BET_PRESETS = [0.10, 0.50, 1.00, 5.00, 10.00, 50.00];
@@ -132,6 +133,13 @@ export default function BetControls() {
       targetMultiplier: parseFloat(multiplierInput) || 2.0,
     });
 
+    trackEvent('bet_placed', {
+      mode: 'manual',
+      choice: currentChoice,
+      amount: betAmount,
+      targetMultiplier: parseFloat(multiplierInput) || 2.0,
+    });
+
     setGameStatus('spinning');
 
     // নতুন ক্লায়েন্ট সিড তৈরি করো পরের গেমের জন্য
@@ -146,6 +154,12 @@ export default function BetControls() {
       clearTimeout(nextBetTimeoutRef.current);
       nextBetTimeoutRef.current = null;
     }
+
+    trackEvent('autoplay_stop', {
+      reason,
+      betsPlayedCount: betsPlayedRef.current,
+    });
+
     if (reason) {
       useGameStore.getState().addNotification(`অটো-প্লে বন্ধ: ${reason}`, 'info');
     }
@@ -166,6 +180,13 @@ export default function BetControls() {
       targetMultiplier: parseFloat(multiplierInput) || 2.0,
     });
 
+    trackEvent('bet_placed', {
+      mode: 'auto',
+      choice: currentChoice,
+      amount: amount,
+      targetMultiplier: parseFloat(multiplierInput) || 2.0,
+    });
+
     setGameStatus('spinning');
     setClientSeed(Math.random().toString(36).slice(2) + Date.now().toString(36));
   };
@@ -175,11 +196,18 @@ export default function BetControls() {
     if (betAmount <= 0) return;
     if (betAmount > user.balance) {
       useGameStore.getState().addNotification(`❌ ব্যালেন্স অপর্যাপ্ত!`, 'info');
+      trackEvent('autoplay_start_failed', { reason: 'insufficient_balance', betAmount });
       return;
     }
 
     const betsCount = isInfiniteBets ? Infinity : (parseInt(totalBetsInput) || 10);
     if (betsCount <= 0) return;
+
+    trackEvent('autoplay_start', {
+      betAmount,
+      targetMultiplier: parseFloat(multiplierInput) || 2.0,
+      totalBets: isInfiniteBets ? 'infinite' : betsCount,
+    });
 
     initialBalanceRef.current = user.balance;
     currentBetAmountRef.current = betAmount;

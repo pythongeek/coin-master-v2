@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react';
 import { Gift, Sparkles, AlertCircle, Loader2, CheckCircle2, Award, ArrowUpRight } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
+import { trackEvent } from '@/utils/analytics';
 
 export default function PromoWidget() {
   const { user, token, updateBalance } = useGameStore();
@@ -84,6 +85,7 @@ export default function PromoWidget() {
       if (data.success) {
         setSuccessMsg(data.message);
         setCode('');
+        trackEvent('promo_claim_success', { code, type: data.type });
         
         if (data.type === 'no_deposit') {
           updateBalance(data.newBalance);
@@ -92,10 +94,12 @@ export default function PromoWidget() {
         }
       } else {
         setError(data.error || 'প্রোমো কোড ক্লেইম ব্যর্থ হয়েছে।');
+        trackEvent('promo_claim_failed', { code, error: data.error || 'API Error' });
       }
     } catch (err) {
       console.error('Claim promo error:', err);
       setError('সার্ভার কানেকশন ব্যর্থ হয়েছে।');
+      trackEvent('promo_claim_failed', { code, error: err instanceof Error ? err.message : String(err) });
     } finally {
       setClaiming(false);
     }
