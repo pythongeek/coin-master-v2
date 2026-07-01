@@ -8,15 +8,29 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://46.62.247.167:4000
+        - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:4000
+        # Hidden admin path. Source: /root/coin-master/.admin-secret-path
+        # Run `build-with-secrets.py` (in repo root) to export it before building.
+        - ADMIN_SECRET_PATH=${ADMIN_SECRET_PATH}
+        # Gateway token. Source: /root/.admin-gateway-token
+        # Both nginx and Next must use the same value.
+        - ADMIN_GATEWAY_TOKEN=${ADMIN_GATEWAY_TOKEN}
     ports:
-      - "3000:3000"
+      - "3002:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:4000
-      - NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+      - NEXT_PUBLIC_API_URL=http://46.62.247.167:4000
+      - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:4000
+      # Runtime-only secret. The middleware reads this on every request.
+      # Must match the value in /root/.admin-gateway-token (used by the
+      # nginx vhost on :3003). Inject via the build-with-secrets.py wrapper.
+      - ADMIN_GATEWAY_TOKEN=${ADMIN_GATEWAY_TOKEN}
+    # NOTE: dev bind-mounts removed — they shadow /app/dist (backend) and
+    # /app/.next (frontend) with the host source tree, breaking `node dist/index.js`
+    # in the production image. The repo's docker-compose.yml is dev-mode by
+    # default; for prod we run without hot-reload mounts. Dev workflow:
+    # `docker compose --profile dev up`.
     depends_on:
       - backend
     networks:
@@ -33,9 +47,6 @@ services:
       - "4000:4000"
     env_file:
       - .env
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,12 +57,14 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────
-  # 🗄️ DATABASE — PostgreSQL
+  # 🗄️ DATABASE — PostgreSQL (internal-only, NOT exposed on host)
   # ─────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    ports:
-      - "5432:5432"
+    # No `ports:` — DB stays on the cryptoflip-network only.
+    # (cx23 already has host Postgres on :5432 for Plokymarket — no conflict.)
+    expose:
+      - "5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -59,6 +72,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./backend/src/db/migrations.sql:/docker-entrypoint-initdb.d/02-migrations.sql
+      - ./backend/src/db/migrations-2.3.sql:/docker-entrypoint-initdb.d/03-migrations-2.3.sql
+      - ./backend/src/db/migrations-2.4.sql:/docker-entrypoint-initdb.d/04-migrations-2.4.sql
+      - ./backend/src/db/migrations-binance-redot.sql:/docker-entrypoint-initdb.d/05-migrations-binance-redot.sql
+      # Session 1 (roadmap-2026.md): bonus + wagering + kyc_submissions
+      - ./backend/src/db/migrations-2.7-bonus-wagering.sql:/docker-entrypoint-initdb.d/06-migrations-2.7-bonus-wagering.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -72,8 +91,14 @@ services:
   # ─────────────────────────────────
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # Phase A.2: changed `ports: 6379:6379` → `expose: 6379`.
+    # `expose` makes the port reachable ONLY from other compose services
+    # on the same network. No host-level port mapping → no internet exposure.
+    # Backend (coin-master-backend-1) still reaches redis via
+    # `cryptoflip-network:6379` (the internal compose DNS name).
+    # Redis password is still enforced via `--requirepass`.
+    expose:
+      - "6379"
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
@@ -86,12 +111,15 @@ services:
       - cryptoflip-network
 
   # ─────────────────────────────────
-  # 🖥️ DB ADMIN UI — pgAdmin
+  # 🖥️ DB ADMIN UI — pgAdmin (NOT exposed on host by default)
   # ─────────────────────────────────
   pgadmin:
     image: dpage/pgadmin4:latest
-    ports:
-      - "5050:80"
+    # Disabled: pgadmin reachable only via internal network.
+    # To enable temporarily: `docker compose --profile pgadmin up -d pgadmin`
+    # and re-add the ports mapping.
+    profiles:
+      - pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}

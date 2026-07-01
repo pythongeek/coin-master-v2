@@ -10,6 +10,9 @@ import { BarChart3, Gamepad2 } from 'lucide-react';
 import StatsCards from '@/components/dashboard/StatsCards';
 import ProfitChart from '@/components/dashboard/ProfitChart';
 import BetHistory from '@/components/dashboard/BetHistory';
+import { WalletButton } from '@/components/wallet/WalletButton';
+import { WalletModal } from '@/components/wallet';
+import { getWalletBalance, WalletApiError } from '@/lib/api/wallet';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -19,6 +22,8 @@ export default function DashboardPage() {
   const [history, setHistory] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1 });
   const [loading, setLoading] = useState(true);
+  const [balanceCoins, setBalanceCoins] = useState<number>(0);
+  const [showWallet, setShowWallet] = useState(false);
 
   // Demo userId — real app এ JWT থেকে আসবে
   const userId = typeof window !== 'undefined'
@@ -55,6 +60,25 @@ export default function DashboardPage() {
 
   useEffect(() => { loadAll(); }, []);
 
+  // ── Wallet balance (silent — don't fail dashboard load if wallet unreachable)
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const bal = await getWalletBalance(token);
+        if (!cancelled) setBalanceCoins(bal.wallet.balanceCoins);
+      } catch (e) {
+        // Wallet API down or no wallet row yet — show 0 silently
+        if (!cancelled && !(e instanceof WalletApiError && e.status === 404)) {
+          // non-404 errors are real — but we don't want to fail the dashboard
+          console.warn('[dashboard] wallet balance fetch failed:', e);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
   return (
     <main className="min-h-screen p-4 md:p-6 max-w-5xl mx-auto">
       {/* হেডার */}
@@ -69,11 +93,29 @@ export default function DashboardPage() {
             <p className="text-text-muted text-xs font-mono mt-0.5">আপনার সম্পূর্ণ গেমিং পরিসংখ্যান</p>
           </div>
         </div>
-        <Link href="/game" className="btn-brand flex items-center gap-1.5 text-sm py-2 px-4">
-          <Gamepad2 size={15} />
-          গেম খেলুন
-        </Link>
+        <div className="flex items-center gap-3">
+          {token && (
+            <WalletButton
+              balance={balanceCoins}
+              onClick={() => setShowWallet(true)}
+            />
+          )}
+          <Link href="/game" className="btn-brand flex items-center gap-1.5 text-sm py-2 px-4">
+            <Gamepad2 size={15} />
+            গেম খেলুন
+          </Link>
+        </div>
       </div>
+
+      {/* Wallet modal */}
+      {showWallet && token && (
+        <WalletModal
+          open={showWallet}
+          onClose={() => setShowWallet(false)}
+          token={token}
+          onBalanceChange={(newCoins) => setBalanceCoins(newCoins)}
+        />
+      )}
 
       <div className="space-y-5">
         {/* স্ট্যাটস কার্ড */}

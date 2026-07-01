@@ -10,6 +10,7 @@
  */
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 // ── ধরনগুলো ────────────────────────────────────────────────────
 export type GameStatus = 'idle' | 'spinning' | 'result';
@@ -75,12 +76,25 @@ interface GameStore {
   gameStatus: GameStatus;
   currentChoice: FlipChoice;
   betAmount: number;
+  /**
+   * Stake-style multiplier (1.01x–1000x).
+   * Server-validated in routes/game.ts; client derives win chance + house edge from it.
+   * Higher multiplier = lower win chance, higher payout.
+   */
+  multiplier: number;
+  /**
+   * House edge as a percent (e.g. 2 means 2%). Fetched from /api/admin/config/public
+   * on mount; defaults to 2% so the UI works offline / before the fetch lands.
+   */
+  houseEdgePercent: number;
   lastResult: BetResult | null;
   betHistory: BetResult[];
 
   setGameStatus: (status: GameStatus) => void;
   setCurrentChoice: (choice: FlipChoice) => void;
   setBetAmount: (amount: number) => void;
+  setMultiplier: (multiplier: number) => void;
+  setHouseEdgePercent: (pct: number) => void;
   setLastResult: (result: BetResult) => void;
   addToBetHistory: (result: BetResult) => void;
   resetGame: () => void;
@@ -106,88 +120,113 @@ interface GameStore {
 }
 
 // ── স্টোর তৈরি ─────────────────────────────────────────────────
-export const useGameStore = create<GameStore>((set, get) => ({
+//
+// Persisted to localStorage under `cf_game_store` so that:
+//   (1) the navbar shows the logged-in user after a reload,
+//   (2) the socket reconnects with the JWT instead of guest,
+//   (3) the FLIP button stays enabled without re-login.
+//
+// Only auth fields are persisted — game state (currentChoice,
+// betAmount, gameStatus, lastResult, etc.) is intentionally NOT
+// persisted because resuming a spinning coin flip mid-animation
+// after a reload would be confusing and out-of-sync with the
+// server's lastResult.
+//
+// We keep writing the legacy `cf_token` and `cf_user` keys too
+// because admin/dashboard pages still read them directly via
+// `localStorage.getItem('cf_token')`. Duplicating the source of
+// truth for ~1 KB is cheaper than a refactor.
+export const useGameStore = create<GameStore>()(
+  persist(
+    (set, get) => ({
+      user: null,
+      token: null,
 
-  // ── অথ ──────────────────────────────────────────────────────
-  user: null,
-  token: null,
+      setUser: (user) => set({ user }),
+      setToken: (token) => set({ token }),
 
-  setUser: (user) => set({ user }),
-  setToken: (token) => set({ token }),
+      updateBalance: (balance) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, balance } : null,
+        })),
 
-  updateBalance: (balance) =>
-    set((state) => ({
-      user: state.user ? { ...state.user, balance } : null,
-    })),
+      logout: () => {
+        set({ user: null, token: null, lastResult: null });
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('cf_token');
+          localStorage.removeItem('cf_user');
+        }
+      },
 
-  logout: () => {
-    set({ user: null, token: null, lastResult: null });
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('cf_token');
-      localStorage.removeItem('cf_user');
-    }
-  },
+      gameStatus: 'idle',
+      currentChoice: 'heads',
+      betAmount: 1.00,
+      multiplier: 2.00,
+      houseEdgePercent: 2.0,
+      lastResult: null,
+      betHistory: [],
 
-  // ── গেম স্টেট ────────────────────────────────────────────────
-  gameStatus: 'idle',
-  currentChoice: 'heads',
-  betAmount: 1.00,
-  lastResult: null,
-  betHistory: [],
+      setGameStatus:   (status) => set({ gameStatus: status }),
+      setCurrentChoice: (choice) => set({ currentChoice: choice }),
+      setBetAmount:    (amount) => set({ betAmount: amount }),
+      setMultiplier:   (m) => set({ multiplier: m }),
+      setHouseEdgePercent: (pct) => set({ houseEdgePercent: pct }),
+      setLastResult:   (result) => set({ lastResult: result }),
 
-  setGameStatus:   (status) => set({ gameStatus: status }),
-  setCurrentChoice: (choice) => set({ currentChoice: choice }),
-  setBetAmount:    (amount) => set({ betAmount: amount }),
-  setLastResult:   (result) => set({ lastResult: result }),
+      addToBetHistory: (result) =>
+        set((state) => ({
+          betHistory: [result, ...state.betHistory].slice(0, 50),
+        })),
 
-  addToBetHistory: (result) =>
-    set((state) => ({
-      betHistory: [result, ...state.betHistory].slice(0, 50), // শেষ ৫০টি রাখো
-    })),
+      resetGame: () =>
+        set({ gameStatus: 'idle', lastResult: null }),
 
-  resetGame: () =>
-    set({ gameStatus: 'idle', lastResult: null }),
+      chatMessages: [],
+      onlineCount: 0,
 
-  // ── চ্যাট ──────────────────────────────────────────────────
-  chatMessages: [],
-  onlineCount: 0,
+      addChatMessage: (msg) =>
+        set((state) => ({
+          chatMessages: [...state.chatMessages, msg].slice(-100),
+        })),
 
-  addChatMessage: (msg) =>
-    set((state) => ({
-      chatMessages: [...state.chatMessages, msg].slice(-100), // শেষ ১০০টি
-    })),
+      setChatHistory: (msgs) => set({ chatMessages: msgs }),
+      setOnlineCount: (count) => set({ onlineCount: count }),
 
-  setChatHistory: (msgs) => set({ chatMessages: msgs }),
-  setOnlineCount: (count) => set({ onlineCount: count }),
+      activeRain: null,
+      hasClaimedRain: false,
 
-  // ── ক্রিপ্টো রেইন ──────────────────────────────────────────
-  activeRain: null,
-  hasClaimedRain: false,
+      setActiveRain:     (rain) => set({ activeRain: rain, hasClaimedRain: false }),
+      setHasClaimedRain: (claimed) => set({ hasClaimedRain: claimed }),
 
-  setActiveRain:     (rain) => set({ activeRain: rain, hasClaimedRain: false }),
-  setHasClaimedRain: (claimed) => set({ hasClaimedRain: claimed }),
+      updateRainClaims: (claimCount) =>
+        set((state) => ({
+          activeRain: state.activeRain
+            ? { ...state.activeRain, claimCount }
+            : null,
+        })),
 
-  updateRainClaims: (claimCount) =>
-    set((state) => ({
-      activeRain: state.activeRain
-        ? { ...state.activeRain, claimCount }
-        : null,
-    })),
+      notifications: [],
 
-  // ── নোটিফিকেশন ─────────────────────────────────────────────
-  notifications: [],
+      addNotification: (message, type) => {
+        const id = `notif_${Date.now()}`;
+        set((state) => ({
+          notifications: [...state.notifications, { id, message, type }],
+        }));
+        setTimeout(() => get().removeNotification(id), 3000);
+      },
 
-  addNotification: (message, type) => {
-    const id = `notif_${Date.now()}`;
-    set((state) => ({
-      notifications: [...state.notifications, { id, message, type }],
-    }));
-    // ৩ সেকেন্ড পর নিজে নিজে সরে যাবে
-    setTimeout(() => get().removeNotification(id), 3000);
-  },
-
-  removeNotification: (id) =>
-    set((state) => ({
-      notifications: state.notifications.filter((n) => n.id !== id),
-    })),
-}));
+      removeNotification: (id) =>
+        set((state) => ({
+          notifications: state.notifications.filter((n) => n.id !== id),
+        })),
+    }),
+    {
+      name: 'cf_game_store',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        user: state.user,
+        token: state.token,
+      }),
+    },
+  ),
+);

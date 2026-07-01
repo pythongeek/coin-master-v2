@@ -43,3 +43,26 @@ export async function query(text: string, params?: unknown[]) {
     throw error;
   }
 }
+
+// Helper: Transaction wrapper (Phase 2.3 added)
+// All queries inside the callback run in a single transaction.
+// On any error, the entire transaction rolls back.
+export async function withTransaction<T>(
+  callback: (txQuery: (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>) => Promise<T>
+): Promise<T> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(async (text, params) => {
+      const r = await client.query(text, params);
+      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
+    });
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

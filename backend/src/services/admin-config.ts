@@ -67,6 +67,34 @@ export interface GameConfig {
   maintenanceMode: boolean;
   /** বন্ধ থাকলে ইউজারদের কী বার্তা দেখাবে */
   maintenanceMessage: string;
+
+  // ── বোনাস সিস্টেম সেটিং (Session 1, roadmap-2026.md) ────────────
+  /** Wagering multiplier — bonus × N = wagering required */
+  bonusWagerMultiplier: number;
+  /** Max withdrawal = bonus × N (profit-first default) */
+  bonusMaxWithdrawalMultiplier: number;
+  /** Days until bonus expires and is forfeit */
+  bonusExpiryDays: number;
+  /** Min deposit as % of bonus before withdrawal allowed */
+  bonusMinDepositToWithdrawPct: number;
+  /** Hours after bonus grant before withdrawal allowed (cooldown) */
+  bonusCooldownHours: number;
+  /** Welcome bonus amount in coins */
+  bonusWelcomeAmount: number;
+  /** Deposit match bonus as % of deposit (0 = disabled) */
+  bonusDepositMatchPct: number;
+  /** Max deposit match bonus per deposit in coins */
+  bonusDepositMatchCap: number;
+
+  // ── উইথড্রাল সেটিং (Session 1) ────────────────────────────────
+  /** Daily max withdrawal per user in coins */
+  dailyWithdrawalLimitCoins: number;
+  /** Minimum withdrawal amount in coins */
+  withdrawalMinCoins: number;
+  /** Maximum withdrawal amount per request in coins */
+  withdrawalMaxCoins: number;
+  /** Auto-approve withdrawals below this (0 = always manual) */
+  withdrawalAutoApproveThreshold: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -101,10 +129,26 @@ export const DEFAULT_CONFIG: GameConfig = {
   // সিড রোটেশন
   seedRotationAfterGames: 100,  // ১০০ গেমের পর নতুন সিড
 
-  // মেইনটেন্যান্স
-  maintenanceMode: false,
-  maintenanceMessage: 'সাইটটি আপগ্রেডের জন্য সাময়িকভাবে বন্ধ আছে। শীঘ্রই আসছে!',
-};
+  // মেইনটেন্যান্স মোড
+    maintenanceMode: false,
+    maintenanceMessage: 'সাইটটি আপগ্রেডের জন্য সাময়িকভাবে বন্ধ আছে। শীঘ্রই আসছে!',
+
+    // বোনাস সিস্টেম ডিফল্ট (Session 1)
+    bonusWagerMultiplier: 30,           // ১০ বোনাস = ৩০০ ওয়েজারিং
+    bonusMaxWithdrawalMultiplier: 3,    // ১০ বোনাসে সর্বোচ্চ ৩০ তোলা (profit-first)
+    bonusExpiryDays: 7,                 // ৭ দিনে মেয়াদ শেষ
+    bonusMinDepositToWithdrawPct: 50,   // ৫০% মিন ডিপোজিট
+    bonusCooldownHours: 24,             // ২৪ ঘণ্টা কুলিং অফ
+    bonusWelcomeAmount: 10,             // ১০ Coin ওয়েলকাম বোনাস
+    bonusDepositMatchPct: 50,           // ৫০% ম্যাচ বোনাস
+    bonusDepositMatchCap: 100,          // ১০০ Coin ম্যাক্স ম্যাচ
+
+    // উইথড্রাল ডিফল্ট
+    dailyWithdrawalLimitCoins: 5000,
+    withdrawalMinCoins: 1,
+    withdrawalMaxCoins: 10000,
+    withdrawalAutoApproveThreshold: 0,  // 0 = always manual approval
+  };
 
 // ── কনফিগ কী → বাংলা লেবেল ম্যাপিং (UI-র জন্য) ───────────────
 export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; description: string; unit?: string; min?: number; max?: number; type: 'number' | 'boolean' | 'string'; category: string }> = {
@@ -125,6 +169,21 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   seedRotationAfterGames: { label: 'সিড রোটেশন', description: 'কত গেমের পর স্বয়ংক্রিয়ভাবে নতুন সার্ভার সিড তৈরি হবে।', unit: 'গেম', min: 10, max: 1000, type: 'number', category: 'নিরাপত্তা' },
   maintenanceMode:        { label: 'মেইনটেন্যান্স মোড', description: 'চালু করলে ইউজাররা গেম খেলতে পারবে না।', type: 'boolean', category: 'সিস্টেম' },
   maintenanceMessage:     { label: 'মেইনটেন্যান্স বার্তা', description: 'মেইনটেন্যান্স মোডে ইউজারদের কী বার্তা দেখাবে।', type: 'string', category: 'সিস্টেম' },
+
+  // Session 1: bonus + withdrawal params (admin editable)
+  bonusWagerMultiplier:         { label: 'বোনাস wager multiplier', description: 'wagering প্রয়োজন = bonus × N। বেশি = বেশি wagering।', unit: '×', min: 1, max: 100, type: 'number', category: 'বোনাস' },
+  bonusMaxWithdrawalMultiplier: { label: 'সর্বোচ্চ উইথড্র multiplier', description: 'bonus × N = max withdrawable from bonus. কম = কম ঝুঁকি।', unit: '×', min: 1, max: 20, type: 'number', category: 'বোনাস' },
+  bonusExpiryDays:              { label: 'বোনাস মেয়াদ (দিন)', description: 'এই দিনের পর bonus expire হবে।', unit: 'দিন', min: 1, max: 90, type: 'number', category: 'বোনাস' },
+  bonusMinDepositToWithdrawPct: { label: 'মিন ডিপোজিট % (of bonus)', description: 'Bonus তুলতে হলে কত % deposit লাগবে। 100 = সমপরিমাণ।', unit: '%', min: 0, max: 100, type: 'number', category: 'বোনাস' },
+  bonusCooldownHours:           { label: 'কুলিং অফ (ঘণ্টা)', description: 'Bonus পাওয়ার পর কত ঘণ্টা withdraw বন্ধ।', unit: 'ঘণ্টা', min: 0, max: 168, type: 'number', category: 'বোনাস' },
+  bonusWelcomeAmount:           { label: 'ওয়েলকাম বোনাস', description: 'নতুন ইউজার পাবে এত Coin।', unit: 'Coin', min: 0, max: 1000, type: 'number', category: 'বোনাস' },
+  bonusDepositMatchPct:         { label: 'ডিপোজিট ম্যাচ %', description: 'Deposit-এর উপর এত % bonus। 0 = disabled।', unit: '%', min: 0, max: 200, type: 'number', category: 'বোনাস' },
+  bonusDepositMatchCap:         { label: 'ডিপোজিট ম্যাচ ক্যাপ', description: 'প্রতি deposit-এ সর্বোচ্চ কত Coin bonus।', unit: 'Coin', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
+
+  dailyWithdrawalLimitCoins:    { label: 'দৈনিক উইথড্র সীমা', description: 'প্রতিদিন সর্বোচ্চ কত Coin withdraw করা যাবে।', unit: 'Coin', min: 0, max: 1000000, type: 'number', category: 'উইথড্রাল' },
+  withdrawalMinCoins:           { label: 'মিনিমাম উইথড্র', description: 'একবারে কমপক্ষে কত Coin তোলা যাবে।', unit: 'Coin', min: 0.01, max: 100, type: 'number', category: 'উইথড্রাল' },
+  withdrawalMaxCoins:           { label: 'ম্যাক্সিমাম উইথড্র', description: 'একবারে সর্বোচ্চ কত Coin তোলা যাবে।', unit: 'Coin', min: 1, max: 1000000, type: 'number', category: 'উইথড্রাল' },
+  withdrawalAutoApproveThreshold: { label: 'অটো-অনুমোদন থ্রেশহোল্ড', description: 'এই পরিমাণের কম হলে auto-approve, বেশি হলে manual। 0 = সব manual।', unit: 'Coin', min: 0, max: 1000, type: 'number', category: 'উইথড্রাল' },
 };
 
 // ═══════════════════════════════════════════════════════════════

@@ -68,3 +68,6 @@ docker-compose.override.yml
 nginx/ssl/
 *.crt
 *.csr
+
+# ── Hidden admin URL (rotate with: python3 -c "import secrets; print('sysop-' + secrets.token_urlsafe(12))" > .admin-secret-path) ──
+.admin-secret-path

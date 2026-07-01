@@ -13,15 +13,19 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
-import { query } from '../config/database';
+import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload } from '../middleware/auth';
+// Phase 2.5: per-route rate limiters applied directly to each endpoint
+import { loginLimiter, registerLimiter, passwordResetLimiter } from '../middleware/rate-limit';
+// Session 1: bonus & wagering
+import { grantWelcomeBonus } from '../services/bonus';
 
 const router = Router();
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/register — নতুন অ্যাকাউন্ট তৈরি
 // ══════════════════════════════════════════════════════════════
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerLimiter, async (req: Request, res: Response) => {
   try {
     const { username, email, password } = req.body;
 
@@ -41,21 +45,51 @@ router.post('/register', async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const userId = uuidv4();
 
-    await query(
-      `INSERT INTO users (id, username, email, password_hash, balance)
-       VALUES ($1, $2, $3, $4, 10.00)`,  // নতুন ইউজার পাবে $10 বোনাস
-      [userId, username, email || null, passwordHash]
-    );
+    // SECURITY: isAdmin must be read from DB, not hardcoded. Upstream
+    // (SEC-2) hardcoded `isAdmin: false` in the JWT, even if the user's
+    // `is_admin` column was true. Fix: insert the user, then read back
+    // the actual `is_admin` value from the DB before issuing the token.
+    //
+    // Session 1: insert user + grant welcome bonus atomically so that
+    // a) newly-registered users get isAdmin=false (DB default)
+    // b) bonus balance is correct from the very first API response
+    // c) legacy `balance` column kept in sync for downstream readers
+    //    (StatsCards.tsx still reads users.balance — denormalized sum).
+    //
+    // NOTE on withTransaction signature: the callback receives `tx` (a
+    // wrapper function: (text, params) => Promise<{rows, rowCount}>), NOT
+    // a client object. Earlier code named the param `client` and called
+    // `client.query(...)` which threw "client.query is not a function".
+    // Fixed: call `tx(...)` directly, and pass `tx` to grantWelcomeBonus.
+    const { isAdmin, bonusGranted } = await withTransaction(async (tx) => {
+      const insertResult = await tx(
+        `INSERT INTO users (id, username, email, password_hash,
+                           balance, withdrawable_balance_coins)
+         VALUES ($1, $2, $3, $4, 0.00, 0.00)
+         RETURNING is_admin`,
+        [userId, username, email || null, passwordHash],
+      );
+      const isAdminRow = (insertResult.rows[0]?.is_admin as boolean) ?? false;
+      const bonus = await grantWelcomeBonus(userId, tx);
+      return {
+        isAdmin: isAdminRow,
+        bonusGranted: bonus !== null,
+      };
+    });
 
-    const token = createToken({ userId, username, isAdmin: false });
+    // Issue JWT after the transaction commits (avoids token for failed bonus)
+    const token = createToken({ userId, username, isAdmin });
 
     res.status(201).json({
       success: true,
       token,
-      user: { userId, username, balance: 10.00 },
-      message: `স্বাগতম ${username}! আপনার অ্যাকাউন্টে $10.00 ওয়েলকাম বোনাস যোগ করা হয়েছে।`,
+      user: { userId, username, balance: 10.00, isAdmin },
+      message: bonusGranted
+        ? `স্বাগতম ${username}! আপনার অ্যাকাউন্টে ১০ Coin ওয়েলকাম বোনাস যোগ করা হয়েছে (wagering প্রয়োজন: ৩০০ Coin)।`
+        : `স্বাগতম ${username}!`,
     });
   } catch (err: unknown) {
+    console.error('[auth/register] error:', err);
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });
   }
@@ -64,7 +98,7 @@ router.post('/register', async (req: Request, res: Response) => {
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/login — লগইন
 // ══════════════════════════════════════════════════════════════
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 

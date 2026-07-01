@@ -1,0 +1,77 @@
+# ══════════════════════════════════════════════════════════════
+#  CryptoFlip Admin — Hidden URL Reverse Proxy (TEMPLATE)
+# ══════════════════════════════════════════════════════════════
+#
+#  Place this file at /etc/nginx/sites-available/cryptoflip-admin
+#  after substituting the secret path. The placeholder is below in
+#  the `location` directive only — install scripts should ONLY
+#  substitute the literal in the location line, never replace the
+#  whole comment block.
+#
+#  Install (substitutes exactly one occurrence, the one inside
+#  the location directive):
+#    sed "0,/__ADMIN_PATH__/{s|__ADMIN_PATH__|$(cat /root/coin-master/.admin-secret-path)|}" \
+#      /root/coin-master/nginx/cryptoflip-admin.conf.template \
+#      > /etc/nginx/sites-available/cryptoflip-admin
+#    ln -sf /etc/nginx/sites-available/cryptoflip-admin \
+#      /etc/nginx/sites-enabled/cryptoflip-admin
+#    nginx -t && systemctl reload nginx
+#
+#  Rotate (replaces just the location-line value, not comments):
+#    python3 -c "import secrets; print('sysop-' + secrets.token_urlsafe(12))" \
+#      > /root/coin-master/.admin-secret-path
+#    sed -i "0,/location \/__ADMIN_PATH__\//{s|location /__ADMIN_PATH__/|location /$(cat /root/coin-master/.admin-secret-path)/|}" \
+#      /etc/nginx/sites-available/cryptoflip-admin
+#    cd /root/coin-master && docker compose build frontend
+#    docker compose up -d frontend
+#    nginx -t && systemctl reload nginx
+# ══════════════════════════════════════════════════════════════
+
+server {
+    listen 3003 default_server;
+    server_name _;
+
+    server_tokens off;
+
+    # ─── Block direct /admin access (defence in depth) ───
+    location = /admin {
+        return 404;
+    }
+    location /admin/ {
+        return 404;
+    }
+
+    # ─── Health check ───
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+    }
+
+    # ─── Secret admin path (only way in) ───
+    # Substituted at install time from .admin-secret-path.
+    # The marker __ADMIN_PATH__ below is replaced with the real
+    # path on first install; the comments above intentionally do
+    # NOT contain the real path to avoid leaking it on disk.
+    location /__ADMIN_PATH__/ {
+        proxy_pass http://127.0.0.1:3002/admin/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # ─── Gateway authentication ──────────────────────
+        # Pass the secret token so Next.js middleware allows /admin.
+        # Token is in /root/.admin-gateway-token (chmod 600, not in repo).
+        # The value is substituted at install time — see the install script.
+        # Marker __GATEWAY_TOKEN__ is replaced with the real token.
+        proxy_set_header X-Admin-Gateway "__GATEWAY_TOKEN__";
+    }
+
+    # ─── Catch-all 404 ───
+    location / {
+        return 404;
+    }
+}

@@ -1,0 +1,127 @@
+.coinPerspective {
+  perspective: 1600px;
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 1 / 1;
+  position: relative;
+  margin: 0 auto;
+}
+
+/* ── Mobile: shrink the coin so the bet controls sit on the same screen ──
+   Without this, the coin fills the viewport and the FLIP button is off
+   the bottom of the screen — user has to scroll to find it after each
+   spin. 200px keeps the coin legible while leaving room for choice pills,
+   amount input, presets, multiplier, and the sticky FLIP bar below. */
+@media (max-width: 640px) {
+  .coinPerspective {
+    max-width: 200px;
+  }
+  .sparkle {
+    width: 60%;
+    height: 60%;
+  }
+}
+
+.coin3d {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15);
+}
+
+.coinSide {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.frontSide {
+  transform: translateZ(5px);
+}
+
+.backSide {
+  transform: rotateY(180deg) translateZ(5px);
+}
+
+.coinEdge {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    #78350f 0deg 2deg,
+    #fcd34d 2deg 4deg,
+    #b45309 4deg 6deg
+  );
+}
+
+/* Float animation for idle state — applied to a wrapper so it composes with the coin's rotateY spin */
+@keyframes coinFloat {
+  0%, 100% { transform: translateY(0) rotateX(4deg); }
+  50% { transform: translateY(-10px) rotateX(6deg); }
+}
+
+.floatWrapper {
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.floatWrapper.float {
+  animation: coinFloat 3.5s ease-in-out infinite;
+}
+
+/* Shine sweep overlay */
+.shineOverlay {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0.35) 50%,
+    rgba(255, 255, 255, 0) 60%
+  );
+  transform: rotate(-15deg);
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes sweep {
+  0% { transform: translate(-30%, -30%) rotate(-15deg); }
+  100% { transform: translate(30%, 30%) rotate(-15deg); }
+}
+
+.spinning .shineOverlay {
+  animation: sweep 1.5s ease-out forwards;
+}
+
+/* Sparkles */
+@keyframes twinkle {
+  0%, 100% {
+    transform: scale(0.3) rotate(0deg);
+    opacity: 0.1;
+  }
+  50% {
+    transform: scale(1.1) rotate(90deg);
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(253, 224, 71, 0.8));
+  }
+}
+
+.sparkle {
+  position: absolute;
+  pointer-events: none;
+  z-index: 30;
+  animation: twinkle 3s infinite ease-in-out;
+}
+
+.sparkle1 { top: 5%; right: 10%; animation-delay: 0s; }
+.sparkle2 { bottom: 15%; right: 5%; animation-delay: 0.8s; }
+.sparkle3 { top: 25%; left: 5%; animation-delay: 1.5s; }

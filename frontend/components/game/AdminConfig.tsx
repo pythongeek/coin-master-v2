@@ -37,10 +37,17 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
   'সিস্টেম': Settings,
 };
 
+// NOTE: The upstream repo defined this as `useState(() => ...)` at module
+// top level (line 40 of HEAD 28d3babd). That crashes `next build` static
+// export with `Cannot read properties of null (reading 'useState')` because
+// React's hooks are null during the prerender pass. Converted to a plain
+// const initializer — the value is never mutated by setConfig outside the
+// component (component state is recreated below).
+const INITIAL_CONFIG: Record<string, string | number | boolean> =
+  Object.fromEntries(Object.entries(DEFAULTS).map(([k, v]) => [k, v.value]));
+
 export default function AdminConfigPanel() {
-  const [config, setConfig] = useState(() =>
-    Object.fromEntries(Object.entries(DEFAULTS).map(([k, v]) => [k, v.value]))
-  );
+  const [config, setConfig] = useState<Record<string, string | number | boolean>>(INITIAL_CONFIG);
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState('বেটিং');
@@ -48,7 +55,7 @@ export default function AdminConfigPanel() {
   const categories = [...new Set(Object.values(DEFAULTS).map(d => d.category))];
 
   // ── একটি সেটিং আপডেট করো ──────────────────────────────────────
-  const handleUpdate = async (key: ConfigKey, value: unknown) => {
+  const handleUpdate = async (key: ConfigKey, value: string | number | boolean) => {
     setSaving(key);
     setConfig(prev => ({ ...prev, [key]: value }));
 

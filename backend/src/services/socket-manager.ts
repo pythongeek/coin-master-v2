@@ -97,7 +97,7 @@ export function setupSocketHandlers(io: SocketIOServer) {
     // ══════════════════════════════════════════════════════════
     //  গেম ইভেন্ট: বেট ধরো
     // ══════════════════════════════════════════════════════════
-    socket.on('game:bet', async (data: { choice: 'heads' | 'tails'; amount: number; clientSeed?: string }) => {
+    socket.on('game:bet', async (data: { choice: 'heads' | 'tails'; amount: number; multiplier?: number; clientSeed?: string }) => {
       if (!user) {
         return socket.emit('game:error', { message: 'বেট ধরতে লগইন করুন।' });
       }
@@ -110,10 +110,13 @@ export function setupSocketHandlers(io: SocketIOServer) {
         });
 
         // ধাপ ২: গেম ইঞ্জিনে বেট প্রসেস করো
+        // Phase 2.3: multiplier is required; default to 1.96 if missing
+        // (preserves v1 behavior for clients that don't send multiplier)
         const result = await placeBet({
           userId: user.userId,
           choice: data.choice,
           amount: data.amount,
+          multiplier: data.multiplier ?? 1.96,
           clientSeed: data.clientSeed,
         });
 

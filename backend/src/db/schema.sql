@@ -147,4 +147,8 @@ CREATE TRIGGER users_updated_at
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ✅ স্কিমা তৈরি সম্পন্ন
-RAISE NOTICE 'CryptoFlip Database Schema Successfully Created! ✅';
+-- NOTE: Upstream had a stray `RAISE NOTICE` here which is PL/pgSQL syntax
+-- and only valid inside a DO $$ ... $$ block or function body, not as
+-- top-level SQL. The schema above is already complete; this was just a
+-- confirmation print. Commented out so the init script doesn't fail.
+-- RAISE NOTICE 'CryptoFlip Database Schema Successfully Created! ✅';

@@ -26,7 +26,12 @@ export function getSocket(token?: string): Socket {
     });
 
     socket.on('connect', () => {
-      console.log('✅ Socket কানেক্টেড:', socket?.id);
+      // Read socket.id through the captured `socket` reference to avoid
+      // the outer-scope race that logged 'undefined' on first connect.
+      // (Arrow functions don't bind `this`, and reassignment of the
+      // module-level `socket` between reconnects made it transient.)
+      const id = socket?.id ?? null;
+      console.log('✅ Socket কানেক্টেড:', id);
     });
 
     socket.on('disconnect', (reason) => {
@@ -46,6 +51,19 @@ export function disconnectSocket() {
     socket.disconnect();
     socket = null;
   }
+}
+
+/**
+ * Reconnect the singleton socket with a specific token.
+ * Used after login to upgrade an existing guest socket to an authed one.
+ * Safe to call multiple times — disconnects the stale socket first.
+ */
+export function reconnectWithToken(token: string) {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  return getSocket(token);
 }
 
 // LocalStorage থেকে token পড়ো

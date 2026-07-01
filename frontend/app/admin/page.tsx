@@ -9,9 +9,13 @@
  *  ② কনফিগ         → হাউজ এজ, রেইন, স্কোয়াড সেটিং
  *  ③ ইউজার         → ইউজার ম্যানেজমেন্ট
  *  ④ সিকিউরিটি     → সিড রোটেশন
+ *
+ *  SECURITY: This page is protected client-side. Non-admin or
+ *  unauthenticated visitors are redirected to /game.
  * ═══════════════════════════════════════════════════════════════
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { BarChart3, Settings, Users, ShieldCheck, type LucideIcon } from 'lucide-react';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
@@ -29,6 +33,30 @@ type TabId = typeof TABS[number]['id'];
 
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<TabId>('live');
+  const [allowed, setAllowed] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('cf_user');
+      const user = raw ? JSON.parse(raw) : null;
+      if (!user?.isAdmin) {
+        router.replace('/game');
+        return;
+      }
+      setAllowed(true);
+    } catch {
+      router.replace('/game');
+    }
+  }, [router]);
+
+  if (!allowed) {
+    return (
+      <main className="min-h-screen flex items-center justify-center text-text-muted">
+        <p>এডমিন অ্যাক্সেস যাচাই হচ্ছে...</p>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen p-4 md:p-6 max-w-5xl mx-auto">

@@ -1,0 +1,52 @@
+#!/bin/bash
+# cloudflared-quick-tunnel.service — keep a public URL alive on cx23
+#
+# Phase A.3: This is the LIGHTWEIGHT alternative to `cloudflared service install`
+# (which requires OAuth login + named tunnel + creds file — and the OAuth
+# flow is currently broken for cloudflared 2025.11+ .deb releases).
+#
+# What this does:
+#   - On boot, launches `cloudflared tunnel --url http://localhost:3002`
+#   - The quick-tunnel URL is RANDOM each restart (e.g. https://xyz.trycloudflare.com)
+#   - The URL is logged to /var/log/cloudflared-quick.log
+#   - Restart=always so if cloudflared crashes, it comes back
+#   - User must update their DNS/Dashboard with the new URL after each host reboot
+#
+# For a STABLE URL (recommended for production):
+#   1. Create a Cloudflare account + own a domain
+#   2. Create an API token (Account: Tunnel: Edit, Zone: DNS: Edit)
+#   3. Use `cloudflared tunnel create` with the token (NOT browser OAuth)
+#   4. Update the systemd unit ExecStart to use the named tunnel
+#   5. DNS records in Cloudflare dashboard stay stable across reboots
+#
+# This unit is the SHORT-TERM solution until you set up a proper named tunnel.
+
+[Unit]
+Description=CryptoFlip public tunnel (cloudflared quick tunnel — Phase A.3)
+Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-apps
+After=network-online.target
+Wants=network-online.target
+# Wait for the docker compose stack to be reachable
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+# Launch a quick tunnel to the frontend. URL is random per restart.
+# The frontend is the entry point — /api/* on the frontend proxies to backend.
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:3002 --no-autoupdate
+# Auto-restart on crash, with a short backoff
+Restart=always
+RestartSec=10
+# Stdout/stderr to a log file (cloudflared prints the URL here)
+StandardOutput=append:/var/log/cloudflared-quick.log
+StandardError=append:/var/log/cloudflared-quick.log
+# Don't let the service live forever — it should crash and be restarted
+TimeoutStopSec=10
+# Hardening: only root can read the log
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

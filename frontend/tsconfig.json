@@ -19,7 +19,9 @@
       "@/*": ["./*"],
       "@/components/*": ["./components/*"],
       "@/lib/*": ["./lib/*"],
-      "@/app/*": ["./app/*"]
+      "@/app/*": ["./app/*"],
+      "@/design-system": ["./design-system"],
+      "@/design-system/*": ["./design-system/*"]
     },
     "target": "ES2017"
   },

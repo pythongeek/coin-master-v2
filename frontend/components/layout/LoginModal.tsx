@@ -17,7 +17,7 @@ import {
   connectMetaMask, connectPhantom,
 } from '@/lib/wallet';
 import { useGameStore } from '@/lib/store';
-import { storeToken } from '@/lib/socket';
+import { storeToken, reconnectWithToken } from '@/lib/socket';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -46,6 +46,10 @@ export default function LoginModal({ onClose }: Props) {
       walletAddress: data.user.walletAddress as string | undefined,
     });
     localStorage.setItem('cf_user', JSON.stringify(data.user));
+    // Upgrade the (probably) guest-mode socket to authed so the
+    // very next bet works without a page reload. Without this,
+    // the user has to reload after login before FLIP becomes usable.
+    reconnectWithToken(data.token);
     onClose();
   };
 

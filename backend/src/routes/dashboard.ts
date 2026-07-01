@@ -26,6 +26,12 @@ const router = Router();
 router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    const self = (req as Request & { user: AuthPayload }).user;
+    // C1 FIX: prevent any logged-in user from reading any other
+    // user's stats (IDOR). Owner OR admin only.
+    if (self.userId !== userId && !self.isAdmin) {
+      return res.status(403).json({ success: false, error: 'অন্যের পরিসংখ্যান দেখার অনুমতি নেই।' });
+    }
 
     // মোট বেট, জয়, হার, মোট বাজি, নেট P&L
     const statsResult = await query(`
@@ -79,6 +85,11 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
 router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    const self = (req as Request & { user: AuthPayload }).user;
+    // C1 FIX: same ownership guard.
+    if (self.userId !== userId && !self.isAdmin) {
+      return res.status(403).json({ success: false, error: 'অন্যের চার্ট দেখার অনুমতি নেই।' });
+    }
     const days = parseInt(req.query.days as string) || 30;
 
     const result = await query(`
@@ -124,6 +135,11 @@ router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response)
 router.get('/history/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    const self = (req as Request & { user: AuthPayload }).user;
+    // C1 FIX: ownership guard — same pattern as stats/chart.
+    if (self.userId !== userId && !self.isAdmin) {
+      return res.status(403).json({ success: false, error: 'অন্যের বেট ইতিহাস দেখার অনুমতি নেই।' });
+    }
     const page  = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
     const offset = (page - 1) * limit;

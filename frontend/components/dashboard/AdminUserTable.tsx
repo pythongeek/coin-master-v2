@@ -38,9 +38,10 @@ const DEMO_USERS: UserRow[] = [
 ];
 
 export default function AdminUserTable() {
-  const [users, setUsers]     = useState<UserRow[]>(DEMO_USERS);
+  const [users, setUsers]     = useState<UserRow[]>([]);
   const [search, setSearch]   = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBalance, setEditBalance] = useState('');
 
@@ -48,14 +49,19 @@ export default function AdminUserTable() {
 
   const fetchUsers = useCallback(async (q = '') => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await fetch(`${API}/api/dashboard/admin/users?search=${encodeURIComponent(q)}`, {
+      const res = await fetch(`${API}/api/admin/users?search=${encodeURIComponent(q)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
-      if (data.success && data.data.length) setUsers(data.data);
-    } catch {
-      // ব্যাকএন্ড না থাকলে ডেমো ডেটাই থাকবে
+      if (data.success) {
+        setUsers(data.data || []);
+      } else {
+        setError(data.error || 'ইউজার লোড করতে ব্যর্থ');
+      }
+    } catch (e) {
+      setError('ব্যাকএন্ডের সাথে সংযোগ স্থাপন করা যায়নি');
     }
     setLoading(false);
   }, [token]);
@@ -71,7 +77,7 @@ export default function AdminUserTable() {
     setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: newStatus } : u));
 
     try {
-      await fetch(`${API}/api/dashboard/admin/users/${user.id}`, {
+      await fetch(`${API}/api/admin/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ isActive: newStatus }),
@@ -88,7 +94,7 @@ export default function AdminUserTable() {
     setEditingId(null);
 
     try {
-      await fetch(`${API}/api/dashboard/admin/users/${userId}`, {
+      await fetch(`${API}/api/admin/users/${userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ balance: newBalance }),
@@ -126,6 +132,8 @@ export default function AdminUserTable() {
           <tbody>
             {loading ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">লোড হচ্ছে...</td></tr>
+            ) : error ? (
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-brand-red">{error}</td></tr>
             ) : users.length === 0 ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">কোনো ইউজার পাওয়া যায়নি।</td></tr>
             ) : (

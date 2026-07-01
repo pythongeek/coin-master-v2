@@ -7,42 +7,88 @@
  *  Provably Fair সিস্টেমের গোপন সিড নিয়মিত পরিবর্তন করা
  *  নিরাপত্তার জন্য গুরুত্বপূর্ণ। এডমিন এখান থেকে ম্যানুয়ালি
  *  রোটেট করতে পারবে অথবা স্বয়ংক্রিয় রোটেশন দেখতে পারবে।
+ *
+ *  H4 FIX (frontend): rotating the seed invalidates every existing
+ *  Provably Fair verification in flight. That's the highest-impact
+ *  admin action — we now require the admin to re-enter their password
+ *  in a confirmation modal before the request goes out. The backend
+ *  (admin.ts seed/rotate handler) independently verifies the password
+ *  via bcrypt; the UI re-prompt is the user-facing half of the
+ *  step-up auth pattern.
  * ═══════════════════════════════════════════════════════════════
  */
 
-import { useState } from 'react';
-import { KeyRound, RotateCw, CheckCircle2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { KeyRound, RotateCw, CheckCircle2, Lock, X, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 export default function SeedRotationPanel() {
-  const [rotating, setRotating]   = useState(false);
-  const [lastResult, setLastResult] = useState<{ hash: string; time: string } | null>(null);
+  const [rotating, setRotating]       = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [password, setPassword]       = useState('');
+  const [pwError, setPwError]         = useState<string | null>(null);
+  const [lastResult, setLastResult]   = useState<{ hash: string; time: string } | null>(null);
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
-  const rotateSeed = async () => {
+  // Reset the password field whenever the modal opens/closes so a stale
+  // value doesn't linger between attempts.
+  useEffect(() => {
+    if (!confirmOpen) {
+      setPassword('');
+      setPwError(null);
+    }
+  }, [confirmOpen]);
+
+  const openConfirm = () => {
+    setPwError(null);
+    setConfirmOpen(true);
+  };
+  const closeConfirm = () => setConfirmOpen(false);
+
+  const submitRotate = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!password) {
+      setPwError('পাসওয়ার্ড দিন।');
+      return;
+    }
     setRotating(true);
+    setPwError(null);
     try {
-      const res = await fetch(`${API}/api/dashboard/admin/seed/rotate`, {
+      const res = await fetch(`${API}/api/admin/seed/rotate`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ password }),
       });
       const data = await res.json();
+
+      if (res.status === 401) {
+        setPwError('পাসওয়ার্ড ভুল।');
+        // Don't close the modal — let the admin retry.
+        return;
+      }
+      if (res.status === 429) {
+        setPwError('অনেক চেষ্টা। ৫ মিনিট পরে আবার চেষ্টা করুন।');
+        return;
+      }
       if (data.success) {
         setLastResult({
-          hash: data.data.newSeedHash,
-          time: new Date(data.data.rotatedAt).toLocaleString('bn-BD'),
+          hash: data.seedHash || '',
+          time: new Date().toLocaleString('bn-BD'),
         });
+        setConfirmOpen(false);
+      } else {
+        setPwError(data.error || 'রোটেশন ব্যর্থ।');
       }
     } catch {
-      // ডেমো মোড — সিমুলেট করো
-      const fakeHash = Array.from({ length: 64 }, () =>
-        '0123456789abcdef'[Math.floor(Math.random() * 16)]
-      ).join('');
-      setLastResult({ hash: fakeHash, time: new Date().toLocaleString('bn-BD') });
+      setPwError('সার্ভারে কানেক্ট করা যায়নি।');
+    } finally {
+      setRotating(false);
     }
-    setRotating(false);
   };
 
   return (
@@ -56,10 +102,14 @@ export default function SeedRotationPanel() {
         সার্ভার সিড নিয়মিত পরিবর্তন করলে সিস্টেম আরো নিরাপদ থাকে।
         ডিফল্টে প্রতি <span className="text-brand-gold">১০০ গেমের</span> পর স্বয়ংক্রিয় রোটেশন হয়।
         জরুরি প্রয়োজনে এখনই ম্যানুয়ালি রোটেট করতে পারেন।
+        <br />
+        <span className="text-text-muted text-[11px]">
+          ⚠️ রোটেশনের পরে সব চলমান Provably Fair ভেরিফিকেশন বাতিল হবে — সিড ঘোষণার আগে চলমান বেটগুলো সম্পন্ন হবে।
+        </span>
       </p>
 
       <button
-        onClick={rotateSeed}
+        onClick={openConfirm}
         disabled={rotating}
         className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border border-brand-red/40 text-brand-red font-display
                    font-semibold text-sm hover:bg-brand-red/10 transition-all duration-150
@@ -89,6 +139,82 @@ export default function SeedRotationPanel() {
       <p className="text-text-muted text-[10px] font-mono mt-1">
         এই মান কন্ট্রোল প্যানেলের "নিরাপত্তা" ট্যাব থেকে পরিবর্তন করুন।
       </p>
+
+      {/* ── H4: password confirmation modal (step-up auth) ───────── */}
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-void/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={closeConfirm}
+        >
+          <div
+            className="glass-card w-full max-w-sm p-6 relative animate-float-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={closeConfirm}
+              className="absolute top-4 right-4 text-text-muted hover:text-text-primary"
+              aria-label="বন্ধ করুন"
+            >
+              <X size={18} />
+            </button>
+
+            <div className="text-center mb-5">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-brand-red/10 text-brand-red mb-3">
+                <Lock size={22} />
+              </div>
+              <h2 className="heading-display text-base text-brand">সিড রোটেশন নিশ্চিত করুন</h2>
+              <p className="text-text-muted text-xs font-mono mt-1">
+                আপনার এডমিন পাসওয়ার্ড দিয়ে নিশ্চিত করুন
+              </p>
+            </div>
+
+            <form onSubmit={submitRotate}>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="এডমিন পাসওয়ার্ড"
+                autoFocus
+                disabled={rotating}
+                className="input-cyber w-full"
+                aria-label="এডমিন পাসওয়ার্ড"
+              />
+
+              {pwError && (
+                <div className="mt-3 px-3 py-2 rounded-lg bg-brand-red/10 border border-brand-red/30 text-brand-red text-xs font-mono flex items-start gap-2">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                  <span>{pwError}</span>
+                </div>
+              )}
+
+              <div className="flex gap-2 mt-4">
+                <button
+                  type="button"
+                  onClick={closeConfirm}
+                  disabled={rotating}
+                  className="flex-1 py-2.5 rounded-lg border border-border text-text-muted text-sm font-mono hover:border-text-secondary disabled:opacity-50"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="submit"
+                  disabled={rotating || !password}
+                  className="flex-1 py-2.5 rounded-lg bg-brand-red text-void font-display font-semibold text-sm hover:bg-brand-red-dim disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  <RotateCw size={14} className={rotating ? 'animate-spin' : ''} />
+                  {rotating ? 'রোটেট হচ্ছে...' : 'নিশ্চিত ও রোটেট'}
+                </button>
+              </div>
+
+              <p className="mt-4 text-text-muted text-[10px] font-mono text-center">
+                এই অ্যাকশন সব চলমান Provably Fair ভেরিফিকেশন বাতিল করবে।
+                <br />
+                ভুল পাসওয়ার্ড fraud_signals-এ লগ হবে।
+              </p>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
