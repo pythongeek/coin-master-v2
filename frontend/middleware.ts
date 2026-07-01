@@ -40,12 +40,30 @@ import { NextRequest, NextResponse } from 'next/server';
 const GATEWAY_TOKEN = (process.env.ADMIN_GATEWAY_TOKEN || '').trim();
 const GATEWAY_HEADER = 'x-admin-gateway';
 
+// The secret path is read at build time. Middleware runs BEFORE
+// the rewrite (Next.js docs: "middleware runs at the request layer
+// and rewrites happen in the routing layer"). So we have to check
+// BOTH the original secret path AND the rewritten /admin path.
+const SECRET_PATH = (process.env.ADMIN_SECRET_PATH || '').trim();
+const SECRET_NORMALIZED = SECRET_PATH.startsWith('/') ? SECRET_PATH : `/${SECRET_PATH}`;
+
+function isAdminPath(pathname: string): boolean {
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return true;
+  // Also check the secret path (the request comes in as the
+  // secret path; the rewrite to /admin happens after middleware).
+  if (SECRET_NORMALIZED && SECRET_NORMALIZED !== '/admin') {
+    if (pathname === SECRET_NORMALIZED || pathname.startsWith(`${SECRET_NORMALIZED}/`)) return true;
+  }
+  return false;
+}
+
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Allow /admin ONLY if the gateway header carries the correct token.
-  // Without the header → rewrite to /404. With the wrong token → also 404.
-  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+  // Allow admin paths ONLY if the gateway header carries the
+  // correct token. Without the header → rewrite to /404.
+  // With the wrong token → also 404.
+  if (isAdminPath(pathname)) {
     const provided = req.headers.get(GATEWAY_HEADER) || '';
     if (!GATEWAY_TOKEN || provided !== GATEWAY_TOKEN) {
       return NextResponse.rewrite(new URL('/404', req.url));

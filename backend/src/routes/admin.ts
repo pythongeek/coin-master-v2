@@ -18,6 +18,7 @@ import { query } from '../config/database';
 import { validateBody } from '../middleware/validation';
 import { adminLimiter } from '../middleware/rate-limiter';
 import { authMiddleware, AuthPayload, roleMiddleware } from '../middleware/auth';
+import { reconcilePendingPayments } from '../services/reconciliation';
 import { adminSettingsSchema } from '../schemas';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
 
@@ -330,3 +331,14 @@ router.post('/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), asy
 });
 
 export default router;
+
+// Phase B.2: Manual reconciliation trigger (admin-only, for stuck pending orders)
+router.post('/payment/reconcile', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (_req: Request, res: Response) => {
+  try {
+    const result = await reconcilePendingPayments();
+    res.json({ success: true, result });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});

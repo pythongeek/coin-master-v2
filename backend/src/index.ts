@@ -13,6 +13,7 @@ import dotenv from 'dotenv';
 import { connectDB } from './config/database';
 import { redis } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
+import { startReconciliationLoop } from './services/reconciliation';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
@@ -69,6 +70,12 @@ app.use('/api/wallet', affiliateRoutes);
 app.use('/api/wallet', promoRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/game/leaderboards', leaderboardsRoutes);
+// payment.ts routes are mounted at /api/payment/* (the file's own
+// comment in the header says "/api/wallet/payment/*" but the file's
+// internal paths are '/create', '/orders', '/health' which only
+// resolve to the right URLs when mounted at /api/payment).
+import paymentRoutes from './routes/payment';
+app.use('/api/payment', paymentRoutes);
 
 
 app.get('/health', (_req, res) => {
@@ -89,6 +96,7 @@ const PORT = process.env.BACKEND_PORT || 4000;
 async function start() {
   await connectDB();
   void redis;  // redis কানেক্ট হয় import এর সময়
+  startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
   
   // Start periodic S3/local audit backup (every 1 hour)
   startAuditBackupWorker(3600000);

@@ -51,7 +51,7 @@ export default function AdminUserTable() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/admin/users?search=${encodeURIComponent(q)}`, {
+      const res = await fetch(`${API}/api/dashboard/admin/users?search=${encodeURIComponent(q)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -77,7 +77,7 @@ export default function AdminUserTable() {
     setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: newStatus } : u));
 
     try {
-      await fetch(`${API}/api/admin/users/${user.id}`, {
+      await fetch(`${API}/api/dashboard/admin/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ isActive: newStatus }),
@@ -94,7 +94,7 @@ export default function AdminUserTable() {
     setEditingId(null);
 
     try {
-      await fetch(`${API}/api/admin/users/${userId}`, {
+      await fetch(`${API}/api/dashboard/admin/users/${userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ balance: newBalance }),

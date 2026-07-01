@@ -39,18 +39,21 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   }
 
   // 2. Fetch expected user balance components (user_id = $1)
-  // Deposits completed
-  if (normalized.includes("SUM(amount)") && normalized.includes("user_id = $1") && normalized.includes("type = 'deposit'") && normalized.includes("status = 'completed'")) {
+  // The merged reconcile was patched to also count 'bonus' rows
+  // as deposits and accept both 'completed' (merged vocab) and
+  // 'confirmed' (pre-merge vocab) as a settled status. The mock
+  // patterns below mirror that expanded query.
+  if (normalized.includes("SUM(amount)") && normalized.includes("user_id = $1") && normalized.includes("type IN ('deposit', 'bonus')") && normalized.includes("status IN ('completed', 'confirmed')")) {
     const userId = params[0];
-    const txs = mockTransactions.filter(t => t.user_id === userId && t.type === 'deposit' && t.status === 'completed');
+    const txs = mockTransactions.filter(t => t.user_id === userId && (t.type === 'deposit' || t.type === 'bonus') && (t.status === 'completed' || t.status === 'confirmed'));
     const total = txs.reduce((acc, t) => acc + Number(t.amount), 0);
     return { rows: [{ total }] };
   }
 
-  // Withdrawals pending/confirming/completed/failed
-  if (normalized.includes("SUM(amount)") && normalized.includes("user_id = $1") && normalized.includes("type = 'withdrawal'") && normalized.includes("'pending', 'confirming', 'completed', 'failed'")) {
+  // Withdrawals (includes the merged 'confirming' and pre-merge 'cancelled' states)
+  if (normalized.includes("SUM(amount)") && normalized.includes("user_id = $1") && normalized.includes("type = 'withdrawal'") && normalized.includes("'pending', 'confirming', 'completed', 'confirmed', 'failed', 'cancelled'")) {
     const userId = params[0];
-    const txs = mockTransactions.filter(t => t.user_id === userId && t.type === 'withdrawal' && ['pending', 'confirming', 'completed', 'failed'].includes(t.status));
+    const txs = mockTransactions.filter(t => t.user_id === userId && t.type === 'withdrawal' && ['pending', 'confirming', 'completed', 'confirmed', 'failed', 'cancelled'].includes(t.status));
     const total = txs.reduce((acc, t) => acc + Number(t.amount), 0);
     return { rows: [{ total }] };
   }
@@ -111,23 +114,26 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   }
 
   // Wallet deposits (wallet_id = $1)
-  if (normalized.includes("SUM(amount)") && normalized.includes("wallet_id = $1") && normalized.includes("type = 'deposit'")) {
+  // Includes the merged 'bonus' + 'confirmed' status extension.
+  if (normalized.includes("SUM(amount)") && normalized.includes("wallet_id = $1") && normalized.includes("type IN ('deposit', 'bonus')") && normalized.includes("status IN ('completed', 'confirmed')")) {
     const walletId = params[0];
-    const txs = mockTransactions.filter(t => t.wallet_id === walletId && t.type === 'deposit' && t.status === 'completed');
+    const txs = mockTransactions.filter(t => t.wallet_id === walletId && (t.type === 'deposit' || t.type === 'bonus') && (t.status === 'completed' || t.status === 'confirmed'));
     const total = txs.reduce((acc, t) => acc + Number(t.amount), 0);
     return { rows: [{ total }] };
   }
 
-  // Wallet withdrawals (all, wallet_id = $1)
-  if (normalized.includes("SUM(amount)") && normalized.includes("wallet_id = $1") && normalized.includes("type = 'withdrawal'") && normalized.includes("'pending', 'confirming', 'completed', 'failed'")) {
+  // Wallet withdrawals (all, wallet_id = $1) — also extended
+  if (normalized.includes("SUM(amount)") && normalized.includes("wallet_id = $1") && normalized.includes("type = 'withdrawal'") && normalized.includes("'pending', 'confirming', 'completed', 'confirmed', 'failed', 'cancelled'")) {
     const walletId = params[0];
-    const txs = mockTransactions.filter(t => t.wallet_id === walletId && t.type === 'withdrawal' && ['pending', 'confirming', 'completed', 'failed'].includes(t.status));
+    const txs = mockTransactions.filter(t => t.wallet_id === walletId && t.type === 'withdrawal' && ['pending', 'confirming', 'completed', 'confirmed', 'failed', 'cancelled'].includes(t.status));
     const total = txs.reduce((acc, t) => acc + Number(t.amount), 0);
     return { rows: [{ total }] };
   }
 
   // Wallet withdrawals (locked only: pending/confirming/failed, wallet_id = $1)
-  if (normalized.includes("SUM(amount)") && normalized.includes("wallet_id = $1") && normalized.includes("type = 'withdrawal'") && normalized.includes("'pending', 'confirming', 'failed'")) {
+  // NOTE: settled states ('completed', 'confirmed') are NOT locked —
+  // they're already debited from the wallet.
+  if (normalized.includes("SUM(amount)") && normalized.includes("wallet_id = $1") && normalized.includes("type = 'withdrawal'") && normalized.includes("'pending', 'confirming', 'failed'") && !normalized.includes("'confirmed'")) {
     const walletId = params[0];
     const txs = mockTransactions.filter(t => t.wallet_id === walletId && t.type === 'withdrawal' && ['pending', 'confirming', 'failed'].includes(t.status));
     const total = txs.reduce((acc, t) => acc + Number(t.amount), 0);

@@ -41,6 +41,11 @@ const nextConfig = {
     const normalized = secret.startsWith('/') ? secret : `/${secret}`;
     return [
       { source: `${normalized}/:path*`, destination: '/admin/:path*' },
+      // The /api/* catch-all proxy lives at
+      // app/api/[...path]/route.ts. We don't add a rewrites()
+      // entry here because the proxy needs to be a real
+      // server-side route (rewrites with external destinations
+      // don't work reliably in Next.js dev mode).
     ];
   },
 

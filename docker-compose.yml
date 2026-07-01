@@ -10,10 +10,26 @@ services:
       dockerfile: Dockerfile
       target: development
     ports:
-      - "3000:3000"
+      # cx23 already uses port 3000 (Plokymarket nginx), 3003 (admin
+      # vhost). CryptoFlip frontend exposed on 3002.
+      - "3002:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:4000
       - NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
+      # INTERNAL_API_URL is the docker-network hostname the
+      # /api/[...path] catch-all proxy uses to reach the backend
+      # from inside the frontend container. NEXT_PUBLIC_API_URL
+      # stays as localhost:4000 because that's what the browser
+      # bundle uses (the dev works off cx23 over SSH tunnel).
+      - INTERNAL_API_URL=http://backend:4000
+      # Admin path + gateway token. These are passed at container
+      # creation (see compose-with-secrets.py wrapper) so the
+      # middleware can validate the X-Admin-Gateway header and
+      # next.config.js can mount the secret rewrite. Both are
+      # read from /root/.admin-gateway-token and /root/coin-master/
+      # .admin-secret-path (chmod 600).
+      - ADMIN_SECRET_PATH=${ADMIN_SECRET_PATH}
+      - ADMIN_GATEWAY_TOKEN=${ADMIN_GATEWAY_TOKEN}
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -38,6 +54,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - REDIS_HOST=redis
+      # CSRF middleware uses NEXT_PUBLIC_APP_URL as the allowed Origin.
+      # Must match the actual frontend URL (host port 3002 on cx23).
+      - NEXT_PUBLIC_APP_URL=http://localhost:3002
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -55,8 +74,7 @@ services:
   # ─────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    ports:
-      - "5432:5432"
+    # ports: removed — host postgres uses 5432 (Plokymarket); no host port mapping needed
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

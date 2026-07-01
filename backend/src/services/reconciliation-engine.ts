@@ -53,17 +53,40 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
     const userRow = userRes.rows[0];
     const actualUserBalance = parseFloat(userRow.balance);
 
-    // 2. Fetch expected user balance components
-    // Deposits completed
+    // 2. Fetch expected user balance components.
+    //
+    // The merged schema uses status = 'completed' for finished
+    // transactions, but the live DB uses 'confirmed' (the pre-merge
+    // schema's vocabulary). Including both keeps the reconcile in
+    // sync with either data set — see the related fix in
+    // `auth.ts` register (writes a 'bonus' tx with status='confirmed'
+    // for the welcome bonus) and the constraint update that
+    // allowed both values in `transactions_status_check`.
+    //
+    // The merged code's reconcileUser originally only counted
+    // `deposits`, missing the welcome `bonus` transactions written
+    // by the register flow. Without the bonus being part of the
+    // expected balance, every fresh user with a $10 welcome bonus
+    // would be flagged as compromised (actual=10, expected=0) and
+    // frozen on their first bet. We add bonus to the sum here so
+    // the welcome credit is part of the user's legitimate balance.
     const depRes = await client.query(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE user_id = $1 AND type = 'deposit' AND status = 'completed'",
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM transactions
+       WHERE user_id = $1
+         AND type IN ('deposit', 'bonus')
+         AND status IN ('completed', 'confirmed')`,
       [userId]
     );
     const deposits = parseFloat(depRes.rows[0].total);
 
     // Withdrawals pending/confirming/completed/failed
     const wdRes = await client.query(
-      "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE user_id = $1 AND type = 'withdrawal' AND status IN ('pending', 'confirming', 'completed', 'failed')",
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM transactions
+       WHERE user_id = $1
+         AND type = 'withdrawal'
+         AND status IN ('pending', 'confirming', 'completed', 'confirmed', 'failed', 'cancelled')`,
       [userId]
     );
     const withdrawals = parseFloat(wdRes.rows[0].total);
@@ -133,14 +156,27 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
       const actualWalletLockedBalance = parseFloat(wallet.locked_balance);
 
       // Fetch expected wallet balance components
+      // Per-wallet expected deposits. The merged code's wallet-level
+      // reconcile has the same status filter issue as the user-level
+      // reconcile above — it uses 'completed' (merged vocab) but the
+      // live DB uses 'confirmed'. Including both keeps the wallet
+      // reconcile correct regardless of which generator wrote the row.
       const wDepRes = await client.query(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE wallet_id = $1 AND type = 'deposit' AND status = 'completed'",
+        `SELECT COALESCE(SUM(amount), 0) as total
+         FROM transactions
+         WHERE wallet_id = $1
+           AND type IN ('deposit', 'bonus')
+           AND status IN ('completed', 'confirmed')`,
         [walletId]
       );
       const walletDeposits = parseFloat(wDepRes.rows[0].total);
 
       const wWdRes = await client.query(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE wallet_id = $1 AND type = 'withdrawal' AND status IN ('pending', 'confirming', 'completed', 'failed')",
+        `SELECT COALESCE(SUM(amount), 0) as total
+         FROM transactions
+         WHERE wallet_id = $1
+           AND type = 'withdrawal'
+           AND status IN ('pending', 'confirming', 'completed', 'confirmed', 'failed', 'cancelled')`,
         [walletId]
       );
       const walletWithdrawals = parseFloat(wWdRes.rows[0].total);
@@ -148,9 +184,19 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
       const expectedWalletBalance = walletDeposits - walletWithdrawals;
       const balanceMismatch = Math.abs(expectedWalletBalance - actualWalletBalance);
 
-      // Fetch expected locked balance (withdrawals pending/confirming/failed)
+      // Fetch expected locked balance. Withdrawals are "locked"
+      // when they're in-flight (pending/confirming) or failed
+      // (revert possible). Settled states (completed/confirmed)
+      // are NOT locked. The original merged code listed
+      // 'pending, confirming, failed' here; we kept that list
+      // and avoided adding 'completed/confirmed' (which would
+      // be wrong — those are settled withdrawals, not locked).
       const wLockedRes = await client.query(
-        "SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE wallet_id = $1 AND type = 'withdrawal' AND status IN ('pending', 'confirming', 'failed')",
+        `SELECT COALESCE(SUM(amount), 0) as total
+         FROM transactions
+         WHERE wallet_id = $1
+           AND type = 'withdrawal'
+           AND status IN ('pending', 'confirming', 'failed')`,
         [walletId]
       );
       const expectedWalletLockedBalance = parseFloat(wLockedRes.rows[0].total);

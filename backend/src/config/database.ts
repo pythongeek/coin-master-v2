@@ -35,14 +35,20 @@ export async function connectDB(): Promise<void> {
     // Ensure transactions table constraint includes affiliate_reward and jackpot
     const txTableCheck = await client.query(`
       SELECT EXISTS (
-        SELECT FROM information_schema.tables 
+        SELECT FROM information_schema.tables
         WHERE table_name = 'transactions'
       );
     `);
     if (txTableCheck.rows[0].exists) {
+      // NOTE: 'payout' is kept for backwards compatibility with the
+      // pre-merge local schema. The merged schema uses 'win' for the
+      // same concept going forward, but the live DB has 121 historical
+      // rows with type='payout' that we cannot drop or rewrite without
+      // losing the bet-history. Both names are valid; the frontend
+      // treats them identically.
       await client.query(`
         ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_type_check;
-        ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK (type IN ('deposit', 'withdrawal', 'bet', 'win', 'rakeback', 'rain', 'bonus', 'fee', 'affiliate_reward', 'jackpot'));
+        ALTER TABLE transactions ADD CONSTRAINT transactions_type_check CHECK (type IN ('deposit', 'withdrawal', 'bet', 'win', 'payout', 'rakeback', 'rain', 'bonus', 'fee', 'affiliate_reward', 'jackpot'));
       `);
     }
 
@@ -259,10 +265,18 @@ export async function connectDB(): Promise<void> {
 }
 
 // Helper: Query চালানোর জন্য
-export async function query(text: string, params?: unknown[]) {
+// Optional generic lets callers type the returned rows; defaults to
+// the pg driver's QueryResult<any>. Many call sites use the generic
+// to get typed `rows[0].field` access without casting. The
+// `extends QueryResultRow` constraint is required by pg@8.x types.
+// We use a Record<string, any> default that satisfies the constraint
+// but is permissive enough to be useful as "no type info".
+import type { QueryResultRow } from 'pg';
+type DefaultRow = Record<string, any>;
+export async function query<T extends QueryResultRow = DefaultRow>(text: string, params?: unknown[]) {
   const start = Date.now();
   try {
-    const result = await db.query(text, params);
+    const result = await db.query<T>(text, params);
     const duration = Date.now() - start;
 
     if (process.env.NODE_ENV === 'development') {
@@ -273,6 +287,38 @@ export async function query(text: string, params?: unknown[]) {
   } catch (error) {
     console.error('❌ Database query error:', error);
     throw error;
+  }
+}
+
+/**
+ * Run a callback inside a database transaction. The callback receives
+ * a `txQuery` function that runs queries on the same connection (and
+ * therefore the same transaction). On any throw, the transaction is
+ * rolled back. Used by services that need atomic multi-step writes
+ * (payments, bonus calculations, wallet operations).
+ *
+ * The `txQuery` parameter intentionally has a simple `(text, params)`
+ * signature, NOT the full `query<T>` type — that avoids the
+ * `pg.QueryResultRow` constraint and keeps the callback ergonomic.
+ * Callers needing typed rows can cast inside the callback.
+ */
+export async function withTransaction<T>(
+  callback: (txQuery: (text: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number }>) => Promise<T>
+): Promise<T> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(async (text, params) => {
+      const r = await client.query(text, params);
+      return { rows: r.rows, rowCount: r.rowCount ?? 0 };
+    });
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 }
 

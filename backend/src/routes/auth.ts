@@ -111,6 +111,38 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       [userId, username, email || null, passwordHash, referredById, userReferralCode, fingerprint || null, ipAddress, shouldFlag]
     );
 
+    // Record the $10 welcome bonus as a 'bonus' transaction so the
+    // reconciliation engine has a ledger entry to back the credit.
+    // Without this row, reconcileUser() computes
+    //   expected = (deposits - withdrawals + wins) = 0
+    //   actual   = 10
+    // and flags the brand-new account as compromised
+    // (is_active = false), blocking all subsequent bets.
+    //
+    // The pre-merge transactions schema has these constraints:
+    //   - `direction` is NOT NULL (use 'credit' for money in)
+    //   - `status` is CHECK: pending|confirmed|failed|cancelled
+    //     (the merged code uses 'completed' which is rejected by
+    //     the live schema — we use 'confirmed' here as the
+    //     equivalent "fully settled" state)
+    //   - `chk_related` requires either (related_bet_id/related_rain_id/
+    //     related_user_id) NOT NULL OR type IN ('deposit','withdrawal',
+    //     'adjustment'). For a welcome bonus none of these apply, so
+    //     we set `related_user_id` to the user's own id as a marker
+    //     that the row is account-internal.
+    await query(
+      `INSERT INTO transactions
+         (id, user_id, wallet_id, type, amount, currency, direction, status,
+          related_user_id, metadata, completed_at)
+       VALUES ($1, $2, NULL, 'bonus', 10.00, 'USD', 'credit', 'confirmed',
+               $2, $3::jsonb, NOW())`,
+      [uuidv4(), userId, JSON.stringify({
+        source: 'welcome_bonus',
+        signup_bonus: 10.00,
+        note: 'New user welcome bonus'
+      })]
+    );
+
     // Record fraud flags
     if (shouldFlag) {
       for (const detail of fraudDetails) {

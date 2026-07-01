@@ -316,8 +316,19 @@ router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'suppo
       LIMIT $1 OFFSET $2
     `, params);
 
+    // Count query uses its own params. The SELECT above passes
+    // [limit, offset, search%] but the COUNT query doesn't need
+    // limit/offset, so reusing those params leaves pg unable to
+    // infer the type of $1 (an int) for a query that doesn't use
+    // it. Use a separate [search?] array instead — this is
+    // exactly the original (buggy) pattern, but with a `$1`
+    // placeholder in the SQL to match the new param order.
+    //
+    // The fix: change the searchFilter to use $1 (not $3) for the
+    // COUNT query, so the params match.
+    const countSearchFilter = search ? `AND (username ILIKE $1 OR email ILIKE $1)` : '';
     const countResult = await query(
-      `SELECT COUNT(*) FROM users WHERE 1=1 ${searchFilter}`,
+      `SELECT COUNT(*) FROM users WHERE 1=1 ${countSearchFilter}`,
       search ? [`%${search}%`] : []
     );
 

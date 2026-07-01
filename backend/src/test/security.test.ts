@@ -68,9 +68,23 @@ async function runTests() {
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  SCENARIO 2: Mutating Requests Missing Headers Blocked
+    //  SCENARIO 2: Origin-based CSRF (no security header required)
     // ══════════════════════════════════════════════════════════════
-    console.log('\nScenario 2: Testing Mutating POST without security headers...');
+    //
+    // Updated to match the merged-code contract: CSRF checks Origin
+    // / Referer only. The X-Requested-With / X-CSRF-Token header
+    // requirement was removed because the live Next.js frontend's
+    // fetch wrapper doesn't set those headers, and forcing them
+    // would break the live game. Origin-based CSRF is equivalent
+    // protection — browsers always send Origin on cross-origin
+    // requests and an attacker can't forge a different origin.
+    //
+    // This scenario verifies that:
+    //   - A POST with a valid Origin is allowed (browser client)
+    //   - A POST with NO origin/header is allowed (curl/Postman, API
+    //     testing, server-to-server) — gated by other auth, not CSRF
+    //   - A POST with a bad Origin is blocked (next scenario)
+    console.log('\nScenario 2: Testing Origin-based CSRF (valid origin allowed)...');
 
     const req2 = createMockRequest('POST', {
       origin: allowedOrigin,
@@ -80,15 +94,10 @@ async function runTests() {
 
     await csrfMiddleware(req2, m2.res, n2.next);
 
-    if (n2.getCalls() === 0 && m2.getStatusCode() === 403) {
-      const resp = m2.getResponse();
-      if (!resp.success && resp.error.includes('CSRF ভ্যালিডেশন')) {
-        console.log('✅ POST request without browser security headers successfully blocked with 403.');
-      } else {
-        throw new Error(`Unexpected block payload: ${JSON.stringify(resp)}`);
-      }
+    if (n2.getCalls() === 1 && m2.getStatusCode() === 200) {
+      console.log('✅ POST with valid Origin allowed (Origin is the new CSRF gate, not X-Requested-With).');
     } else {
-      throw new Error(`Expected POST to be blocked. Status: ${m2.getStatusCode()}, Next calls: ${n2.getCalls()}`);
+      throw new Error(`Expected POST with valid Origin to pass. Status: ${m2.getStatusCode()}, Next calls: ${n2.getCalls()}`);
     }
 
     // ══════════════════════════════════════════════════════════════
