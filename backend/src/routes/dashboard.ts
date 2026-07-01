@@ -15,52 +15,104 @@
 
 import { Router, Request, Response } from 'express';
 import { query } from '../config/database';
-import { authMiddleware, adminMiddleware, AuthPayload } from '../middleware/auth';
+import { authMiddleware, adminMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
+import { getOrSet } from '../services/cache';
 
 const router = Router();
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/stats/:userId — ইউজারের পরিসংখ্যান
+//  C1 FIX: ownership guard — must be self OR admin.
 // ══════════════════════════════════════════════════════════════
 router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
     const self = (req as Request & { user: AuthPayload }).user;
-    // C1 FIX: prevent any logged-in user from reading any other
-    // user's stats (IDOR). Owner OR admin only.
     if (self.userId !== userId && !self.isAdmin) {
       return res.status(403).json({ success: false, error: 'অন্যের পরিসংখ্যান দেখার অনুমতি নেই।' });
     }
+    const cacheKey = `cache:stats:${userId}`;
 
-    // মোট বেট, জয়, হার, মোট বাজি, নেট P&L
-    const statsResult = await query(`
-      SELECT
-        COUNT(*)                                          AS total_bets,
-        COUNT(*) FILTER (WHERE won = true)               AS total_wins,
-        COUNT(*) FILTER (WHERE won = false)              AS total_losses,
-        COALESCE(SUM(amount), 0)                         AS total_wagered,
-        COALESCE(SUM(payout) - SUM(amount), 0)          AS net_pnl,
-        COALESCE(SUM(payout), 0)                         AS total_payout,
-        MAX(created_at)                                   AS last_bet_at,
-        -- সর্বোচ্চ টানা জয় (win streak) বের করা কঠিন, তাই সর্বোচ্চ জয়ের পরিমাণ দেখাই
-        COALESCE(MAX(payout), 0)                         AS biggest_win
-      FROM bets
-      WHERE user_id = $1 AND status = 'resolved'
-    `, [userId]);
+    const data = await getOrSet(cacheKey, 10, async () => {
+      // মোট বেট, জয়, হার, মোট বাজি, নেট P&L
+      const statsResult = await query(`
+        SELECT
+          COUNT(*)                                          AS total_bets,
+          COUNT(*) FILTER (WHERE won = true)               AS total_wins,
+          COUNT(*) FILTER (WHERE won = false)              AS total_losses,
+          COALESCE(SUM(amount), 0)                         AS total_wagered,
+          COALESCE(SUM(payout) - SUM(amount), 0)          AS net_pnl,
+          COALESCE(SUM(payout), 0)                         AS total_payout,
+          MAX(created_at)                                   AS last_bet_at,
+          -- সর্বোচ্চ টানা জয় (win streak) বের করা কঠিন, তাই সর্বোচ্চ জয়ের পরিমাণ দেখাই
+          COALESCE(MAX(payout), 0)                         AS biggest_win
+        FROM bets
+        WHERE user_id = $1 AND status = 'resolved'
+      `, [userId]);
 
-    const s = statsResult.rows[0];
-    const totalBets  = parseInt(s.total_bets);
-    const totalWins  = parseInt(s.total_wins);
-    const winRate    = totalBets > 0 ? ((totalWins / totalBets) * 100).toFixed(1) : '0.0';
+      const s = statsResult.rows[0];
+      const totalBets  = parseInt(s.total_bets);
+      const totalWins  = parseInt(s.total_wins);
+      const winRate    = totalBets > 0 ? ((totalWins / totalBets) * 100).toFixed(1) : '0.0';
 
-    // ব্যালেন্স
-    const balResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
-    const balance = parseFloat(balResult.rows[0]?.balance || '0');
+      // ব্যালেন্স
+      const balResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
+      const balance = parseFloat(balResult.rows[0]?.balance || '0');
 
-    res.json({
-      success: true,
-      data: {
+      // শেষ ১০০টি বেট হিস্ট্রি এবং স্ট্রিক্স ক্যালকুলেশন
+      const historyResult = await query(`
+        SELECT won, choice, result, amount, payout, created_at
+        FROM bets
+        WHERE user_id = $1 AND status = 'resolved'
+        ORDER BY created_at DESC
+        LIMIT 100
+      `, [userId]);
+
+      const rows = historyResult.rows;
+
+      // Current Active Streak
+      let currentStreak = 0;
+      let currentType: 'win' | 'loss' | null = null;
+      for (let i = 0; i < rows.length; i++) {
+        const won = rows[i].won;
+        if (i === 0) {
+          currentType = won ? 'win' : 'loss';
+          currentStreak = 1;
+        } else {
+          if ((won && currentType === 'win') || (!won && currentType === 'loss')) {
+            currentStreak++;
+          } else {
+            break;
+          }
+        }
+      }
+      const currentStreakSigned = currentType === 'win' ? currentStreak : (currentType === 'loss' ? -currentStreak : 0);
+
+      // Max Win & Loss Streaks
+      let maxWinStreak = 0;
+      let maxLossStreak = 0;
+      let tempWin = 0;
+      let tempLoss = 0;
+
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const won = rows[i].won;
+        if (won) {
+          tempWin++;
+          tempLoss = 0;
+          if (tempWin > maxWinStreak) {
+            maxWinStreak = tempWin;
+          }
+        } else {
+          tempLoss++;
+          tempWin = 0;
+          if (tempLoss > maxLossStreak) {
+            maxLossStreak = tempLoss;
+          }
+        }
+      }
+
+      return {
         balance,
         totalBets,
         totalWins,
@@ -71,7 +123,25 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
         totalPayout:   parseFloat(s.total_payout),
         biggestWin:    parseFloat(s.biggest_win),
         lastBetAt:     s.last_bet_at,
-      },
+        streaks: {
+          current: currentStreakSigned,
+          maxWin: maxWinStreak,
+          maxLoss: maxLossStreak,
+        },
+        last100Flips: rows.map(r => ({
+          won: r.won,
+          choice: r.choice,
+          result: r.result,
+          amount: parseFloat(r.amount),
+          payout: parseFloat(r.payout),
+          createdAt: r.created_at,
+        })),
+      };
+    });
+
+    res.json({
+      success: true,
+      data,
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
@@ -85,8 +155,8 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
 router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    // C1 FIX: ownership guard.
     const self = (req as Request & { user: AuthPayload }).user;
-    // C1 FIX: same ownership guard.
     if (self.userId !== userId && !self.isAdmin) {
       return res.status(403).json({ success: false, error: 'অন্যের চার্ট দেখার অনুমতি নেই।' });
     }
@@ -135,8 +205,8 @@ router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response)
 router.get('/history/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    // C1 FIX: ownership guard.
     const self = (req as Request & { user: AuthPayload }).user;
-    // C1 FIX: ownership guard — same pattern as stats/chart.
     if (self.userId !== userId && !self.isAdmin) {
       return res.status(403).json({ success: false, error: 'অন্যের বেট ইতিহাস দেখার অনুমতি নেই।' });
     }
@@ -174,26 +244,26 @@ router.get('/history/:userId', authMiddleware, async (req: Request, res: Respons
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/admin/live — লাইভ প্ল্যাটফর্ম স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/admin/live', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
-    const [
-      totalUsers, todayUsers,
-      totalBets, todayBets,
-      houseProfit, activeRains,
-    ] = await Promise.all([
-      query('SELECT COUNT(*) FROM users WHERE is_active = true'),
-      query("SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '24 hours'"),
-      query("SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume FROM bets WHERE status='resolved'"),
-      query(`SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume
-             FROM bets WHERE status='resolved' AND created_at > NOW() - INTERVAL '24 hours'`),
-      // হাউজের মোট আয় = মোট বাজি - মোট পেআউট
-      query("SELECT COALESCE(SUM(amount) - SUM(payout), 0) AS profit FROM bets WHERE status='resolved'"),
-      query("SELECT COUNT(*) FROM crypto_rain_events WHERE status='active' AND expires_at > NOW()"),
-    ]);
+    const cacheKey = 'cache:stats:active';
+    const data = await getOrSet(cacheKey, 15, async () => {
+      const [
+        totalUsers, todayUsers,
+        totalBets, todayBets,
+        houseProfit, activeRains,
+      ] = await Promise.all([
+        query('SELECT COUNT(*) FROM users WHERE is_active = true'),
+        query("SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '24 hours'"),
+        query("SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume FROM bets WHERE status='resolved'"),
+        query(`SELECT COUNT(*), COALESCE(SUM(amount),0) AS volume
+               FROM bets WHERE status='resolved' AND created_at > NOW() - INTERVAL '24 hours'`),
+        // হাউজের মোট আয় = মোট বাজি - মোট পেআউট
+        query("SELECT COALESCE(SUM(amount) - SUM(payout), 0) AS profit FROM bets WHERE status='resolved'"),
+        query("SELECT COUNT(*) FROM crypto_rain_events WHERE status='active' AND expires_at > NOW()"),
+      ]);
 
-    res.json({
-      success: true,
-      data: {
+      return {
         users: {
           total:   parseInt(totalUsers.rows[0].count),
           today:   parseInt(todayUsers.rows[0].count),
@@ -207,7 +277,12 @@ router.get('/admin/live', authMiddleware, adminMiddleware, async (_req: Request,
         houseProfit:   parseFloat(houseProfit.rows[0].profit),
         activeRains:   parseInt(activeRains.rows[0].count),
         timestamp:     new Date().toISOString(),
-      },
+      };
+    });
+
+    res.json({
+      success: true,
+      data,
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
@@ -217,7 +292,7 @@ router.get('/admin/live', authMiddleware, adminMiddleware, async (_req: Request,
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/admin/users — সব ইউজারের তালিকা
 // ══════════════════════════════════════════════════════════════
-router.get('/admin/users', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
   try {
     const page  = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -264,7 +339,7 @@ router.get('/admin/users', authMiddleware, adminMiddleware, async (req: Request,
 // ══════════════════════════════════════════════════════════════
 //  PATCH /api/dashboard/admin/users/:id — ইউজার ফ্রিজ/আনফ্রিজ
 // ══════════════════════════════════════════════════════════════
-router.patch('/admin/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { isActive, balance } = req.body;
@@ -309,7 +384,7 @@ router.patch('/admin/users/:id', authMiddleware, adminMiddleware, async (req: Re
 //  POST /api/dashboard/admin/seed/rotate — সার্ভার সিড রোটেট
 //  নিরাপত্তার জন্য এডমিন যেকোনো সময় নতুন সিড তৈরি করতে পারবে
 // ══════════════════════════════════════════════════════════════
-router.post('/admin/seed/rotate', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+router.post('/admin/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
   try {
     const newSeed     = generateServerSeed();
     const newSeedHash = hashServerSeed(newSeed);

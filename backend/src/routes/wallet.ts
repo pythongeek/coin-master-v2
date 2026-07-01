@@ -1,230 +1,376 @@
-/**
- * ═══════════════════════════════════════════════════════════════
- *  WALLET ROUTES — /api/wallet/*
- * ═══════════════════════════════════════════════════════════════
- *
- *  Phase 2.4 endpoints:
- *    GET  /api/wallet/balance          → Coin balance + display in 3 currencies
- *    GET  /api/wallet/rates            → Current BDT/USDT/USD rates for 1 Coin
- *    GET  /api/wallet/history          → User's wallet_transactions history
- *    POST /api/wallet/topup           → Add Coins (play money, no real money)
- *    POST /api/wallet/preferred-currency → Set user's preferred display currency
- *
- *  All endpoints require authentication (authMiddleware).
- *
- *  PLAY-MONEY DISCLAIMER:
- *    No real deposits/withdrawals. The topup endpoint just adds play-money
- *    Coins to the user's wallet. Real-money integration would require a
- *    payment processor + KYC + regulatory compliance.
- * ═══════════════════════════════════════════════════════════════
- */
-
 import { Router, Request, Response } from 'express';
-import { authMiddleware, AuthPayload, adminMiddleware } from '../middleware/auth';
-import { getAllCoinRates, type SupportedCurrency } from '../services/rate-fetcher';
+import { v4 as uuidv4 } from 'uuid';
+import { authMiddleware, AuthPayload } from '../middleware/auth';
+import { fraudGuard } from '../middleware/fraud-guard';
+import { getOrCreateUserWallet } from '../services/wallet-derivation';
+import { validateBody } from '../middleware/validation';
+import { depositAddressSchema, depositMerchantSchema, withdrawSchema } from '../schemas';
 import {
-  getWalletBalance, getDisplayBalances, getWalletHistory,
-  topUp, setPreferredCurrency,
-} from '../services/wallet';
-import {
-  getBonusStatus, validateWithdrawal, createWithdrawalRequest,
-} from '../services/bonus';
+  createBinancePayOrder,
+  createRedotPayOrder,
+  verifyBinanceWebhook,
+  verifyRedotPayWebhook,
+  processMerchantDeposit,
+} from '../services/merchant-payment';
+import { query, db } from '../config/database';
 
 const router = Router();
 
-// All wallet endpoints require auth
-router.use(authMiddleware);
+// Extend Express Request type locally for TS
+interface AuthRequest extends Request {
+  user?: AuthPayload;
+}
 
-// ── GET /api/wallet/balance ───────────────────────────────────
-router.get('/balance', async (req: Request, res: Response) => {
+/**
+ * POST /api/wallet/deposit/address
+ * Get or derive a unique on-chain deposit address (EVM or Solana)
+ */
+router.post('/deposit/address', authMiddleware, validateBody(depositAddressSchema), async (req: AuthRequest, res: Response) => {
   try {
-    const user = (req as Request & { user: AuthPayload }).user;
-    const wallet = await getWalletBalance(user.userId);
-    const display = await getDisplayBalances(user.userId);
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { chain } = req.body;
+    const wallet = await getOrCreateUserWallet(userId, chain);
     res.json({
       success: true,
-      wallet,
-      display,
+      chain,
+      address: wallet.address,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
   }
 });
 
-// ── GET /api/wallet/rates ─────────────────────────────────────
-router.get('/rates', async (_req: Request, res: Response) => {
+/**
+ * POST /api/wallet/deposit/merchant
+ * Initiate a checkout order with Binance Pay or RedotPay
+ */
+router.post('/deposit/merchant', authMiddleware, validateBody(depositMerchantSchema), async (req: AuthRequest, res: Response) => {
   try {
-    const rates = await getAllCoinRates();
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { amount, provider, currency = 'USDT' } = req.body;
+
+    let order;
+    if (provider === 'binance') {
+      order = await createBinancePayOrder(userId, amount, currency);
+    } else {
+      order = await createRedotPayOrder(userId, amount, currency);
+    }
+
     res.json({
       success: true,
-      rates,
-      base: 'COIN',
-      note: '1 Coin = 1 USDT (peg). Other rates are from Binance P2P.',
-      fetchedAt: new Date().toISOString(),
+      order,
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
   }
 });
 
-// ── GET /api/wallet/history ───────────────────────────────────
-router.get('/history', async (req: Request, res: Response) => {
+/**
+ * POST /api/wallet/deposit/callback/binance
+ * Webhook endpoint for Binance Pay events
+ */
+router.post('/deposit/callback/binance', async (req: Request, res: Response) => {
   try {
-    const user = (req as Request & { user: AuthPayload }).user;
-    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-    const history = await getWalletHistory(user.userId, limit);
-    res.json({ success: true, history });
+    const signature = req.headers['binance-pay-signature'] as string || '';
+    const timestamp = req.headers['binance-pay-timestamp'] as string || '';
+    const nonce = req.headers['binance-pay-nonce'] as string || '';
+    const payload = JSON.stringify(req.body);
+
+    const isValid = verifyBinanceWebhook(payload, signature, nonce, timestamp);
+    if (!isValid) {
+      return res.status(400).json({ success: false, error: 'Invalid signature' });
+    }
+
+    const { bizType, data } = req.body;
+    if (bizType === 'PAY' && data?.status === 'PAY_SUCCESS') {
+      const referenceId = data.merchantTradeNo;
+      const processed = await processMerchantDeposit(referenceId, 'binance');
+      if (processed) {
+        return res.json({ returnCode: 'SUCCESS', returnMessage: null });
+      }
+    }
+
+    res.status(400).json({ success: false, error: 'Event not processed' });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
   }
 });
 
-// ── POST /api/wallet/topup ────────────────────────────────────
-router.post('/topup', async (req: Request, res: Response) => {
+/**
+ * POST /api/wallet/deposit/callback/redotpay
+ * Webhook endpoint for RedotPay events
+ */
+router.post('/deposit/callback/redotpay', async (req: Request, res: Response) => {
   try {
-    const user = (req as Request & { user: AuthPayload }).user;
-    const { currency, amount } = req.body;
-    if (!currency || !amount) {
-      return res.status(400).json({
-        success: false,
-        error: 'currency (BDT/USDT/USD) এবং amount দিতে হবে।',
-      });
-    }
-    const validCurrencies: SupportedCurrency[] = ['BDT', 'USDT', 'USD'];
-    if (!validCurrencies.includes(currency)) {
-      return res.status(400).json({
-        success: false,
-        error: 'currency BDT, USDT, বা USD হতে হবে।',
-      });
-    }
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'amount একটি ধনাত্মক সংখ্যা হতে হবে।',
-      });
-    }
-    if (numAmount > 1_000_000) {
-      return res.status(400).json({
-        success: false,
-        error: 'amount ১,০০০,০০০ এর বেশি হতে পারবে না।',
-      });
+    const signature = req.headers['redotpay-signature'] as string || '';
+    const payload = JSON.stringify(req.body);
+    const publicKeyPem = process.env.REDOTPAY_PUBLIC_KEY || 'mock_pem';
+
+    const isValid = verifyRedotPayWebhook(payload, signature, publicKeyPem);
+    if (!isValid) {
+      return res.status(400).json({ success: false, error: 'Invalid signature' });
     }
 
-    const result = await topUp({
-      userId: user.userId,
+    const { event, data } = req.body;
+    if (event === 'payment.success') {
+      const referenceId = data.orderId;
+      const processed = await processMerchantDeposit(referenceId, 'redotpay');
+      if (processed) {
+        return res.json({ success: true });
+      }
+    }
+
+    res.status(400).json({ success: false, error: 'Event not processed' });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * GET /api/wallet/balances
+ * Retrieve all wallet balances for a user
+ */
+router.get('/balances', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const wallets = await query(
+      `SELECT id, chain, token_symbol, balance, locked_balance, deposit_address 
+       FROM wallets 
+       WHERE user_id = $1`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      wallets: wallets.rows.map(w => ({
+        id: w.id,
+        chain: w.chain,
+        tokenSymbol: w.token_symbol,
+        balance: parseFloat(w.balance),
+        lockedBalance: parseFloat(w.locked_balance),
+        depositAddress: w.deposit_address,
+      })),
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * GET /api/wallet/transactions
+ * Retrieve transaction history for a user
+ */
+router.get('/transactions', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const txs = await query(
+      `SELECT id, wallet_id, type, amount, status, tx_hash, created_at, completed_at, metadata 
+       FROM transactions 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 50`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      transactions: txs.rows.map(t => ({
+        id: t.id,
+        walletId: t.wallet_id,
+        type: t.type,
+        amount: parseFloat(t.amount),
+        status: t.status,
+        txHash: t.tx_hash,
+        createdAt: t.created_at,
+        completedAt: t.completed_at,
+        metadata: t.metadata,
+      })),
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * POST /api/wallet/deposit/simulate-tx
+ * Development only: simulate an incoming on-chain deposit (starts confirming)
+ */
+router.post('/deposit/simulate-tx', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, error: 'Forbidden in production' });
+  }
+
+  try {
+    const { txHash, fromAddress, toAddress, amount, chain, currency } = req.body;
+    if (!txHash || !fromAddress || !toAddress || !amount || !chain) {
+      return res.status(400).json({ success: false, error: 'Missing required parameters' });
+    }
+
+    const { registerIncomingDeposit } = await import('../services/deposit-monitor');
+    const txId = await registerIncomingDeposit({
+      txHash,
+      fromAddress,
+      toAddress,
+      amount: Number(amount),
+      chain,
       currency,
-      amount: numAmount,
-      source: 'user_topup',
-      note: 'Self-service top-up via /api/wallet/topup',
     });
 
     res.json({
       success: true,
-      ...result,
-      message: `✅ ${amount} ${currency} ≈ ${result.topUp.amountCoins.toFixed(2)} Coin যোগ হয়েছে।`,
+      transactionId: txId,
+      message: 'Mock transaction registered successfully',
     });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
   }
 });
 
-// ── POST /api/wallet/preferred-currency ──────────────────────
-router.post('/preferred-currency', async (req: Request, res: Response) => {
+/**
+ * POST /api/wallet/deposit/simulate-block
+ * Development only: simulate a new block mined to increment confirmations
+ */
+router.post('/deposit/simulate-block', async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ success: false, error: 'Forbidden in production' });
+  }
+
   try {
-    const user = (req as Request & { user: AuthPayload }).user;
-    const { currency } = req.body;
-    if (!currency) {
-      return res.status(400).json({ success: false, error: 'currency দিতে হবে।' });
+    const { chain } = req.body;
+    if (chain !== 'ethereum' && chain !== 'solana' && chain !== 'tron') {
+      return res.status(400).json({ success: false, error: 'Invalid chain. Supported: ethereum, solana, tron' });
     }
-    const validCurrencies: SupportedCurrency[] = ['BDT', 'USDT', 'USD'];
-    if (!validCurrencies.includes(currency)) {
-      return res.status(400).json({
-        success: false,
-        error: 'currency BDT, USDT, বা USD হতে হবে।',
-      });
-    }
-    await setPreferredCurrency(user.userId, currency);
-    res.json({ success: true, preferredCurrency: currency });
+
+    const { processNewBlock } = await import('../services/deposit-monitor');
+    await processNewBlock(chain);
+
+    res.json({
+      success: true,
+      message: `Mined a simulated block for chain ${chain}`,
+    });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * POST /api/wallet/withdraw
+ * Initiate an automated crypto withdrawal (queued through BullMQ)
+ */
+router.post('/withdraw', authMiddleware, validateBody(withdrawSchema), fraudGuard, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { walletId, toAddress, amount } = req.body;
+    const { requestWithdrawal } = await import('../services/withdrawal-queue');
+    const result = await requestWithdrawal(userId, walletId, toAddress, amount);
+
+    res.json({
+      success: true,
+      transactionId: result.requestId,
+      status: result.status,
+      message: 'Withdrawal request enqueued successfully'
+    });
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ success: false, error: errorMsg });
+  }
+});
+
+/**
+ * POST /api/wallet/rakeback/claim
+ * Claim accumulated pending rakeback into user balance
+ */
+router.post('/rakeback/claim', authMiddleware, async (req: AuthRequest, res: Response) => {
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Lock user row and fetch pending_rakeback
+    const userResult = await client.query(
+      'SELECT balance, pending_rakeback FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
+      [userId]
+    );
+    
+    if (!userResult.rows.length) {
+      throw new Error('ইউজার পাওয়া যায়নি।');
+    }
+    
+    const pendingRakeback = parseFloat(userResult.rows[0].pending_rakeback || '0');
+    if (pendingRakeback <= 0) {
+      throw new Error('ক্লেম করার জন্য কোনো রেকব্যাক উপলব্ধ নেই।');
+    }
+    
+    const currentBalance = parseFloat(userResult.rows[0].balance);
+    const newBalance = parseFloat((currentBalance + pendingRakeback).toFixed(8));
+    
+    // Inject audit log settings for the transaction
+    await client.query(`SELECT set_config('audit.user_id', $1, true)`, [userId]);
+    await client.query(`SELECT set_config('audit.ip_address', $1, true)`, [req.ip || '']);
+    await client.query(`SELECT set_config('audit.user_agent', $1, true)`, [req.headers['user-agent'] || '']);
+    
+    // Update user balance and pending rakeback
+    await client.query(
+      'UPDATE users SET balance = $1, pending_rakeback = 0.00000000, updated_at = NOW() WHERE id = $2',
+      [newBalance, userId]
+    );
+    
+    // Insert transaction record
+    const txId = uuidv4();
+    await client.query(
+      `INSERT INTO transactions (id, user_id, wallet_id, type, amount, status, metadata, completed_at, ip_address, user_agent)
+       VALUES ($1, $2, NULL, 'rakeback', $3, 'completed', '{}', NOW(), $4, $5)`,
+      [txId, userId, pendingRakeback, req.ip || null, req.headers['user-agent'] || null]
+    );
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      success: true,
+      amount: pendingRakeback,
+      newBalance,
+      message: `অভিনন্দন! আপনার $${pendingRakeback.toFixed(4)} রেকব্যাক ব্যালেন্সে যোগ করা হয়েছে।`
+    });
+  } catch (err: unknown) {
+    await client.query('ROLLBACK');
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ success: false, error: errorMsg });
+  } finally {
+    client.release();
   }
 });
 
 export default router;
 
-// ─────────────────────────────────────────────────────────────────
-//  Session 1 (roadmap-2026.md): bonus / withdrawal routes
-//  These are mounted at /api/wallet via the index.ts import below.
-// ─────────────────────────────────────────────────────────────────
-
-// ── GET /api/wallet/bonus-status ────────────────────────────────
-// Returns user's full bonus + wagering + withdrawal-eligibility state.
-router.get('/bonus-status', async (req: Request, res: Response) => {
-  try {
-    const user = (req as Request & { user: AuthPayload }).user;
-    const status = await getBonusStatus(user.userId);
-    res.json({ success: true, ...status });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ── POST /api/wallet/withdraw ──────────────────────────────────
-// Validate first; on success create a pending transactions row.
-// Admin approves via /api/admin/withdrawals/:id/approve.
-router.post('/withdraw', async (req: Request, res: Response) => {
-  try {
-    const user = (req as Request & { user: AuthPayload }).user;
-    const { amount, currency } = req.body ?? {};
-
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'amount একটি ধনাত্মক সংখ্যা হতে হবে।',
-        reason: 'invalid_amount',
-      });
-    }
-
-    // Run the 5-check validation
-    const validation = await validateWithdrawal(user.userId, numAmount);
-    if (!validation.ok) {
-      return res.status(400).json({
-        success: false,
-        error: validation.reasonBn,
-        reason: validation.reason,
-        missingCoins: validation.missingCoins,
-      });
-    }
-
-    // Create the pending withdrawal transaction (debits withdrawable_balance immediately)
-    const result = await createWithdrawalRequest(user.userId, numAmount, {
-      currency: currency ?? 'COIN',
-      source: 'user_withdraw_request',
-    });
-
-    res.json({
-      success: true,
-      withdrawalId: result.id,
-      status: result.status,
-      message: result.status === 'pending'
-        ? '✅ উইথড্র রিকোয়েস্ট গৃহীত — অ্যাডমিন অনুমোদনের পর প্রসেস হবে।'
-        : '✅ ছোট পরিমাণ — স্বয়ংক্রিয়ভাবে অনুমোদিত।',
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────
-//  ADMIN: withdrawal approval queue
-//  These are mounted at /api/admin via a separate router (see admin-withdrawals.ts)
-// ─────────────────────────────────────────────────────────────────

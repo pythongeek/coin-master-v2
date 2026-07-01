@@ -23,6 +23,8 @@ export interface GameConfig {
   /** হাউজ এজ পার্সেন্ট (০.০১% - ৫০%)
    *  উদাহরণ: ২ = ২% → ইউজার ১০০ বেট করলে জিতলে ১৯৬ পাবে (লাভ ৯৬) */
   houseEdgePercent: number;
+  /** সর্বোচ্চ জয়ের সীমা প্রতি বেট */
+  maxWinAmount: number;
 
   // ── বেট লিমিট সেটিং ─────────────────────────────────────────
   /** সর্বনিম্ন বেট পরিমাণ */
@@ -62,39 +64,23 @@ export interface GameConfig {
   /** কত গেমের পর সার্ভার সিড স্বয়ংক্রিয়ভাবে পরিবর্তন হবে */
   seedRotationAfterGames: number;
 
-  // ── মেইনটেন্যান্স মোড ──────────────────────────────────────────
-  /** গেম বন্ধ আছে কিনা */
   maintenanceMode: boolean;
   /** বন্ধ থাকলে ইউজারদের কী বার্তা দেখাবে */
   maintenanceMessage: string;
 
-  // ── বোনাস সিস্টেম সেটিং (Session 1, roadmap-2026.md) ────────────
-  /** Wagering multiplier — bonus × N = wagering required */
-  bonusWagerMultiplier: number;
-  /** Max withdrawal = bonus × N (profit-first default) */
-  bonusMaxWithdrawalMultiplier: number;
-  /** Days until bonus expires and is forfeit */
-  bonusExpiryDays: number;
-  /** Min deposit as % of bonus before withdrawal allowed */
-  bonusMinDepositToWithdrawPct: number;
-  /** Hours after bonus grant before withdrawal allowed (cooldown) */
-  bonusCooldownHours: number;
-  /** Welcome bonus amount in coins */
-  bonusWelcomeAmount: number;
-  /** Deposit match bonus as % of deposit (0 = disabled) */
-  bonusDepositMatchPct: number;
-  /** Max deposit match bonus per deposit in coins */
-  bonusDepositMatchCap: number;
-
-  // ── উইথড্রাল সেটিং (Session 1) ────────────────────────────────
-  /** Daily max withdrawal per user in coins */
-  dailyWithdrawalLimitCoins: number;
-  /** Minimum withdrawal amount in coins */
-  withdrawalMinCoins: number;
-  /** Maximum withdrawal amount per request in coins */
-  withdrawalMaxCoins: number;
-  /** Auto-approve withdrawals below this (0 = always manual) */
-  withdrawalAutoApproveThreshold: number;
+  // ── প্রোগ্রেসিভ জ্যাকপট সেটিং ──────────────────────────────
+  /** প্রোগ্রেসিভ জ্যাকপট চালু আছে কিনা */
+  jackpotEnabled: boolean;
+  /** জ্যাকপটের জন্য সর্বনিম্ন বেট পরিমাণ */
+  jackpotMinBet: number;
+  /** বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে */
+  jackpotContributionPercent: number;
+  /** জ্যাকপট জয়ের সম্ভাবনা (১/X) */
+  jackpotHitChance: number;
+  /** জ্যাকপট শুরুর পুলের পরিমাণ */
+  jackpotStartPool: number;
+  /** জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থ */
+  jackpotPool: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -108,6 +94,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   // বেট লিমিট
   minBetAmount: 0.01,
   maxBetAmount: 1000.0,
+  maxWinAmount: 50000.0,
   maxConcurrentBets: 1,
 
   // ক্রিপ্টো রেইন
@@ -129,32 +116,25 @@ export const DEFAULT_CONFIG: GameConfig = {
   // সিড রোটেশন
   seedRotationAfterGames: 100,  // ১০০ গেমের পর নতুন সিড
 
-  // মেইনটেন্যান্স মোড
-    maintenanceMode: false,
-    maintenanceMessage: 'সাইটটি আপগ্রেডের জন্য সাময়িকভাবে বন্ধ আছে। শীঘ্রই আসছে!',
+  // মেইনটেন্যান্স
+  maintenanceMode: false,
+  maintenanceMessage: 'সাইটটি আপগ্রেডের জন্য সাময়িকভাবে বন্ধ আছে। শীঘ্রই আসছে!',
 
-    // বোনাস সিস্টেম ডিফল্ট (Session 1)
-    bonusWagerMultiplier: 30,           // ১০ বোনাস = ৩০০ ওয়েজারিং
-    bonusMaxWithdrawalMultiplier: 3,    // ১০ বোনাসে সর্বোচ্চ ৩০ তোলা (profit-first)
-    bonusExpiryDays: 7,                 // ৭ দিনে মেয়াদ শেষ
-    bonusMinDepositToWithdrawPct: 50,   // ৫০% মিন ডিপোজিট
-    bonusCooldownHours: 24,             // ২৪ ঘণ্টা কুলিং অফ
-    bonusWelcomeAmount: 10,             // ১০ Coin ওয়েলকাম বোনাস
-    bonusDepositMatchPct: 50,           // ৫০% ম্যাচ বোনাস
-    bonusDepositMatchCap: 100,          // ১০০ Coin ম্যাক্স ম্যাচ
-
-    // উইথড্রাল ডিফল্ট
-    dailyWithdrawalLimitCoins: 5000,
-    withdrawalMinCoins: 1,
-    withdrawalMaxCoins: 10000,
-    withdrawalAutoApproveThreshold: 0,  // 0 = always manual approval
-  };
+  // প্রোগ্রেসিভ জ্যাকপট
+  jackpotEnabled: true,
+  jackpotMinBet: 1.0,
+  jackpotContributionPercent: 1.0,
+  jackpotHitChance: 10000,
+  jackpotStartPool: 10.0,
+  jackpotPool: 10.0,
+};
 
 // ── কনফিগ কী → বাংলা লেবেল ম্যাপিং (UI-র জন্য) ───────────────
 export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; description: string; unit?: string; min?: number; max?: number; type: 'number' | 'boolean' | 'string'; category: string }> = {
   houseEdgePercent:       { label: 'হাউজ এজ', description: 'প্ল্যাটফর্মের লাভের পার্সেন্ট। ২% মানে ইউজার ১০০ বেটে জিতলে ১৯৬ পাবে।', unit: '%', min: 0.1, max: 10, type: 'number', category: 'বেটিং' },
   minBetAmount:           { label: 'সর্বনিম্ন বেট', description: 'একটি বেটে সর্বনিম্ন পরিমাণ।', unit: '$', min: 0.01, max: 10, type: 'number', category: 'বেটিং' },
   maxBetAmount:           { label: 'সর্বোচ্চ বেট', description: 'একটি বেটে সর্বোচ্চ পরিমাণ। রিস্ক কন্ট্রোলের জন্য গুরুত্বপূর্ণ।', unit: '$', min: 10, max: 100000, type: 'number', category: 'বেটিং' },
+  maxWinAmount:           { label: 'সর্বোচ্চ জয়ের সীমা', description: 'প্রতি বেটে সর্বোচ্চ জয়ের লিমিট। এর বেশি লাভ করতে পারবে না।', unit: '$', min: 100, max: 1000000, type: 'number', category: 'বেটিং' },
   maxConcurrentBets:      { label: 'একসাথে বেট সংখ্যা', description: 'একজন ইউজার একসাথে কতটি বেট রাখতে পারবে।', unit: 'টি', min: 1, max: 5, type: 'number', category: 'বেটিং' },
   rainTriggerStreak:      { label: 'রেইন ট্রিগার স্ট্রিক', description: 'টানা কতটি জয়ের পর Crypto Rain শুরু হবে।', unit: 'বার', min: 3, max: 20, type: 'number', category: 'ক্রিপ্টো রেইন' },
   rainBudgetDailyUsd:     { label: 'দৈনিক রেইন বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার রেইন হিসেবে দেওয়া হবে।', unit: '$', min: 1, max: 10000, type: 'number', category: 'ক্রিপ্টো রেইন' },
@@ -169,21 +149,12 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   seedRotationAfterGames: { label: 'সিড রোটেশন', description: 'কত গেমের পর স্বয়ংক্রিয়ভাবে নতুন সার্ভার সিড তৈরি হবে।', unit: 'গেম', min: 10, max: 1000, type: 'number', category: 'নিরাপত্তা' },
   maintenanceMode:        { label: 'মেইনটেন্যান্স মোড', description: 'চালু করলে ইউজাররা গেম খেলতে পারবে না।', type: 'boolean', category: 'সিস্টেম' },
   maintenanceMessage:     { label: 'মেইনটেন্যান্স বার্তা', description: 'মেইনটেন্যান্স মোডে ইউজারদের কী বার্তা দেখাবে।', type: 'string', category: 'সিস্টেম' },
-
-  // Session 1: bonus + withdrawal params (admin editable)
-  bonusWagerMultiplier:         { label: 'বোনাস wager multiplier', description: 'wagering প্রয়োজন = bonus × N। বেশি = বেশি wagering।', unit: '×', min: 1, max: 100, type: 'number', category: 'বোনাস' },
-  bonusMaxWithdrawalMultiplier: { label: 'সর্বোচ্চ উইথড্র multiplier', description: 'bonus × N = max withdrawable from bonus. কম = কম ঝুঁকি।', unit: '×', min: 1, max: 20, type: 'number', category: 'বোনাস' },
-  bonusExpiryDays:              { label: 'বোনাস মেয়াদ (দিন)', description: 'এই দিনের পর bonus expire হবে।', unit: 'দিন', min: 1, max: 90, type: 'number', category: 'বোনাস' },
-  bonusMinDepositToWithdrawPct: { label: 'মিন ডিপোজিট % (of bonus)', description: 'Bonus তুলতে হলে কত % deposit লাগবে। 100 = সমপরিমাণ।', unit: '%', min: 0, max: 100, type: 'number', category: 'বোনাস' },
-  bonusCooldownHours:           { label: 'কুলিং অফ (ঘণ্টা)', description: 'Bonus পাওয়ার পর কত ঘণ্টা withdraw বন্ধ।', unit: 'ঘণ্টা', min: 0, max: 168, type: 'number', category: 'বোনাস' },
-  bonusWelcomeAmount:           { label: 'ওয়েলকাম বোনাস', description: 'নতুন ইউজার পাবে এত Coin।', unit: 'Coin', min: 0, max: 1000, type: 'number', category: 'বোনাস' },
-  bonusDepositMatchPct:         { label: 'ডিপোজিট ম্যাচ %', description: 'Deposit-এর উপর এত % bonus। 0 = disabled।', unit: '%', min: 0, max: 200, type: 'number', category: 'বোনাস' },
-  bonusDepositMatchCap:         { label: 'ডিপোজিট ম্যাচ ক্যাপ', description: 'প্রতি deposit-এ সর্বোচ্চ কত Coin bonus।', unit: 'Coin', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
-
-  dailyWithdrawalLimitCoins:    { label: 'দৈনিক উইথড্র সীমা', description: 'প্রতিদিন সর্বোচ্চ কত Coin withdraw করা যাবে।', unit: 'Coin', min: 0, max: 1000000, type: 'number', category: 'উইথড্রাল' },
-  withdrawalMinCoins:           { label: 'মিনিমাম উইথড্র', description: 'একবারে কমপক্ষে কত Coin তোলা যাবে।', unit: 'Coin', min: 0.01, max: 100, type: 'number', category: 'উইথড্রাল' },
-  withdrawalMaxCoins:           { label: 'ম্যাক্সিমাম উইথড্র', description: 'একবারে সর্বোচ্চ কত Coin তোলা যাবে।', unit: 'Coin', min: 1, max: 1000000, type: 'number', category: 'উইথড্রাল' },
-  withdrawalAutoApproveThreshold: { label: 'অটো-অনুমোদন থ্রেশহোল্ড', description: 'এই পরিমাণের কম হলে auto-approve, বেশি হলে manual। 0 = সব manual।', unit: 'Coin', min: 0, max: 1000, type: 'number', category: 'উইথড্রাল' },
+  jackpotEnabled:         { label: 'জ্যাকপট চালু', description: 'প্রোগ্রেসিভ জ্যাকপট সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'জ্যাকপট' },
+  jackpotMinBet:          { label: 'জ্যাকপট সর্বনিম্ন বেট', description: 'জ্যাকপটে অংশ নেওয়ার জন্য সর্বনিম্ন বেট পরিমাণ।', unit: '$', min: 0.01, max: 100, type: 'number', category: 'জ্যাকপট' },
+  jackpotContributionPercent: { label: 'জ্যাকপট কন্ট্রিবিউশন (%)', description: 'প্রতি বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'জ্যাকপট' },
+  jackpotHitChance:       { label: 'জ্যাকপট জয়ের সুযোগ (১/X)', description: 'জ্যাকপট জয়ের সম্ভাবনা (১/X chance)। যেমন ১০০০০ দিলে প্রতি ১০,০০০ গেমে গড়ে একবার জিতবে।', unit: 'টি গেম', min: 2, max: 1000000, type: 'number', category: 'জ্যাকপট' },
+  jackpotStartPool:       { label: 'জ্যাকপট শুরুর মান', description: 'জ্যাকপট জয়ের পর পুলটি যে প্রারম্ভিক অ্যামাউন্টে রিসেট হবে।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'জ্যাকপট' },
+  jackpotPool:            { label: 'জ্যাকপট পুল ব্যালেন্স', description: 'জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থের পরিমাণ।', unit: '$', min: 0, max: 1000000, type: 'number', category: 'জ্যাকপট' },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -198,17 +169,24 @@ export async function getConfig(): Promise<GameConfig> {
     // ডিফল্ট কনফিগ দিয়ে শুরু করো
     const config: GameConfig = { ...DEFAULT_CONFIG };
 
+    // snake_case থেকে camelCase এ রূপান্তর করার জন্য
+    const snakeToCamel = (str: string) =>
+      str.replace(/([-_][a-z])/g, group =>
+        group.toUpperCase().replace('-', '').replace('_', '')
+      );
+
     // ডাটাবেস থেকে পড়া মান দিয়ে আপডেট করো
     for (const row of result.rows) {
-      const key = row.key as keyof GameConfig;
-      if (key in config) {
-        const meta = CONFIG_LABELS[key];
+      const dbKey = row.key;
+      const camelKey = snakeToCamel(dbKey) as keyof GameConfig;
+      if (camelKey in config) {
+        const meta = CONFIG_LABELS[camelKey];
         if (meta.type === 'boolean') {
-          (config as Record<string, unknown>)[key] = row.value === 'true';
+          (config as any)[camelKey] = row.value === 'true';
         } else if (meta.type === 'number') {
-          (config as Record<string, unknown>)[key] = parseFloat(row.value);
+          (config as any)[camelKey] = parseFloat(row.value);
         } else {
-          (config as Record<string, unknown>)[key] = row.value;
+          (config as any)[camelKey] = row.value;
         }
       }
     }

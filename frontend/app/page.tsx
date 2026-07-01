@@ -33,7 +33,7 @@ export default function HomePage() {
       </div>
 
       {/* ন্যাভিগেশন */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full max-w-2xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full max-w-4xl">
         <Link
           href="/game"
           className="glass-card p-6 text-center hover:border-brand-green/50 hover:-translate-y-0.5 transition-all duration-200"
@@ -54,6 +54,17 @@ export default function HomePage() {
           </div>
           <div className="heading-display text-sm text-text-primary">ড্যাশবোর্ড</div>
           <div className="text-text-muted text-xs mt-1 font-mono">My Stats & History</div>
+        </Link>
+
+        <Link
+          href="/verifier"
+          className="glass-card p-6 text-center hover:border-brand-green/40 hover:-translate-y-0.5 transition-all duration-200"
+        >
+          <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-brand-green/10 text-brand-green mb-3">
+            <ShieldCheck size={20} />
+          </div>
+          <div className="heading-display text-sm text-text-primary">যাচাইকারী</div>
+          <div className="text-text-muted text-xs mt-1 font-mono">Public Verifier</div>
         </Link>
 
         <Link

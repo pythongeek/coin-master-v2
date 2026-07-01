@@ -35,7 +35,7 @@ import jwt from 'jsonwebtoken';
 import { placeBet } from './game-engine';
 import { generateServerSeed, hashServerSeed, computeFlip } from './provably-fair';
 import { getConfig } from './admin-config';
-import { query } from '../config/database';
+import { query, db } from '../config/database';
 import { redis } from '../config/redis';
 import { AuthPayload } from '../middleware/auth';
 
@@ -97,7 +97,7 @@ export function setupSocketHandlers(io: SocketIOServer) {
     // ══════════════════════════════════════════════════════════
     //  গেম ইভেন্ট: বেট ধরো
     // ══════════════════════════════════════════════════════════
-    socket.on('game:bet', async (data: { choice: 'heads' | 'tails'; amount: number; multiplier?: number; clientSeed?: string }) => {
+    socket.on('game:bet', async (data: { choice: 'heads' | 'tails'; amount: number; clientSeed?: string; targetMultiplier?: number }) => {
       if (!user) {
         return socket.emit('game:error', { message: 'বেট ধরতে লগইন করুন।' });
       }
@@ -109,15 +109,13 @@ export function setupSocketHandlers(io: SocketIOServer) {
           timestamp: Date.now(),
         });
 
-        // ধাপ ২: গেম ইঞ্জিনে বেট প্রসেস করো
-        // Phase 2.3: multiplier is required; default to 1.96 if missing
-        // (preserves v1 behavior for clients that don't send multiplier)
+        // ── ধাপ ২: গেম ইঞ্জিনে বেট প্রসেস করো ──
         const result = await placeBet({
           userId: user.userId,
           choice: data.choice,
           amount: data.amount,
-          multiplier: data.multiplier ?? 1.96,
           clientSeed: data.clientSeed,
+          targetMultiplier: data.targetMultiplier,
         });
 
         // ধাপ ৩: কয়েন স্পিনের সময় অপেক্ষা করো (ফ্রন্টএন্ড অ্যানিমেশনের সাথে সিঙ্ক)
@@ -283,6 +281,11 @@ export function setupSocketHandlers(io: SocketIOServer) {
           return socket.emit('game:error', { message: 'স্কোয়াড ফিচার বর্তমানে বন্ধ আছে।' });
         }
 
+        const userResult = await query('SELECT balance FROM users WHERE id = $1', [user.userId]);
+        if (!userResult.rows.length || parseFloat(userResult.rows[0].balance) < data.betAmount) {
+          return socket.emit('game:error', { message: 'অপর্যাপ্ত ব্যালেন্স।' });
+        }
+
         const squadId = require('crypto').randomUUID();
         const roomName = `squad_${squadId}`;
 
@@ -336,6 +339,11 @@ export function setupSocketHandlers(io: SocketIOServer) {
           return socket.emit('game:error', { message: 'স্কোয়াড পূর্ণ হয়ে গেছে।' });
         }
 
+        const userResult = await query('SELECT balance FROM users WHERE id = $1', [user.userId]);
+        if (!userResult.rows.length || parseFloat(userResult.rows[0].balance) < parseFloat(sq.bet_amount_each)) {
+          return socket.emit('game:error', { message: 'অপর্যাপ্ত ব্যালেন্স।' });
+        }
+
         await query('INSERT INTO squad_members (squad_id, user_id) VALUES ($1, $2)', [data.squadId, user.userId]);
 
         socket.join(`squad_${data.squadId}`);
@@ -368,8 +376,11 @@ export function setupSocketHandlers(io: SocketIOServer) {
     socket.on('squad:flip', async (data: { squadId: string }) => {
       if (!user) return socket.emit('game:error', { message: 'লগইন করুন।' });
 
+      const client = await db.connect();
       try {
-        const squad = await query(
+        await client.query('BEGIN');
+
+        const squad = await client.query(
           `SELECT s.*, COUNT(sm.user_id) as member_count
            FROM squads s LEFT JOIN squad_members sm ON s.id = sm.squad_id
            WHERE s.id = $1 GROUP BY s.id`,
@@ -377,26 +388,69 @@ export function setupSocketHandlers(io: SocketIOServer) {
         );
 
         if (!squad.rows.length) {
-          return socket.emit('game:error', { message: 'স্কোয়াড পাওয়া যায়নি।' });
+          throw new Error('স্কোয়াড পাওয়া যায়নি।');
         }
 
         const sq = squad.rows[0];
 
         if (sq.creator_id !== user.userId) {
-          return socket.emit('game:error', { message: 'শুধু স্কোয়াড ক্রিয়েটর ফ্লিপ শুরু করতে পারবে।' });
+          throw new Error('শুধু স্কোয়াড ক্রিয়েটর ফ্লিপ শুরু করতে পারবে।');
         }
 
-        if (sq.status === 'finished') {
-          return socket.emit('game:error', { message: 'এই স্কোয়াড ইতিমধ্যে খেলা শেষ করেছে।' });
+        if (sq.status !== 'ready' && sq.status !== 'waiting') {
+          throw new Error('এই স্কোয়াড ইতিমধ্যে খেলা শুরু বা শেষ করেছে।');
         }
 
         const memberCount = parseInt(sq.member_count);
         if (memberCount < 2) {
-          return socket.emit('game:error', { message: 'সর্বনিম্ন ২ জন সদস্য প্রয়োজন।' });
+          throw new Error('সর্বনিম্ন ২ জন সদস্য প্রয়োজন।');
         }
+
+        // Lock member user rows to check and deduct balances atomically
+        const membersResult = await client.query(
+          `SELECT u.id, u.balance FROM users u 
+           JOIN squad_members sm ON u.id = sm.user_id 
+           WHERE sm.squad_id = $1 FOR UPDATE`,
+          [data.squadId]
+        );
+
+        const betAmountEach = parseFloat(sq.bet_amount_each);
+
+        for (const member of membersResult.rows) {
+          if (parseFloat(member.balance) < betAmountEach) {
+            throw new Error(`সদস্যের পর্যাপ্ত ব্যালেন্স নেই। গেম বাতিল করা হলো।`);
+          }
+        }
+
+        // Deduct balances immediately and commit
+        for (const member of membersResult.rows) {
+          await client.query(
+            'UPDATE users SET balance = balance - $1 WHERE id = $2',
+            [betAmountEach, member.id]
+          );
+        }
+
+        await client.query(
+          `UPDATE squads SET status = 'playing' WHERE id = $1`,
+          [data.squadId]
+        );
+
+        await client.query('COMMIT');
 
         const roomName = `squad_${data.squadId}`;
         io.to(roomName).emit('game:spinning', { message: 'স্কোয়াড কয়েন ঘুরছে...' });
+
+        // Update frontends with immediate debit balance
+        for (const member of membersResult.rows) {
+          const balResult = await query('SELECT balance FROM users WHERE id = $1', [member.id]);
+          const memberSocketId = [...onlineUsers.entries()]
+            .find(([, v]) => v.userId === member.id)?.[0];
+          if (memberSocketId) {
+            io.to(memberSocketId).emit('balance:update', {
+              balance: parseFloat(balResult.rows[0].balance),
+            });
+          }
+        }
 
         const config = await getConfig();
 
@@ -407,7 +461,7 @@ export function setupSocketHandlers(io: SocketIOServer) {
         const { result } = computeFlip(serverSeed, clientSeed, memberCount);
 
         const won = result === sq.choice;
-        const totalPool = parseFloat(sq.bet_amount_each) * memberCount;
+        const totalPool = betAmountEach * memberCount;
         const houseEdge = config.squadHouseEdgePercent;
         const totalPayout = won
           ? parseFloat((totalPool * (1 - houseEdge / 100)).toFixed(8))
@@ -418,32 +472,38 @@ export function setupSocketHandlers(io: SocketIOServer) {
 
         await delay(config.coinSpinDurationMs);
 
-        // ── সব সদস্যের ব্যালেন্স আপডেট করো ──────────────────────
-        const members = await query(
-          'SELECT user_id FROM squad_members WHERE squad_id = $1',
+        // Credit payout and finalize status in another atomic transaction
+        await client.query('BEGIN');
+
+        const finalMembers = await client.query(
+          `SELECT u.id, u.balance FROM users u 
+           JOIN squad_members sm ON u.id = sm.user_id 
+           WHERE sm.squad_id = $1 FOR UPDATE`,
           [data.squadId]
         );
 
-        for (const member of members.rows) {
-          const change = won
-            ? perPersonPayout - parseFloat(sq.bet_amount_each)
-            : -parseFloat(sq.bet_amount_each);
+        if (won) {
+          for (const member of finalMembers.rows) {
+            await client.query(
+              'UPDATE users SET balance = balance + $1 WHERE id = $2',
+              [perPersonPayout, member.id]
+            );
+          }
+        }
 
-          await query(
-            'UPDATE users SET balance = balance + $1 WHERE id = $2',
-            [change, member.user_id]
-          );
-
-          await query(
+        for (const member of finalMembers.rows) {
+          await client.query(
             'UPDATE squad_members SET payout = $1 WHERE squad_id = $2 AND user_id = $3',
-            [won ? perPersonPayout : 0, data.squadId, member.user_id]
+            [won ? perPersonPayout : 0, data.squadId, member.id]
           );
         }
 
-        await query(
+        await client.query(
           `UPDATE squads SET status = 'finished', result = $1, finished_at = NOW() WHERE id = $2`,
           [result, data.squadId]
         );
+
+        await client.query('COMMIT');
 
         // ── ফলাফল সবাইকে পাঠাও ─────────────────────────────────
         io.to(roomName).emit('squad:result', {
@@ -457,10 +517,10 @@ export function setupSocketHandlers(io: SocketIOServer) {
         });
 
         // ── প্রতিটি সদস্যের নতুন ব্যালেন্স আলাদাভাবে পাঠাও ───────
-        for (const member of members.rows) {
-          const balResult = await query('SELECT balance FROM users WHERE id = $1', [member.user_id]);
+        for (const member of finalMembers.rows) {
+          const balResult = await query('SELECT balance FROM users WHERE id = $1', [member.id]);
           const memberSocketId = [...onlineUsers.entries()]
-            .find(([, v]) => v.userId === member.user_id)?.[0];
+            .find(([, v]) => v.userId === member.id)?.[0];
           if (memberSocketId) {
             io.to(memberSocketId).emit('balance:update', {
               balance: parseFloat(balResult.rows[0].balance),
@@ -483,7 +543,10 @@ export function setupSocketHandlers(io: SocketIOServer) {
         }
 
       } catch (err: unknown) {
-        socket.emit('game:error', { message: String(err) });
+        await client.query('ROLLBACK');
+        socket.emit('game:error', { message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        client.release();
       }
     });
 

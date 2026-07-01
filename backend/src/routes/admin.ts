@@ -15,33 +15,19 @@ import {
   resetToDefaults, CONFIG_LABELS, DEFAULT_CONFIG, GameConfig
 } from '../services/admin-config';
 import { query } from '../config/database';
-import { authMiddleware, adminMiddleware, AuthPayload } from '../middleware/auth';
-import { seedRotateLimiter } from '../middleware/rate-limit';
+import { validateBody } from '../middleware/validation';
+import { adminLimiter } from '../middleware/rate-limiter';
+import { authMiddleware, AuthPayload, roleMiddleware } from '../middleware/auth';
+import { adminSettingsSchema } from '../schemas';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
 
 const router = Router();
-
-// ═══════════════════════════════════════════════════════════════
-//  SECURITY: All admin routes require a valid JWT AND admin role
-// ═══════════════════════════════════════════════════════════════
-// Applied at the router level so every route below is protected.
-// Upstream bug (SEC-1) had NO auth on these endpoints — anyone on
-// the network could PATCH house edge / rain budget / etc.
-//
-// NOTE: The public subset of config (e.g. houseEdgePercent for the
-// frontend win-chance readout) lives in a separate file:
-//   routes/admin-public.ts  →  mounted at /api/admin/config
-// because Express's router-level `use()` middleware applies to all
-// subsequent routes regardless of source-code position. You can't
-// escape it by ordering.
-router.use(authMiddleware);
-router.use(adminMiddleware);
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/config
 //  সব বর্তমান সেটিং দেখো (লেবেল সহ)
 // ══════════════════════════════════════════════════════════════
-router.get('/config', async (_req: Request, res: Response) => {
+router.get('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
     const config = await getConfig();
 
@@ -79,33 +65,12 @@ router.get('/config', async (_req: Request, res: Response) => {
 //  PATCH /api/admin/config
 //  একটি বা একাধিক সেটিং আপডেট করো
 // ══════════════════════════════════════════════════════════════
-router.patch('/config', async (req: Request, res: Response) => {
+router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(adminSettingsSchema), async (req: Request, res: Response) => {
   try {
     const updates = req.body as Partial<GameConfig>;
 
     if (!updates || Object.keys(updates).length === 0) {
       return res.status(400).json({ success: false, error: 'কোনো আপডেট দেওয়া হয়নি।' });
-    }
-
-    // প্রতিটি মান ভ্যালিডেট করো
-    for (const [key, value] of Object.entries(updates)) {
-      const meta = CONFIG_LABELS[key as keyof GameConfig];
-      if (!meta) {
-        return res.status(400).json({ success: false, error: `অজানা কনফিগ কী: ${key}` });
-      }
-
-      if (meta.type === 'number') {
-        const num = parseFloat(String(value));
-        if (isNaN(num)) {
-          return res.status(400).json({ success: false, error: `${meta.label} একটি সংখ্যা হতে হবে।` });
-        }
-        if (meta.min !== undefined && num < meta.min) {
-          return res.status(400).json({ success: false, error: `${meta.label} সর্বনিম্ন ${meta.min}${meta.unit || ''} হতে হবে।` });
-        }
-        if (meta.max !== undefined && num > meta.max) {
-          return res.status(400).json({ success: false, error: `${meta.label} সর্বোচ্চ ${meta.max}${meta.unit || ''} হতে হবে।` });
-        }
-      }
     }
 
     await updateAllConfig(updates);
@@ -125,7 +90,7 @@ router.patch('/config', async (req: Request, res: Response) => {
 //  POST /api/admin/config/reset
 //  সব সেটিং ডিফল্টে ফিরিয়ে দাও
 // ══════════════════════════════════════════════════════════════
-router.post('/config/reset', async (_req: Request, res: Response) => {
+router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
   try {
     await resetToDefaults();
     res.json({
@@ -142,7 +107,7 @@ router.post('/config/reset', async (_req: Request, res: Response) => {
 //  GET /api/admin/stats
 //  লাইভ গেম স্ট্যাটিস্টিক্স
 // ══════════════════════════════════════════════════════════════
-router.get('/stats', async (_req: Request, res: Response) => {
+router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
     const [totalBets, todayBets, totalUsers, activeRain] = await Promise.all([
       query('SELECT COUNT(*) as count, SUM(amount) as volume FROM bets'),
@@ -168,49 +133,69 @@ router.get('/stats', async (_req: Request, res: Response) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  GET /api/admin/users — সব ইউজারের তালিকা
+//  GET /api/admin/audit-logs — সাম্প্রতিক অডিট লগগুলো দেখাও
 // ══════════════════════════════════════════════════════════════
-router.get('/users', async (req: Request, res: Response) => {
+router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {
   try {
-    const page  = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const search = req.query.search as string || '';
-    const offset = (page - 1) * limit;
-
-    const searchTerm = search ? `%${search}%` : null;
-    const searchFilter = search ? 'AND (username ILIKE $3 OR email ILIKE $3)' : '';
-    const countFilter = search ? 'AND (username ILIKE $1 OR email ILIKE $1)' : '';
-    const listParams: unknown[] = searchTerm ? [limit, offset, searchTerm] : [limit, offset];
-    const countParams: unknown[] = searchTerm ? [searchTerm] : [];
-
-    const result = await query(`
-      SELECT u.id, u.username, u.email, u.wallet_address,
-             (u.bonus_balance_coins + u.withdrawable_balance_coins) AS balance,
-             u.is_active, u.is_admin, u.created_at,
-             COUNT(b.id)                         AS total_bets,
-             COALESCE(SUM(b.payout)-SUM(b.amount),0) AS net_pnl
-      FROM users u
-      LEFT JOIN bets b ON b.user_id = u.id AND b.status = 'resolved'
-      WHERE 1=1 ${searchFilter}
-      GROUP BY u.id
-      ORDER BY u.created_at DESC
-      LIMIT $1 OFFSET $2
-    `, listParams);
-
-    const countResult = await query(
-      `SELECT COUNT(*) FROM users WHERE 1=1 ${countFilter}`,
-      countParams
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = parseInt(req.query.offset as string) || 0;
+    
+    // Recent logs
+    const result = await query(
+      `SELECT a.id, a.table_name, a.record_id, a.action, a.old_data, a.new_data, 
+              a.changed_by, u.username as changed_by_username, a.ip_address, a.user_agent, a.created_at
+       FROM audit_logs a
+       LEFT JOIN users u ON a.changed_by = u.id
+       ORDER BY a.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
+
+    const countResult = await query('SELECT COUNT(*) as total FROM audit_logs');
+    const total = parseInt(countResult.rows[0].total || '0');
 
     res.json({
       success: true,
-      data: result.rows,
+      logs: result.rows,
       pagination: {
-        total: parseInt(countResult.rows[0].count),
-        page,
+        total,
         limit,
-        totalPages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
-      },
+        offset,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/fraud-logs — প্রতারণা সনাক্তকরণ লগগুলো দেখাও
+// ══════════════════════════════════════════════════════════════
+router.get('/fraud-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const result = await query(
+      `SELECT fl.id, fl.user_id, fl.type, fl.ip_address, fl.fingerprint, fl.details, fl.created_at, u.username 
+       FROM fraud_logs fl 
+       JOIN users u ON fl.user_id = u.id 
+       ORDER BY fl.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+
+    const countResult = await query('SELECT COUNT(*) as total FROM fraud_logs');
+    const total = parseInt(countResult.rows[0].total || '0');
+
+    res.json({
+      success: true,
+      logs: result.rows,
+      pagination: {
+        total,
+        limit,
+        offset,
+      }
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
@@ -218,47 +203,22 @@ router.get('/users', async (req: Request, res: Response) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-//  PATCH /api/admin/users/:id — ইউজার ফ্রিজ/আনফ্রিজ/ব্যালেন্স এডিট
+//  POST /api/admin/users/:id/unflag — ইউজার আন-ফ্ল্যাগ করো
 // ══════════════════════════════════════════════════════════════
-router.patch('/users/:id', async (req: Request, res: Response) => {
+router.post('/users/:id/unflag', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { isActive, balance } = req.body;
-    const self = (req as Request & { user: AuthPayload }).user;
+    await query('UPDATE users SET is_flagged = false WHERE id = $1', [id]);
+    await query('DELETE FROM fraud_logs WHERE user_id = $1', [id]);
 
-    if (id === self.userId) {
-      return res.status(400).json({ success: false, error: 'নিজের অ্যাকাউন্ট পরিবর্তন করা যাবে না।' });
-    }
-
-    const updates: string[] = [];
-    const values: unknown[] = [];
-
-    if (isActive !== undefined) {
-      values.push(isActive);
-      updates.push(`is_active = $${values.length}`);
-    }
-    if (balance !== undefined) {
-      const amount = parseFloat(balance);
-      // Editing legacy balance distributes to withdrawable; bonus stays untouched.
-      values.push(amount);
-      updates.push(`withdrawable_balance_coins = $${values.length}`);
-      values.push(amount);
-      updates.push(`balance = $${values.length}`);
-    }
-
-    if (!updates.length) {
-      return res.status(400).json({ success: false, error: 'কোনো আপডেট দেওয়া হয়নি।' });
-    }
-
-    values.push(id);
-    await query(
-      `UPDATE users SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
-      values
-    );
+    const { invalidateCache } = require('../services/cache');
+    await invalidateCache([`balance:${id}`, `cache:stats:${id}`]).catch((err: unknown) => {
+      console.warn('Cache invalidation failed for unflagging:', err);
+    });
 
     res.json({
       success: true,
-      message: isActive === false ? 'ইউজার ফ্রিজ করা হয়েছে।' : 'ইউজার আনফ্রিজ করা হয়েছে।',
+      message: 'ইউজার অ্যাকাউন্টটি সফলভাবে আন-ফ্ল্যাগ করা হয়েছে।'
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
@@ -269,27 +229,16 @@ router.patch('/users/:id', async (req: Request, res: Response) => {
 //  POST /api/admin/seed/rotate — সার্ভার সিড রোটেট
 //
 //  H4 FIX (step-up auth): rotating the server seed lets an admin
-//  invalidate ALL in-flight Provably Fair verifications (existing
-//  clients' seedHash values would no longer match the active seed).
-//  The cost of an unauthorized rotation is total loss of game-trust
-//  guarantees until the next rotation. This is the highest-impact
-//  admin action — it deserves the same protection as a banking
-//  wire: require the admin to re-enter their password (verified
-//  via bcrypt against the stored hash, NOT the JWT).
-//
-//  Why "not the JWT" — a stolen admin JWT would otherwise bypass this
-//  entirely. By forcing a fresh password check on every call, we
-//  downgrade token theft from "full admin compromise" to "30-min
-//  token, no rotation ability". The cost is one bcrypt compare
-//  (~50ms) per rotation — acceptable for an action admins perform
-//  a handful of times per day.
-//
-//  Side effects regardless of outcome:
-//    - audit_log row (category=admin, action=seed.rotate)
-//    - On password failure: also write a fraud_signals row
-//      (signal_type=admin_password_failed, severity=high)
+//  invalidate ALL in-flight Provably Fair verifications. Cost of an
+//  unauthorized rotation is total loss of game-trust guarantees until
+//  the next rotation. Highest-impact admin action — requires the
+//  admin to re-enter their password (verified via bcrypt against the
+//  stored hash, NOT the JWT). bcrypt-compare against the
+//  JWT-resolved userId so an attacker can't pass another admin's
+//  username. Side effects: audit_log row regardless; fraud_signal
+//  row on password failure.
 // ══════════════════════════════════════════════════════════════
-router.post('/seed/rotate', seedRotateLimiter, async (req: Request, res: Response) => {
+router.post('/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const { password } = req.body ?? {};
@@ -301,8 +250,6 @@ router.post('/seed/rotate', seedRotateLimiter, async (req: Request, res: Respons
       });
     }
 
-    // Look up the admin by JWT-resolved userId (not by request body
-    // username) so an attacker can't pass another admin's username.
     const userResult = await query(
       'SELECT id, username, password_hash, is_active FROM users WHERE id = $1',
       [self.userId]
@@ -314,10 +261,6 @@ router.post('/seed/rotate', seedRotateLimiter, async (req: Request, res: Respons
 
     const passwordOk = await bcrypt.compare(password, admin.password_hash);
     if (!passwordOk) {
-      // Log a high-severity fraud signal — multiple of these = brute force
-      // attempt on an admin account. signal_type must be one of the values
-      // allowed by the fraud_signals_signal_type_check constraint; the
-      // actual reason (admin_password_failed vs other) goes in metadata.
       try {
         const ip = (req.ip ?? req.socket.remoteAddress ?? 'unknown').replace(/^::ffff:/, '');
         await query(
@@ -339,43 +282,22 @@ router.post('/seed/rotate', seedRotateLimiter, async (req: Request, res: Respons
            VALUES ($1, 'admin', 'seed.rotate.password_failed', 'critical', $2, $3, $4)`,
           [
             admin.id,
-            req.ip ?? req.socket.remoteAddress ?? 'unknown',
+            ip,
             (req.headers['user-agent'] || '').toString().slice(0, 500),
             JSON.stringify({ route: '/api/admin/seed/rotate' }),
           ]
         );
       } catch (err) {
-        // Log to stderr so silent DB-side failures are visible in
-        // container logs. Don't return the error to the client —
-        // the response shape must be identical for "wrong username"
-        // and "wrong password" to avoid username-enumeration leaks.
         console.error('[seed/rotate] fraud/audit log write failed:', err);
       }
-
-      // Same response timing / shape as a real attempt failure so an
-      // attacker can't tell from the body whether the username was wrong
-      // vs the password was wrong.
-      return res.status(401).json({
-        success: false,
-        error: 'পাসওয়ার্ড ভুল।',
-      });
+      return res.status(401).json({ success: false, error: 'পাসওয়ার্ড ভুল।' });
     }
 
-    // ── Password verified — proceed with rotation ──
+    // Password verified — rotate.
     const newSeed     = generateServerSeed();
     const newSeedHash = hashServerSeed(newSeed);
 
-    // Schema note: the `server_seeds` table uses columns `server_seed`
-    // and `server_seed_hash`, NOT `seed`/`hash` (the in-code var
-    // names). The old endpoint referenced the wrong names and 500'd
-    // silently — this fix unblocks the seed-rotation path for the
-    // first time. The unique index `idx_server_seeds_active`
-    // (WHERE is_active = true) means we must deactivate the old row
-    // before inserting a new active one, otherwise the INSERT
-    // violates the unique constraint.
-    await query(
-      `UPDATE server_seeds SET is_active = false WHERE is_active = true`,
-    );
+    await query(`UPDATE server_seeds SET is_active = false WHERE is_active = true`);
     await query(
       `INSERT INTO server_seeds
          (server_seed, server_seed_hash, is_active, activated_at, created_at)
@@ -383,7 +305,6 @@ router.post('/seed/rotate', seedRotateLimiter, async (req: Request, res: Respons
       [newSeed, newSeedHash]
     );
 
-    // Audit row for the successful rotation
     try {
       await query(
         `INSERT INTO audit_log
@@ -391,12 +312,12 @@ router.post('/seed/rotate', seedRotateLimiter, async (req: Request, res: Respons
          VALUES ($1, 'admin', 'seed.rotate', 'warn', $2, $3, $4)`,
         [
           admin.id,
-          req.ip ?? req.socket.remoteAddress ?? 'unknown',
+          (req.ip ?? req.socket.remoteAddress ?? 'unknown').replace(/^::ffff:/, ''),
           (req.headers['user-agent'] || '').toString().slice(0, 500),
           JSON.stringify({ newSeedHash, route: '/api/admin/seed/rotate' }),
         ]
       );
-    } catch { /* audit logging is best-effort */ }
+    } catch { /* best-effort */ }
 
     res.json({
       success: true,

@@ -13,8 +13,10 @@
 import { useEffect } from 'react';
 import { getSocket } from './socket';
 import { useGameStore, BetResult, ChatMessage, ActiveRain } from './store';
+import { useSound } from '@/hooks/useSound';
 
 export function useSocketEvents() {
+  const { play } = useSound();
   const {
     token,
     setGameStatus, setLastResult, addToBetHistory,
@@ -49,6 +51,7 @@ export function useSocketEvents() {
       addToBetHistory(result);
       updateBalance(result.newBalance);
       addNotification(result.message, result.won ? 'win' : 'lose');
+      play(result.won ? 'win' : 'lose');
     });
 
     // ── ব্যালেন্স আপডেট ──────────────────────────────────────────
@@ -71,6 +74,7 @@ export function useSocketEvents() {
     socket.on('rain:started', (rain: ActiveRain) => {
       setActiveRain(rain);
       addNotification('🌧️ CRYPTO RAIN! দ্রুত ক্লেইম করুন!', 'rain');
+      play('rain');
     });
 
     // ── Rain আপডেট ───────────────────────────────────────────────
