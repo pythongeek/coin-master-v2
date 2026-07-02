@@ -10,6 +10,16 @@
 
 import { io, Socket } from 'socket.io-client';
 
+// SOCKET_URL uses NEXT_PUBLIC_SOCKET_URL (defaults to localhost:4000).
+// For local-dev (browser on cx23): the bundle talks to the backend
+// directly. For tunnel users (browser hits the cloudflare quick
+// tunnel): the browser tries ws://localhost:4000/socket.io/ which
+// fails because localhost from the browser's perspective is THEIR
+// own machine, not cx23. Tunnel-mode WebSocket proxy would require
+// a custom server.js (rewrites() in next.config.js doesn't reliably
+// pass through WebSocket upgrades in dev mode) — deferred to a
+// future commit. The current code matches what was on disk before
+// this session.
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000';
 
 // সিঙ্গেলটন সকেট ইন্সট্যান্স — শুধু একটিই থাকবে

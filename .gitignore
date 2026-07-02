@@ -27,12 +27,13 @@ frontend/build/
 backend/dist/
 backend/build/
 
-# ── লগ ফাইল ───────────────────────────────────────────────────
+# ── লগ ফাইল / রানটাইম ব্যাকআপ ───────────────────────────────
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 backend/logs/
+backend/backups/
 
 # ── ডাটাবেস ───────────────────────────────────────────────────
 *.sqlite

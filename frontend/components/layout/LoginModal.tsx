@@ -16,8 +16,8 @@ import {
   isMetaMaskInstalled, isPhantomInstalled,
   connectMetaMask, connectPhantom,
 } from '@/lib/wallet';
-import { useGameStore } from '@/lib/store';
-import { storeToken } from '@/lib/socket';
+import { useGameStore, type User } from '@/lib/store';
+import { storeToken, reconnectWithToken } from '@/lib/socket';
 import { getBrowserFingerprint } from '@/utils/fingerprint';
 import { trackEvent, identifyUser } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -29,7 +29,7 @@ interface Props {
 }
 
 export default function LoginModal({ onClose }: Props) {
-  const { setUser, setToken } = useGameStore();
+  const { login } = useGameStore();
   const { t } = useTranslation();
   const [mode, setMode] = useState<'choose' | 'wallet-connecting' | 'email'>('choose');
   const [isRegister, setIsRegister] = useState(false);
@@ -44,9 +44,7 @@ export default function LoginModal({ onClose }: Props) {
 
   // ── সফল লগইন হ্যান্ডল করো ─────────────────────────────────────
   const handleSuccess = (data: { token: string; user: Record<string, unknown> }) => {
-    storeToken(data.token);
-    setToken(data.token);
-    setUser({
+    const user: User = {
       userId:        data.user.userId as string,
       username:      data.user.username as string,
       balance:       data.user.balance as number,
@@ -54,8 +52,14 @@ export default function LoginModal({ onClose }: Props) {
       walletAddress: data.user.walletAddress as string | undefined,
       isFlagged:     (data.user.isFlagged as boolean) || false,
       email:         data.user.email as string | undefined,
-    });
+    };
+
+    storeToken(data.token);
+    login({ user, token: data.token });
     localStorage.setItem('cf_user', JSON.stringify(data.user));
+
+    // সকেট কানেকশন টোকেন দিয়ে আপগ্রেড করো যাতে গেম বেট পাঠাতে পারে
+    reconnectWithToken(data.token);
 
     // অ্যানালিটিক্স সিঙ্ক
     identifyUser(data.user.userId as string, {

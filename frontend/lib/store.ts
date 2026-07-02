@@ -10,6 +10,7 @@
  */
 
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 // ── ধরনগুলো ────────────────────────────────────────────────────
 export type GameStatus = 'idle' | 'spinning' | 'result';
@@ -70,6 +71,7 @@ interface GameStore {
   token: string | null;
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
+  login: (payload: { user: User; token: string }) => void;
   updateBalance: (balance: number) => void;
   logout: () => void;
 
@@ -123,143 +125,194 @@ interface GameStore {
 }
 
 // ── স্টোর তৈরি ─────────────────────────────────────────────────
-export const useGameStore = create<GameStore>((set, get) => ({
+//
+// persist middleware: persists user/token to localStorage so the
+// user stays logged-in across page reloads. Storage key is
+// `cf_game_store`. The previous main coin UI (pre-merge) had this
+// working — when the user logged in, refreshing the page kept them
+// logged in. The merged remote code removed the persist wrapper
+// (it was a local-only addition), so reloads now show the user as
+// logged out even though the localStorage `cf_token` and `cf_user`
+// are still present.
+//
+// `partialize` chooses which slice of the store to persist. We
+// exclude transient per-bet state (gameStatus, betHistory,
+// chatMessages, notifications) so a reload doesn't restore stale
+// UI like "spinning" or a phantom last result. We DO persist the
+// user, token, settings, and locale — the things that should
+// survive a page refresh.
+export const useGameStore = create<GameStore>()(
+  persist(
+    (set, get) => ({
+      // ── অথ ──────────────────────────────────────────────────────
+      user: null,
+      token: null,
 
-  // ── অথ ──────────────────────────────────────────────────────
-  user: null,
-  token: null,
+      setUser: (user) => set({ user }),
+      setToken: (token) => set({ token }),
 
-  setUser: (user) => set({ user }),
-  setToken: (token) => set({ token }),
+      login: ({ user, token }: { user: User; token: string }) =>
+        set({ user, token }),
 
-  updateBalance: (balance) =>
-    set((state) => ({
-      user: state.user ? { ...state.user, balance } : null,
-    })),
+      updateBalance: (balance) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, balance } : null,
+        })),
 
-  logout: () => {
-    set({ user: null, token: null, lastResult: null });
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('cf_token');
-      localStorage.removeItem('cf_user');
-    }
-  },
-
-  // ── গেম স্টেট ────────────────────────────────────────────────
-  gameStatus: 'idle',
-  currentChoice: 'heads',
-  betAmount: 1.00,
-  lastResult: null,
-  betHistory: [],
-  isAutoPlayRunning: false,
-  targetMultiplier: 2.0,
-
-  setGameStatus:   (status) => set({ gameStatus: status }),
-  setCurrentChoice: (choice) => set({ currentChoice: choice }),
-  setBetAmount:    (amount) => set({ betAmount: amount }),
-  setLastResult:   (result) => set({ lastResult: result }),
-  setIsAutoPlayRunning: (running) => set({ isAutoPlayRunning: running }),
-  setTargetMultiplier: (multiplier) => set({ targetMultiplier: multiplier }),
-
-  addToBetHistory: (result) =>
-    set((state) => ({
-      betHistory: [result, ...state.betHistory].slice(0, 50), // শেষ ৫০টি রাখো
-    })),
-
-  resetGame: () =>
-    set({ gameStatus: 'idle', lastResult: null, isAutoPlayRunning: false }),
-
-  // ── চ্যাট ──────────────────────────────────────────────────
-  chatMessages: [],
-  onlineCount: 0,
-
-  addChatMessage: (msg) =>
-    set((state) => ({
-      chatMessages: [...state.chatMessages, msg].slice(-100), // শেষ ১০০টি
-    })),
-
-  setChatHistory: (msgs) => set({ chatMessages: msgs }),
-  setOnlineCount: (count) => set({ onlineCount: count }),
-
-  // ── ক্রিপ্টো রেইন ──────────────────────────────────────────
-  activeRain: null,
-  hasClaimedRain: false,
-
-  setActiveRain:     (rain) => set({ activeRain: rain, hasClaimedRain: false }),
-  setHasClaimedRain: (claimed) => set({ hasClaimedRain: claimed }),
-
-  updateRainClaims: (claimCount) =>
-    set((state) => ({
-      activeRain: state.activeRain
-        ? { ...state.activeRain, claimCount }
-        : null,
-    })),
-
-  // ── নোটিফিকেশন ─────────────────────────────────────────────
-  notifications: [],
-
-  addNotification: (message, type) => {
-    const id = `notif_${Date.now()}`;
-    set((state) => ({
-      notifications: [...state.notifications, { id, message, type }],
-    }));
-    // ৩ সেকেন্ড পর নিজে নিজে সরে যাবে
-    setTimeout(() => get().removeNotification(id), 3000);
-  },
-
-  removeNotification: (id) =>
-    set((state) => ({
-      notifications: state.notifications.filter((n) => n.id !== id),
-    })),
-
-  // ── সেটিংস ────────────────────────────────────────────────
-  settings: {
-    sound: true,
-    animationSpeed: 'normal',
-  },
-  showSettings: false,
-
-  loadSettings: () => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem('cf_settings');
-        if (stored) {
-          set({ settings: { ...get().settings, ...JSON.parse(stored) } });
+      logout: () => {
+        set({ user: null, token: null, lastResult: null });
+        if (typeof window !== 'undefined') {
+          // Keep the legacy keys for back-compat with anything
+          // (LoginModal, other pages) that still reads them.
+          localStorage.removeItem('cf_token');
+          localStorage.removeItem('cf_user');
         }
-        const storedLocale = localStorage.getItem('cf_locale');
-        if (storedLocale) {
-          set({ locale: storedLocale });
+      },
+
+      // ── গেম স্টেট ────────────────────────────────────────────────
+      gameStatus: 'idle',
+      currentChoice: 'heads',
+      betAmount: 1.00,
+      lastResult: null,
+      betHistory: [],
+      isAutoPlayRunning: false,
+      targetMultiplier: 2.0,
+
+      setGameStatus:   (status) => set({ gameStatus: status }),
+      setCurrentChoice: (choice) => set({ currentChoice: choice }),
+      setBetAmount:    (amount) => set({ betAmount: amount }),
+      setLastResult:   (result) => set({ lastResult: result }),
+      setIsAutoPlayRunning: (running) => set({ isAutoPlayRunning: running }),
+      setTargetMultiplier: (multiplier) => set({ targetMultiplier: multiplier }),
+
+      addToBetHistory: (result) =>
+        set((state) => ({
+          betHistory: [result, ...state.betHistory].slice(0, 50),
+        })),
+
+      resetGame: () =>
+        set({ gameStatus: 'idle', lastResult: null, isAutoPlayRunning: false }),
+
+      // ── চ্যাট ──────────────────────────────────────────────────
+      chatMessages: [],
+      onlineCount: 0,
+
+      addChatMessage: (msg) =>
+        set((state) => ({
+          chatMessages: [...state.chatMessages, msg].slice(-100),
+        })),
+
+      setChatHistory: (msgs) => set({ chatMessages: msgs }),
+      setOnlineCount: (count) => set({ onlineCount: count }),
+
+      // ── ক্রিপ্টো রেইন ──────────────────────────────────────────
+      activeRain: null,
+      hasClaimedRain: false,
+
+      setActiveRain:     (rain) => set({ activeRain: rain, hasClaimedRain: false }),
+      setHasClaimedRain: (claimed) => set({ hasClaimedRain: claimed }),
+
+      updateRainClaims: (claimCount) =>
+        set((state) => ({
+          activeRain: state.activeRain
+            ? { ...state.activeRain, claimCount }
+            : null,
+        })),
+
+      // ── নোটিফিকেশন ─────────────────────────────────────────────
+      notifications: [],
+
+      addNotification: (message, type) => {
+        const id = `notif_${Date.now()}`;
+        set((state) => ({
+          notifications: [...state.notifications, { id, message, type }],
+        }));
+        setTimeout(() => get().removeNotification(id), 3000);
+      },
+
+      removeNotification: (id) =>
+        set((state) => ({
+          notifications: state.notifications.filter((n) => n.id !== id),
+        })),
+
+      // ── সেটিংস ────────────────────────────────────────────────
+      settings: {
+        sound: true,
+        animationSpeed: 'normal',
+      },
+      showSettings: false,
+
+      loadSettings: () => {
+        // Settings + locale are now persisted via the persist
+        // middleware below, so this is a no-op kept for
+        // back-compat with anything that calls it.
+      },
+
+      updateSettings: (newSettings) => {
+        const updated = { ...get().settings, ...newSettings };
+        set({ settings: updated });
+      },
+
+      toggleSettings: () => set((state) => ({ showSettings: !state.showSettings })),
+
+      // ── ভাষা (Language / i18n) ──
+      locale: 'en',
+      setLocale: (locale) => set({ locale }),
+    }),
+    {
+      name: 'cf_game_store',
+      storage: createJSONStorage(() =>
+        typeof window !== 'undefined'
+          ? window.localStorage
+          : (undefined as unknown as Storage)
+      ),
+      partialize: (state) => ({
+        // Auth — these are what makes a reload keep the user logged in.
+        user: state.user,
+        token: state.token,
+        // Settings + locale — should also survive a refresh.
+        settings: state.settings,
+        locale: state.locale,
+      }),
+      // Re-hydrate on the client. On the server (SSR / first render)
+      // the initial state stays as defined in the store. Setting
+      // skipHydration: true and calling useGameStore.persist.rehydrate()
+      // from a client-only effect would also work; the default
+      // (skipHydration: false) hydrates synchronously on first read
+      // which is fine for a localStorage-backed store.
+      skipHydration: false,
+      // Migrate data from the pre-persist localStorage shape
+      // (cf_token, cf_user) into the new persisted store. Runs once
+      // on the first page load after this change ships. Without
+      // this, every existing logged-in user would appear logged
+      // out until they logged in again.
+      version: 1,
+      migrate: (persistedState, version) => {
+        if (version < 1 && typeof window !== 'undefined') {
+          try {
+            const legacyToken = localStorage.getItem('cf_token');
+            const legacyUserJson = localStorage.getItem('cf_user');
+            if (legacyToken && legacyUserJson) {
+              const legacyUser = JSON.parse(legacyUserJson);
+              const state = (persistedState ?? {}) as Partial<GameStore>;
+              return {
+                ...state,
+                token: legacyToken,
+                user: {
+                  userId: legacyUser.userId,
+                  username: legacyUser.username,
+                  email: legacyUser.email,
+                  balance: legacyUser.balance,
+                  isAdmin: legacyUser.isAdmin,
+                },
+              } as GameStore;
+            }
+          } catch (e) {
+            console.warn('[store] migration from cf_token/cf_user failed', e);
+          }
         }
-      } catch (e) {
-        console.error('Failed to load settings', e);
-      }
+        return persistedState as GameStore;
+      },
     }
-  },
-
-  updateSettings: (newSettings) => {
-    const updated = { ...get().settings, ...newSettings };
-    set({ settings: updated });
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('cf_settings', JSON.stringify(updated));
-      } catch (e) {
-        console.error('Failed to save settings', e);
-      }
-    }
-  },
-
-  toggleSettings: () => set((state) => ({ showSettings: !state.showSettings })),
-
-  // ── ভাষা (Language / i18n) ──
-  locale: 'en',
-  setLocale: (locale) => {
-    set({ locale });
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('cf_locale', locale);
-      } catch (e) {
-        console.error('Failed to save locale', e);
-      }
-    }
-  },
-}));
+  )
+);

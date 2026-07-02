@@ -43,9 +43,16 @@ const nextConfig = {
       { source: `${normalized}/:path*`, destination: '/admin/:path*' },
       // The /api/* catch-all proxy lives at
       // app/api/[...path]/route.ts. We don't add a rewrites()
-      // entry here because the proxy needs to be a real
+      // entry for /api/* because the proxy needs to be a real
       // server-side route (rewrites with external destinations
-      // don't work reliably in Next.js dev mode).
+      // don't work reliably in Next.js dev mode for plain HTTP).
+      //
+      // The /socket.io/* WebSocket proxy was attempted via
+      // rewrites() with an external destination but rewrites()
+      // doesn't pass through Upgrade headers in dev mode — the
+      // browser still gets a 404. The proper fix is a custom
+      // server.js (next start with a custom server). Deferred
+      // until there's a real production deployment.
     ];
   },
 

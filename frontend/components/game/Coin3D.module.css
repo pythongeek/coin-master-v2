@@ -125,3 +125,43 @@
 .sparkle1 { top: 5%; right: 10%; animation-delay: 0s; }
 .sparkle2 { bottom: 15%; right: 5%; animation-delay: 0.8s; }
 .sparkle3 { top: 25%; left: 5%; animation-delay: 1.5s; }
+
+/* ── Idle float on the perspective wrapper (gentle bob) ── */
+.float {
+  animation: float 3.5s ease-in-out infinite;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotateX(4deg); }
+  50% { transform: translateY(-10px) rotateX(6deg); }
+}
+
+/**
+
+/* COIN 3D SPIN ANIMATIONS — local CSS module selectors so they
+   match the module-hashed class names that the React component
+   uses via `styles.spinning`, `styles.showHeads`, `styles.showTails`.
+   The static-positioning rules above (`.coin3d`, `.coinSide`,
+   etc.) are unchanged. */
+.spinning {
+  animation: coinFlip5 1.0s ease-in forwards;
+}
+@keyframes coinFlip5 {
+  from { transform: rotateY(0deg)   rotateX(0deg); }
+  to   { transform: rotateY(1800deg) rotateX(360deg); }
+}
+
+.showHeads {
+  animation: coinLandHeads 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15) forwards;
+}
+@keyframes coinLandHeads {
+  from { transform: rotateY(1800deg) rotateX(360deg); }
+  to   { transform: rotateY(1800deg) rotateX(0deg); }
+}
+
+.showTails {
+  animation: coinLandTails 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15) forwards;
+}
+@keyframes coinLandTails {
+  from { transform: rotateY(1800deg) rotateX(360deg); }
+  to   { transform: rotateY(1980deg) rotateX(0deg); }
+}

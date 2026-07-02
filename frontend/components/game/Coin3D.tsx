@@ -1,215 +1,219 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  COIN 3D — থ্রিডি কয়েন অ্যানিমেশন (React Three Fiber)
+ *  COIN 3D — CSS-3D কয়েন (Water Lily + Family)
  * ═══════════════════════════════════════════════════════════════
  *
- *  Stake-গ্রেড প্রিমিয়াম গোল্ড কয়েন — রিয়েলিস্টিক টেক্সচার ও মেটালনেস সহ:
- *  • HEADS → বাংলাদেশী জাতীয় প্রতীক খচিত গোল্ড কয়েন
- *  • TAILS → বাংলাদেশ লেখা খচিত গোল্ড কয়েন
- *  • প্রান্ত → প্রিমিয়াম পালিশড গোল্ড ধাতু
+ *  শুধু CSS transform দিয়ে তৈরি 3D কয়েন — React Three Fiber
+ *  ছাড়া। HEADS-এ জলপদ্ম (Bangladesh-এর জাতীয় ফুল) এবং
+ *  TAILS-এ পরিবারের সিলুয়েট ও "BANGLADESH" আর্ক টেক্সট।
  *
- *  অ্যানিমেশনের ধাপ:
- *  ① IDLE     → কয়েন আস্তে আস্তে ভাসছে (floating)
- *  ② SPINNING → দ্রুত ঘুরছে, সাথে রিয়েলিস্টিক এয়ার ওয়াটবলিং (টেনশন!)
- *  ③ RESULT   → ধীরে ধীরে গতি কমিয়ে সঠিক ফেসে ল্যান্ড করে বাউন্স করছে
+ *  ডিজাইন রেফারেন্স: /tmp/coin-design-reference.html
+ *  (আই-স্টুডিও দিয়ে তৈরি 3D কয়েন ডেমো)
+ *
+ *  অ্যানিমেশন স্টেট মেশিন:
+ *  ① IDLE     → কয়েন ধীরে ভাসছে (CSS keyframe)
+ *  ② SPINNING → 3D rotateY ঘুরছে (5 বা 5.5 বার)
+ *  ③ RESULT   → সঠিক ফেসে ল্যান্ড
  * ═══════════════════════════════════════════════════════════════
  */
 
-import { useRef, useEffect } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { useTexture } from '@react-three/drei';
-import * as THREE from 'three';
-import { useGameStore } from '@/lib/store';
-import { useSound } from '@/hooks/useSound';
+import { useRef, useEffect, useState } from 'react';
+import styles from './Coin3D.module.css';
+
+export type GameStatus = 'idle' | 'spinning' | 'result';
+export type CoinSide = 'heads' | 'tails';
 
 interface CoinProps {
-  gameStatus: 'idle' | 'spinning' | 'result';
-  result: 'heads' | 'tails' | null;
+  gameStatus: GameStatus;
+  result: CoinSide | null;
 }
 
-// ── কালার টোকেন ──
-const COLOR_GREEN  = '#00C566';
-const COLOR_MAROON = '#E8384F'; // প্রিমিয়াম নিয়ন-রেড
-const COLOR_GOLD   = '#E8A93D';
-const COLOR_GOLD_DIM = '#9A6F1F';
+// ─── SVG Face Components (no PNG textures needed) ──────────────
 
-// ── কয়েনের মূল মেশ ────────────────────────────────────────────
-function CoinMesh({ gameStatus, result }: CoinProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const groupRef = useRef<THREE.Group>(null);
-
-  const spinSpeed  = useRef(0);
-  const targetRot  = useRef(0);
-  const floatTimer = useRef(0);
-  const landedRef  = useRef(false);
-
-  const { play } = useSound();
-  const settings = useGameStore((s) => s.settings);
-  const lastResult = useGameStore((s) => s.lastResult);
-
-  // Load high fidelity coin textures
-  const [headsTex, tailsTex] = useTexture([
-    '/assets/coin-heads.png',
-    '/assets/coin-tails.png',
-  ]);
-
-  // Adjust texture settings for maximum clarity
-  useEffect(() => {
-    if (headsTex && tailsTex) {
-      headsTex.colorSpace = THREE.SRGBColorSpace;
-      tailsTex.colorSpace = THREE.SRGBColorSpace;
-      headsTex.anisotropy = 16;
-      tailsTex.anisotropy = 16;
-    }
-  }, [headsTex, tailsTex]);
-
-  useEffect(() => {
-    if (gameStatus === 'spinning') {
-      spinSpeed.current = settings.animationSpeed === 'fast' ? 0.45 : 0.25;
-      landedRef.current = false;
-      play('flip');
-    }
-    if (gameStatus === 'result' && result) {
-      spinSpeed.current = 0;
-      // Get current rotation, find the next nearest full rotation
-      const currentRotX = meshRef.current?.rotation.x ?? 0;
-      const base = Math.ceil(currentRotX / (Math.PI * 2)) * Math.PI * 2;
-      // Add extra spins for dramatic effect
-      const extraSpins = settings.animationSpeed === 'fast' ? Math.PI * 4 : Math.PI * 8;
-      targetRot.current = base + extraSpins + (result === 'heads' ? 0 : Math.PI);
-    }
-    if (gameStatus === 'idle') {
-      spinSpeed.current = 0;
-      targetRot.current = 0;
-      landedRef.current = false;
-    }
-  }, [gameStatus, result, settings.animationSpeed, play]);
-
-  useFrame((_, delta) => {
-    if (!meshRef.current || !groupRef.current) return;
-
-    floatTimer.current += delta;
-
-    if (gameStatus === 'spinning') {
-      // Accelerate spin slightly
-      const maxSpin = settings.animationSpeed === 'fast' ? 0.65 : 0.42;
-      spinSpeed.current = Math.min(spinSpeed.current + delta * 0.6, maxSpin);
-      meshRef.current.rotation.x += spinSpeed.current;
-
-      // Realistic spin wobbles on Y and Z axes
-      meshRef.current.rotation.y = Math.sin(floatTimer.current * 8) * 0.08;
-      meshRef.current.rotation.z = Math.cos(floatTimer.current * 10) * 0.06;
-      groupRef.current.position.y = Math.sin(floatTimer.current * 15) * 0.15;
-    } else if (gameStatus === 'result') {
-      // Lerp back to 0 tilt on Y and Z
-      meshRef.current.rotation.y = THREE.MathUtils.lerp(meshRef.current.rotation.y, 0, delta * 6);
-      meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, 0, delta * 6);
-      groupRef.current.position.y = THREE.MathUtils.lerp(groupRef.current.position.y, 0, delta * 6);
-
-      // Decelerate and land on correct face
-      const currentRotX = meshRef.current.rotation.x;
-      const diff = targetRot.current - currentRotX;
-
-      if (Math.abs(diff) < 0.005) {
-        meshRef.current.rotation.x = targetRot.current;
-        if (!landedRef.current) {
-          landedRef.current = true;
-          play('land');
-        }
-      } else {
-        const speed = settings.animationSpeed === 'fast' ? 14 : 8;
-        meshRef.current.rotation.x = THREE.MathUtils.lerp(currentRotX, targetRot.current, delta * speed);
-      }
-    } else {
-      // Idle float & slow spin
-      groupRef.current.position.y = Math.sin(floatTimer.current * 1.5) * 0.08;
-      meshRef.current.rotation.y = THREE.MathUtils.lerp(meshRef.current.rotation.y, floatTimer.current * 0.2, delta * 2);
-      meshRef.current.rotation.x = THREE.MathUtils.lerp(meshRef.current.rotation.x, 0.25, delta * 2);
-      meshRef.current.rotation.z = THREE.MathUtils.lerp(meshRef.current.rotation.z, 0, delta * 2);
-    }
-  });
-
-  const edgeColor = new THREE.Color(COLOR_GOLD);
-
+/** HEADS face: Water Lily (শাপলা) over waves with grain-stalk wreath */
+function HeadsFace() {
   return (
-    <group ref={groupRef}>
-      {/* মূল কয়েনের প্রান্ত — পালিশড গোল্ড ধাতু, ক্রিস্প রিফ্লেকশন */}
-      <mesh ref={meshRef} castShadow receiveShadow>
-        <cylinderGeometry args={[1.5, 1.5, 0.16, 64]} />
-        <meshStandardMaterial color={edgeColor} metalness={0.98} roughness={0.12} />
-      </mesh>
+    <svg viewBox="0 0 500 500" className="w-full h-full select-none">
+      <defs>
+        <radialGradient id="gold-front" cx="35%" cy="35%" r="65%">
+          <stop offset="0%" stopColor="#FFF8D1" />
+          <stop offset="30%" stopColor="#FBCE3B" />
+          <stop offset="70%" stopColor="#C27A05" />
+          <stop offset="100%" stopColor="#5B2D02" />
+        </radialGradient>
+        <linearGradient id="gold-highlight" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#FFFBEB" stopOpacity="0.5" />
+          <stop offset="50%" stopColor="#FCD34D" stopOpacity="0" />
+          <stop offset="100%" stopColor="#78350F" stopOpacity="0.8" />
+        </linearGradient>
+      </defs>
 
-      {/* Heads ফেস — রিয়েলিস্টিক টেক্সচার */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.081, 0]}>
-        <circleGeometry args={[1.45, 64]} />
-        <meshStandardMaterial map={headsTex} metalness={0.88} roughness={0.18} />
-      </mesh>
+      {/* Coin base rim */}
+      <circle cx="250" cy="250" r="235" fill="url(#gold-front)" stroke="#451A03" strokeWidth="4" />
+      <circle cx="250" cy="250" r="222" fill="none" stroke="#FFFBEB" strokeWidth="2" opacity="0.3" />
 
-      {/* Tails ফেস — রিয়েলিস্টিক টেক্সচার */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.081, 0]}>
-        <circleGeometry args={[1.45, 64]} />
-        <meshStandardMaterial map={tailsTex} metalness={0.88} roughness={0.18} />
-      </mesh>
+      {/* Octagon Interior */}
+      <polygon points="250,55 388,112 445,250 388,388 250,445 112,388 55,250 112,112" fill="none" stroke="#5B2D02" strokeWidth="4" opacity="0.75" />
 
-      {/* অন্তঃস্থ রিং বর্ডার */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0.082, 0]}>
-        <ringGeometry args={[1.35, 1.42, 64]} />
-        <meshStandardMaterial color={edgeColor} metalness={0.95} roughness={0.15} />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.082, 0]}>
-        <ringGeometry args={[1.35, 1.42, 64]} />
-        <meshStandardMaterial color={edgeColor} metalness={0.95} roughness={0.15} />
-      </mesh>
+      {/* Wreath (grain stalks) wrapping the sides */}
+      <path d="M 145,310 C 105,250 115,175 155,155 M 355,310 C 395,250 385,175 345,155" fill="none" stroke="#5B2D02" strokeWidth="4.5" strokeDasharray="10 13" strokeLinecap="round" />
 
-      {/* আলো — ফলাফল অনুযায়ী রঙ বদলায় */}
-      <pointLight
-        color={
-          gameStatus === 'result' && lastResult
-            ? lastResult.won
-              ? COLOR_GREEN
-              : COLOR_MAROON
-            : COLOR_GOLD
-        }
-        intensity={gameStatus === 'spinning' ? 2.8 : 1.4}
-        distance={8}
-      />
-    </group>
+      {/* Water Lily rising from waves */}
+      {/* Waves */}
+      <path d="M 160,320 Q 205,310 250,320 T 340,320 M 150,340 Q 200,330 250,340 T 350,340 M 175,360 Q 212,350 250,360 T 325,360" fill="none" stroke="#5B2D02" strokeWidth="5.5" strokeLinecap="round" />
+
+      {/* Petals — outer layer (large) */}
+      <path d="M 250,165 C 240,210 240,270 250,290 C 260,270 260,210 250,165 Z" fill="#FFF8D1" stroke="#451A03" strokeWidth="4.5" />
+      {/* Petals — middle layer (left, right) */}
+      <path d="M 250,290 C 210,240 210,195 220,180 C 230,195 240,240 250,290 Z" fill="#FDE68A" stroke="#451A03" strokeWidth="4" />
+      <path d="M 250,290 C 290,240 290,195 280,180 C 270,195 260,240 250,290 Z" fill="#FDE68A" stroke="#451A03" strokeWidth="4" />
+      {/* Petals — outer layer (far left, far right) */}
+      <path d="M 250,290 C 180,260 170,225 180,210 C 195,225 225,260 250,290 Z" fill="#FBCE3B" stroke="#451A03" strokeWidth="4" />
+      <path d="M 250,290 C 320,260 330,225 320,210 C 305,225 275,260 250,290 Z" fill="#FBCE3B" stroke="#451A03" strokeWidth="4" />
+
+      {/* Three jute leaves at top center */}
+      <path d="M 250,110 C 245,125 245,135 250,150 C 255,135 255,125 250,110 Z" fill="#FFF8D1" stroke="#451A03" strokeWidth="2.5" />
+      <path d="M 250,150 C 235,145 225,145 210,150 C 225,155 235,155 250,150 Z" fill="#FDE68A" stroke="#451A03" strokeWidth="2" />
+      <path d="M 250,150 C 265,145 275,145 290,150 C 275,155 265,155 250,150 Z" fill="#FDE68A" stroke="#451A03" strokeWidth="2" />
+
+      {/* 4 stars perfectly positioned */}
+      <g fill="#FBCE3B" stroke="#451A03" strokeWidth="2">
+        <polygon points="175,150 178,158 186,158 180,163 182,171 175,166 168,171 170,163 164,158 172,158" />
+        <polygon points="215,130 218,138 226,138 220,143 222,151 215,146 208,151 210,143 204,138 212,138" />
+        <polygon points="285,130 288,138 296,138 290,143 292,151 285,146 278,151 280,143 274,138 282,138" />
+        <polygon points="325,150 328,158 336,158 330,163 332,171 325,166 318,171 320,163 314,158 322,158" />
+      </g>
+
+      {/* Metallic highlight sweep */}
+      <circle cx="250" cy="250" r="235" fill="url(#gold-highlight)" opacity="0.45" pointerEvents="none" />
+    </svg>
   );
 }
 
-// ── স্পিনিং রিং — সূক্ষ্ম গোল্ড accent, ক্রিস্প পাতলা রেখা ──────
-function SpinRings({ spinning }: { spinning: boolean }) {
-  const ring1 = useRef<THREE.Mesh>(null);
-  const ring2 = useRef<THREE.Mesh>(null);
+/** TAILS face: Family silhouettes + BANGLADESH arc + Bengali text */
+function TailsFace() {
+  return (
+    <svg viewBox="0 0 500 500" className="w-full h-full select-none">
+      <defs>
+        <radialGradient id="gold-back" cx="65%" cy="35%" r="65%">
+          <stop offset="0%" stopColor="#FFF8D1" />
+          <stop offset="30%" stopColor="#FBCE3B" />
+          <stop offset="70%" stopColor="#C27A05" />
+          <stop offset="100%" stopColor="#5B2D02" />
+        </radialGradient>
+        <linearGradient id="gold-highlight-back" x1="100%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#FFFBEB" stopOpacity="0.5" />
+          <stop offset="50%" stopColor="#FCD34D" stopOpacity="0" />
+          <stop offset="100%" stopColor="#78350F" stopOpacity="0.8" />
+        </linearGradient>
+      </defs>
 
-  useFrame((_, delta) => {
-    if (!spinning) return;
-    if (ring1.current) ring1.current.rotation.z += delta * 2.5;
-    if (ring2.current) ring2.current.rotation.z -= delta * 1.8;
-  });
+      {/* Coin base rim */}
+      <circle cx="250" cy="250" r="235" fill="url(#gold-back)" stroke="#451A03" strokeWidth="4" />
+      <circle cx="250" cy="250" r="222" fill="none" stroke="#FFFBEB" strokeWidth="2" opacity="0.3" />
 
-  if (!spinning) return null;
+      {/* Octagon Interior */}
+      <polygon points="250,55 388,112 445,250 388,388 250,445 112,388 55,250 112,112" fill="none" stroke="#5B2D02" strokeWidth="4" opacity="0.75" />
 
+      {/* Family silhouettes in center */}
+      <g fill="none" stroke="#5B2D02" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round">
+        {/* Father (left tall figure) */}
+        <circle cx="225" cy="190" r="13" fill="#FFF8D1" strokeWidth="4.5" />
+        <path d="M 225,204 L 225,275 L 215,325 M 225,275 L 235,325" />
+        <path d="M 210,220 Q 220,235 225,245" />
+
+        {/* Mother (right tall figure) */}
+        <circle cx="275" cy="195" r="13" fill="#FFF8D1" strokeWidth="4.5" />
+        <path d="M 275,209 L 275,275 L 265,325 M 275,275 L 285,325" />
+        <path d="M 290,225 Q 280,240 275,250" />
+
+        {/* Child 1 (left-center) */}
+        <circle cx="245" cy="245" r="9.5" fill="#FDE68A" strokeWidth="3.5" />
+        <path d="M 245,255 L 245,302 M 245,302 L 240,325 M 245,302 L 249,325" strokeWidth="4.5" />
+
+        {/* Child 2 (right-center) */}
+        <circle cx="260" cy="253" r="7.5" fill="#FDE68A" strokeWidth="3.5" />
+        <path d="M 260,261 L 260,305 M 260,305 L 257,325 M 260,305 L 263,325" strokeWidth="4" />
+      </g>
+
+      {/* Upward-facing arc text — BANGLADESH (top) */}
+      <path id="curve-top" d="M 105,250 A 145,145 0 0,1 395,250" fill="none" />
+      <text fontFamily="system-ui, sans-serif" fontWeight="900" fontSize="28" fill="#451A03" textAnchor="middle" letterSpacing="1.5">
+        <textPath href="#curve-top" startOffset="50%">BANGLADESH</textPath>
+      </text>
+
+      {/* Bottom arc — Bengali slogan */}
+      <path id="curve-bottom" d="M 105,250 A 145,145 0 0,0 395,250" fill="none" />
+      <text fontFamily="system-ui, sans-serif" fontWeight="900" fontSize="16.5" fill="#451A03" textAnchor="middle" letterSpacing="0.4">
+        <textPath href="#curve-bottom" startOffset="50%">পরিকল্পিত পরিবার - সবার জন্য খাদ্য</textPath>
+      </text>
+
+      {/* Metallic highlight sweep (mirrored) */}
+      <circle cx="250" cy="250" r="235" fill="url(#gold-highlight-back)" opacity="0.45" pointerEvents="none" />
+    </svg>
+  );
+}
+
+// ─── Sparkle decorations (3 SVG sparkles around the coin) ─────
+function Sparkles() {
   return (
     <>
-      <mesh ref={ring1}>
-        <torusGeometry args={[2.15, 0.012, 8, 64]} />
-        <meshBasicMaterial color={COLOR_GOLD} transparent opacity={0.35} />
-      </mesh>
-      <mesh ref={ring2}>
-        <torusGeometry args={[2.45, 0.012, 8, 64]} />
-        <meshBasicMaterial color={COLOR_GOLD_DIM} transparent opacity={0.22} />
-      </mesh>
+      <svg className={`${styles.sparkle} ${styles.sparkle1}`} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0L14.6 9.4L24 12L14.6 14.6L12 24L9.4 14.6L0 12L9.4 9.4L12 0Z" />
+      </svg>
+      <svg className={`${styles.sparkle} ${styles.sparkle2}`} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0L14.6 9.4L24 12L14.6 14.6L12 24L9.4 14.6L0 12L9.4 9.4L12 0Z" />
+      </svg>
+      <svg className={`${styles.sparkle} ${styles.sparkle3}`} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0L14.6 9.4L24 12L14.6 14.6L12 24L9.4 14.6L0 12L9.4 9.4L12 0Z" />
+      </svg>
     </>
   );
 }
 
-// ── মূল এক্সপোর্ট ──────────────────────────────────────────────
+// ─── 3D Coin Component (CSS transforms only) ─────────────────
 export default function Coin3D({ gameStatus, result }: CoinProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const coinRef = useRef<HTMLDivElement>(null);
+  const [lastFlipTime, setLastFlipTime] = useState(0);
+
+  // Reset animation classes when result changes
+  useEffect(() => {
+    if (!coinRef.current) return;
+    if (gameStatus === 'idle') {
+      // Remove spin/result classes
+      coinRef.current.classList.remove('show-heads', 'show-tails', 'spinning');
+    }
+  }, [gameStatus, lastFlipTime]);
+
+  const handleSpinEnd = () => {
+    if (coinRef.current) {
+      coinRef.current.classList.remove('spinning');
+    }
+  };
+
+  const containerClass = `${styles.coinPerspective} ${
+    gameStatus === 'idle' ? styles.float : ''
+  }`;
+
+  // The animation triggers (.spinning, .show-heads, .show-tails) are
+  // defined in Coin3D.module.css but using CSS module-hashed class
+  // names so the rule can target the coin element. We compose them
+  // as `styles.coin3d` (always present) + module-mapped flags.
+  const coinClass = [
+    styles.coin3d,
+    gameStatus === 'spinning' ? styles.spinning : '',
+    gameStatus === 'result' && result === 'heads' ? styles.showHeads : '',
+    gameStatus === 'result' && result === 'tails' ? styles.showTails : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <div
-      className="w-full h-full"
+      ref={containerRef}
+      className={containerClass}
       role="img"
       aria-label={
         gameStatus === 'spinning'
@@ -219,19 +223,31 @@ export default function Coin3D({ gameStatus, result }: CoinProps) {
           : 'কয়েন — বেট ধরুন'
       }
     >
-      <Canvas
-        camera={{ position: [0, 3.5, 0], fov: 45 }}
-        shadows
-        gl={{ antialias: true, alpha: true }}
-      >
-        {/* আলো — পরিচ্ছন্ন, স্টুডিও-স্টাইল তিন-পয়েন্ট লাইটিং */}
-        <ambientLight intensity={0.5} />
-        <directionalLight position={[5, 10, 5]} intensity={1.4} castShadow />
-        <pointLight position={[-5, 5, -5]} intensity={0.4} color={COLOR_GOLD} />
+      <Sparkles />
 
-        <CoinMesh gameStatus={gameStatus} result={result} />
-        <SpinRings spinning={gameStatus === 'spinning'} />
-      </Canvas>
+      <div
+        ref={coinRef}
+        className={coinClass}
+        onTransitionEnd={handleSpinEnd}
+      >
+        {/* 9 stacked Z-translated slices for the 3D edge (visual thickness) */}
+        {Array.from({ length: 9 }, (_, i) => {
+          const z = 4 - i; // 4, 3, 2, 1, 0, -1, -2, -3, -4
+          return <div key={i} className={styles.coinEdge} style={{ transform: `translateZ(${z}px)` }} />;
+        })}
+
+        {/* HEADS face (front — Water Lily) */}
+        <div className={`${styles.coinSide} ${styles.frontSide}`}>
+          <div className={styles.shineOverlay} />
+          <HeadsFace />
+        </div>
+
+        {/* TAILS face (back — Family) */}
+        <div className={`${styles.coinSide} ${styles.backSide}`}>
+          <div className={styles.shineOverlay} />
+          <TailsFace />
+        </div>
+      </div>
     </div>
   );
 }
