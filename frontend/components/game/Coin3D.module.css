@@ -1,24 +1,20 @@
+/* ── Coin container ─────────────────────────────────────────────── */
 .coinPerspective {
-  perspective: 1600px;
+  perspective: 1400px;
   width: 100%;
-  max-width: 300px;
+  max-width: 260px;
   aspect-ratio: 1 / 1;
   position: relative;
   margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-/* ── Mobile: shrink the coin so the bet controls sit on the same screen ──
-   Without this, the coin fills the viewport and the FLIP button is off
-   the bottom of the screen — user has to scroll to find it after each
-   spin. 200px keeps the coin legible while leaving room for choice pills,
-   amount input, presets, multiplier, and the sticky FLIP bar below. */
+/* Mobile: keep the coin compact so the FLIP button stays on screen */
 @media (max-width: 640px) {
   .coinPerspective {
     max-width: 200px;
-  }
-  .sparkle {
-    width: 60%;
-    height: 60%;
   }
 }
 
@@ -37,6 +33,10 @@
   backface-visibility: hidden;
   border-radius: 50%;
   overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 0 20px rgba(0, 0, 0, 0.2),
+    0 18px 40px rgba(0, 0, 0, 0.35);
 }
 
 .frontSide {
@@ -59,12 +59,78 @@
   );
 }
 
-/* Float animation for idle state — applied to a wrapper so it composes with the coin's rotateY spin */
-@keyframes coinFloat {
-  0%, 100% { transform: translateY(0) rotateX(4deg); }
-  50% { transform: translateY(-10px) rotateX(6deg); }
+/* ── Subtle radial glow behind the coin ───────────────────────────── */
+.glow {
+  position: absolute;
+  inset: -15%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(232, 169, 61, 0.18) 0%, rgba(232, 169, 61, 0.05) 40%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+  animation: pulseGlow 4s ease-in-out infinite;
 }
 
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+/* ── Sparkles: small, outside the coin face, never overlapping ────── */
+@keyframes twinkle {
+  0%, 100% { transform: scale(0.6) rotate(0deg); opacity: 0.25; }
+  50% { transform: scale(1) rotate(45deg); opacity: 0.9; }
+}
+
+.sparkle {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1; /* behind the coin faces */
+  color: #FCD34D;
+  animation: twinkle 2.5s infinite ease-in-out;
+  opacity: 0.7;
+  filter: drop-shadow(0 0 4px rgba(253, 224, 71, 0.5));
+}
+
+.sparkle1 { width: 18px; height: 18px; top: -8%; right: -5%; animation-delay: 0s; }
+.sparkle2 { width: 14px; height: 14px; bottom: -4%; right: -8%; animation-delay: 0.7s; }
+.sparkle3 { width: 16px; height: 16px; top: -4%; left: -6%; animation-delay: 1.4s; }
+
+/* ── Subtle shine overlay, constrained to the coin face ──────────── */
+.shineOverlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0) 45%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.12) 100%
+  );
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes sweep {
+  0% { transform: translateX(-100%) rotate(25deg); }
+  100% { transform: translateX(100%) rotate(25deg); }
+}
+
+.spinning .shineOverlay::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.35) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: sweep 1.2s ease-out forwards;
+}
+
+/* ── Idle float: gentle, contained, no layout jitter ─────────────── */
 .floatWrapper {
   width: 100%;
   height: 100%;
@@ -75,64 +141,9 @@
   animation: coinFloat 3.5s ease-in-out infinite;
 }
 
-/* Shine sweep overlay */
-.shineOverlay {
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(
-    45deg,
-    rgba(255, 255, 255, 0) 40%,
-    rgba(255, 255, 255, 0.35) 50%,
-    rgba(255, 255, 255, 0) 60%
-  );
-  transform: rotate(-15deg);
-  pointer-events: none;
-  z-index: 10;
-}
-
-@keyframes sweep {
-  0% { transform: translate(-30%, -30%) rotate(-15deg); }
-  100% { transform: translate(30%, 30%) rotate(-15deg); }
-}
-
-.spinning .shineOverlay {
-  animation: sweep 1.5s ease-out forwards;
-}
-
-/* Sparkles */
-@keyframes twinkle {
-  0%, 100% {
-    transform: scale(0.3) rotate(0deg);
-    opacity: 0.1;
-  }
-  50% {
-    transform: scale(1.1) rotate(90deg);
-    opacity: 1;
-    filter: drop-shadow(0 0 8px rgba(253, 224, 71, 0.8));
-  }
-}
-
-.sparkle {
-  position: absolute;
-  pointer-events: none;
-  z-index: 30;
-  animation: twinkle 3s infinite ease-in-out;
-}
-
-.sparkle1 { top: 5%; right: 10%; animation-delay: 0s; }
-.sparkle2 { bottom: 15%; right: 5%; animation-delay: 0.8s; }
-.sparkle3 { top: 25%; left: 5%; animation-delay: 1.5s; }
-
-/* ── Idle float on the perspective wrapper (gentle bob) ── */
-.float {
-  animation: float 3.5s ease-in-out infinite;
-}
-@keyframes float {
-  0%, 100% { transform: translateY(0) rotateX(4deg); }
-  50% { transform: translateY(-10px) rotateX(6deg); }
+@keyframes coinFloat {
+  0%, 100% { transform: translateY(0) rotateX(2deg); }
+  50% { transform: translateY(-6px) rotateX(4deg); }
 }
 
 /**

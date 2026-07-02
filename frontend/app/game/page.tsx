@@ -260,7 +260,7 @@ export default function GamePage() {
             {/* 3D কয়েন Arena */}
             <div
               ref={arenaRef}
-              className="glass-card relative flex-1 min-h-[300px] lg:min-h-0 overflow-hidden"
+              className="glass-card relative flex-1 min-h-[300px] lg:min-h-0 overflow-hidden flex items-center justify-center"
             >
               {/* Ambient background glow */}
               <div

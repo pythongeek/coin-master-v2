@@ -182,16 +182,11 @@ export default function Coin3D({ gameStatus, result }: CoinProps) {
   useEffect(() => {
     if (!coinRef.current) return;
     if (gameStatus === 'idle') {
-      // Remove spin/result classes
+      // Remove spin/result classes (raw class names are a no-op with CSS modules,
+      // but keep them here for safety in case global styles are added later)
       coinRef.current.classList.remove('show-heads', 'show-tails', 'spinning');
     }
   }, [gameStatus, lastFlipTime]);
-
-  const handleSpinEnd = () => {
-    if (coinRef.current) {
-      coinRef.current.classList.remove('spinning');
-    }
-  };
 
   const containerClass = `${styles.coinPerspective} ${
     gameStatus === 'idle' ? styles.float : ''
@@ -223,13 +218,10 @@ export default function Coin3D({ gameStatus, result }: CoinProps) {
           : 'কয়েন — বেট ধরুন'
       }
     >
+      <div className={styles.glow} />
       <Sparkles />
 
-      <div
-        ref={coinRef}
-        className={coinClass}
-        onTransitionEnd={handleSpinEnd}
-      >
+      <div ref={coinRef} className={coinClass}>
         {/* 9 stacked Z-translated slices for the 3D edge (visual thickness) */}
         {Array.from({ length: 9 }, (_, i) => {
           const z = 4 - i; // 4, 3, 2, 1, 0, -1, -2, -3, -4
