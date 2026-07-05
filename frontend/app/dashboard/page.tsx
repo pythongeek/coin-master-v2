@@ -14,6 +14,7 @@ import { VipProgressCard } from '@/components/dashboard/VipProgressCard';
 import { AchievementsGrid } from '@/components/dashboard/AchievementsGrid';
 import { DailyWheelCard } from '@/components/dashboard/DailyWheelCard';
 import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard';
+import { RakebackCard } from '@/components/dashboard/RakebackCard';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
@@ -164,6 +165,9 @@ export default function DashboardPage() {
 
         {/* Daily wheel */}
         <DailyWheelCard wheel={stats?.wheel} token={token} onSpin={loadStats} />
+
+        {/* Rakeback */}
+        <RakebackCard token={token} onClaim={loadStats} />
 
         {/* Leaderboard */}
         <LeaderboardCard token={token} />

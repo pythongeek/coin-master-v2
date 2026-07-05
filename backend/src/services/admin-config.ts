@@ -173,7 +173,14 @@ export interface GameConfig {
   leaderboardPrizePool: number;
   leaderboardPrizes: { rank: number; prize: number }[];
   leaderboardResetHours: number;
+
+  // রেকব্যাক / ক্যাশব্যাক
+  rakebackEnabled: boolean;
+  rakebackPercent: number;           // percentage of total wager returned
+  rakebackMinClaimCoins: number;    // min claimable amount
+  rakebackVipMultiplier: number;    // VIP multiplier on base rakeback
 }
+
 
 // ═══════════════════════════════════════════════════════════════
 //  DEFAULT CONFIG — কারখানা থেকে বের হওয়া ডিফল্ট সেটিং
@@ -294,6 +301,12 @@ export const DEFAULT_CONFIG: GameConfig = {
   ],
   leaderboardResetHours: 24,
 
+  // রেকব্যাক / ক্যাশব্যাক
+  rakebackEnabled: true,
+  rakebackPercent: 0.5,
+  rakebackMinClaimCoins: 1.0,
+  rakebackVipMultiplier: 1.5,
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -383,6 +396,12 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   leaderboardPrizePool:            { label: 'প্রাইজ পুল', description: 'প্রতি সেশনে সর্বমোট পুরস্কারের পরিমাণ।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'লিডারবোর্ড' },
   leaderboardPrizes:               { label: 'পুরস্কার বন্টন', description: 'JSON array: {rank,prize}।', type: 'string', category: 'লিডারবোর্ড' },
   leaderboardResetHours:             { label: 'রিসেট সময়', description: 'কত ঘণ্টা পর লিডারবোর্ড রিসেট হবে।', unit: 'h', min: 1, max: 168, type: 'number', category: 'লিডারবোর্ড' },
+
+  // রেকব্যাক / ক্যাশব্যাক
+  rakebackEnabled:                 { label: 'রেকব্যাক চালু', description: 'ওয়েজারিং-ভিত্তিক ক্যাশব্যাক ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'রেকব্যাক' },
+  rakebackPercent:                 { label: 'রেকব্যাক %', description: 'মোট বেটের শতকরা কত ভাগ রেকব্যাক হিসেবে ফেরত পাবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'রেকব্যাক' },
+  rakebackMinClaimCoins:           { label: 'ন্যূনতম ক্লেইম', description: 'কত কয়েন জমা হলে ক্লেইম করা যাবে।', unit: 'কয়েন', min: 0.01, max: 1000, type: 'number', category: 'রেকব্যাক' },
+  rakebackVipMultiplier:           { label: 'VIP মাল্টিপ্লায়ার', description: 'VIP র‌্যাঙ্ক অনুযায়ী রেকব্যাক মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 10, type: 'number', category: 'রেকব্যাক' },
 };
 
 // ═══════════════════════════════════════════════════════════════

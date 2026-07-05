@@ -25,6 +25,7 @@ import { invalidateCache } from '../services/cache';
 import { getAchievementStats } from '../services/achievements';
 import { getWheelStatus, spinDailyWheel, getWheelStats } from '../services/daily-wheel';
 import { getLeaderboard, getLeaderboardPosition, distributeLeaderboardPrizes, getLeaderboardStats } from '../services/leaderboard';
+import { getRakebackStatus, claimRakeback, getRakebackStats } from '../services/rakeback';
 
 const router = Router();
 
@@ -264,6 +265,18 @@ router.post('/leaderboard/distribute', adminLimiter, authMiddleware, roleMiddlew
     const { period = 'daily' } = req.body as { period?: 'daily' | 'weekly' };
     const result = await distributeLeaderboardPrizes(period);
     res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/rakeback — প্ল্যাটফর্ম রেকব্যাক স্ট্যাটস
+// ══════════════════════════════════════════════════════════════
+router.get('/rakeback', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const stats = await getRakebackStats();
+    res.json({ success: true, stats });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });
   }

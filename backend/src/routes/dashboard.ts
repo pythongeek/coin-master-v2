@@ -21,6 +21,7 @@ import { getVipProgress } from '../services/vip';
 import { checkAndUnlockAchievements, getUserAchievements } from '../services/achievements';
 import { getWheelStatus, spinDailyWheel } from '../services/daily-wheel';
 import { getLeaderboard, getLeaderboardPosition } from '../services/leaderboard';
+import { getRakebackStatus, claimRakeback } from '../services/rakeback';
 
 const router = Router();
 
@@ -446,6 +447,32 @@ router.get('/leaderboard', authMiddleware, async (req: Request, res: Response) =
     res.json({ success: true, data: { entries, position } });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/dashboard/rakeback — ইউজারের রেকব্যাক স্ট্যাটাস
+// ══════════════════════════════════════════════════════════════
+router.get('/rakeback', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const status = await getRakebackStatus(self.userId);
+    res.json({ success: true, data: status });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/dashboard/rakeback/claim — রেকব্যাক ক্লেইম
+// ══════════════════════════════════════════════════════════════
+router.post('/rakeback/claim', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const status = await claimRakeback(self.userId);
+    res.json({ success: true, data: status });
+  } catch (err: unknown) {
+    res.status(400).json({ success: false, error: String(err) });
   }
 });
 
