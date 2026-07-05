@@ -40,6 +40,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
 import { ScatterBonus } from '@/components/game/ScatterBonus';
 import { StreakLadder } from '@/components/game/StreakLadder';
+import { LightningOverlay } from '@/components/game/LightningOverlay';
 import { shortenAddress } from '@/lib/wallet';
 
 const Coin3D = lazy(() => import('@/components/game/Coin3D'));
@@ -280,6 +281,7 @@ export default function GamePage() {
                   <Coins size={56} className="text-brand-gold animate-spin-slow" strokeWidth={1.5} />
                 </div>
               }>
+                <LightningOverlay />
                 <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} won={lastResult?.won ?? null} />
               </Suspense>
             </div>

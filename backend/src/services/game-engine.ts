@@ -92,6 +92,12 @@ export interface BetResponse {
     banked?: number;
     lost?: number;
   };
+  lightning?: {
+    triggered: boolean;
+    multiplier: number;
+    extraPayout: number;
+    durationSeconds: number;
+  };
   // Provably Fair ডেটা (ইউজার ভেরিফাই করতে পারবে)
   verification: {
     serverSeedHash: string;   // খেলার আগে দেওয়া হয়েছিল
@@ -269,6 +275,42 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       }
     }
 
+    // ── Lightning / Mystery Multiplier (independent of outcome) ─────
+    let lightning: BetResponse['lightning'] = undefined;
+    let lightningExtraPayout = 0;
+    if (config.lightningEnabled) {
+      const lightningSignature = `${clientSeed}:${nonce}:lightning`;
+      const lightningHash = crypto.createHmac('sha256', serverSeed).update(lightningSignature).digest('hex');
+      const rawLightningVal = parseInt(lightningHash.slice(0, 8), 16);
+      const lightningRoll = rawLightningVal % config.lightningChance;
+      const triggered = lightningRoll === 0;
+
+      if (triggered) {
+        const multiplierHash = crypto.createHmac('sha256', serverSeed).update(`${clientSeed}:${nonce}:lightning-multiplier`).digest('hex');
+        const rawMultiplierVal = parseInt(multiplierHash.slice(0, 8), 16);
+        const multiplierRange = config.lightningMaxMultiplier - config.lightningMinMultiplier;
+        let multiplier = config.lightningMinMultiplier + (rawMultiplierVal / 0xFFFFFFFF) * multiplierRange;
+        multiplier = parseFloat(multiplier.toFixed(4));
+        // Extra payout is the boosted portion on top of the normal payout.
+        lightningExtraPayout = parseFloat(((multiplier - 1) * outcome.payout).toFixed(8));
+        const today = new Date().toISOString().slice(0, 10);
+        const { getLightningBudgetSpent, incrementLightningBudgetSpent } = await import('../config/redis');
+        const spent = await getLightningBudgetSpent(today);
+        const remaining = Math.max(0, config.lightningBudgetDailyUsd - spent);
+        const cappedExtra = Math.min(lightningExtraPayout, remaining);
+        if (cappedExtra > 0) {
+          await incrementLightningBudgetSpent(today, cappedExtra);
+        }
+        lightningExtraPayout = cappedExtra;
+        lightning = {
+          triggered: true,
+          multiplier,
+          extraPayout: lightningExtraPayout,
+          durationSeconds: config.lightningDurationSeconds,
+        };
+      }
+    }
+
     // ── Streak Ladder Bonus (budget funded push-your-luck) ─────────────
     let streak: BetResponse['streak'] = undefined;
     let streakBankedAmount = 0;
@@ -325,6 +367,9 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     // keeps users.balance = bonus_balance_coins + withdrawable_balance_coins.
     if (won) {
       await creditPayout(req.userId, outcome.payout, source, txClient);
+    }
+    if (lightningExtraPayout > 0) {
+      await creditPayout(req.userId, lightningExtraPayout, source, txClient);
     }
     if (jackpotWon) {
       await creditPayout(req.userId, jackpotAmount, source, txClient);
@@ -402,15 +447,16 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       }
     }
 
-    // ──剧৮: বেট ডাটাবেসে সেভ করো ────────────────────────────
+    // ── শেষ: বেট ডাটাবেসে সেভ করো ────────────────────────────
     const betId = uuidv4();
     await client.query(
       `INSERT INTO bets
         (id, user_id, choice, amount, result, won, payout, house_edge, 
          target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at,
          scatter_hash, scatter_multiplier, scatter_payout, scatter_picked,
-         streak_before, streak_after, streak_rung_multiplier, streak_ladder_bonus, streak_at_risk, streak_banked, streak_lost)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW(),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+         streak_before, streak_after, streak_rung_multiplier, streak_ladder_bonus, streak_at_risk, streak_banked, streak_lost,
+         lightning_triggered, lightning_multiplier, lightning_extra_payout)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW(),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
       [betId, req.userId, req.choice, req.amount,
        outcome.result, won, outcome.payout, config.houseEdgePercent,
        targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash,
@@ -424,7 +470,10 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
        streak?.ladderBonus ?? null,
        streak?.atRisk ?? null,
        streakBankedAmount || null,
-       streakLostAmount || null]
+       streakLostAmount || null,
+       lightning?.triggered ?? false,
+       lightning?.multiplier ?? null,
+       lightning?.extraPayout ?? null]
     );
 
     // Run reconciliation check AFTER creditWagering so bonus/wager counters are committed

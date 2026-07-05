@@ -180,6 +180,14 @@ router.get('/streak-stats', adminLimiter, authMiddleware, roleMiddleware(['super
         totalLost: parseFloat(ladderStats.rows[0].total_lost || '0'),
         highestStreaks: highestStreaks.rows,
       },
+      lightning: {
+        enabled: config.lightningEnabled,
+        budgetDaily: config.lightningBudgetDailyUsd,
+        budgetSpent: await (await import('../config/redis')).getLightningBudgetSpent(today),
+        budgetRemaining: Math.max(0, config.lightningBudgetDailyUsd - await (await import('../config/redis')).getLightningBudgetSpent(today)),
+        totalRounds: parseInt((await query("SELECT COUNT(*) FROM bets WHERE lightning_triggered = true AND created_at > NOW() - INTERVAL '24 hours'")).rows[0].count || '0'),
+        totalExtraPayout: parseFloat((await query("SELECT SUM(lightning_extra_payout) FROM bets WHERE created_at > NOW() - INTERVAL '24 hours'")).rows[0].sum || '0'),
+      },
     });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });

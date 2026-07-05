@@ -154,6 +154,14 @@ export interface GameConfig {
   withdrawalAutoApproveThreshold: number;
   /** Daily withdrawal limit per user (coins) */
   dailyWithdrawalLimitCoins: number;
+
+  // লাইটনিং / মিস্টারি মাল্টিপ্লায়ার
+  lightningEnabled: boolean;
+  lightningChance: number;
+  lightningMinMultiplier: number;
+  lightningMaxMultiplier: number;
+  lightningDurationSeconds: number;
+  lightningBudgetDailyUsd: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -236,6 +244,14 @@ export const DEFAULT_CONFIG: GameConfig = {
   streakRung5Wins: 5,
   streakRung5Multiplier: 5.0,
 
+  // লাইটনিং / মিস্টারি মাল্টিপ্লায়ার রাউন্ড
+  lightningEnabled: false,
+  lightningChance: 50,
+  lightningMinMultiplier: 2.0,
+  lightningMaxMultiplier: 10.0,
+  lightningDurationSeconds: 5.0,
+  lightningBudgetDailyUsd: 100.0,
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -301,8 +317,17 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   streakRung5Wins:          { label: 'রাঙ ৫ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৫ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
   streakRung5Multiplier:    { label: 'রাঙ ৫ মাল্টিপ্লায়ার', description: 'রাঙ ৫-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
 
-  withdrawalMinCoins:             { label: 'Min withdrawal', description: 'সর্বনিম্ন উইথড্র পরিমাণ।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'উইথড্র' },
-  withdrawalMaxCoins:             { label: 'Max withdrawal', description: 'প্রতি অনুরোধে সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 1, max: 1000000, type: 'number', category: 'উইথড্র' },
+  // লাইটনিং / মিস্টারি মাল্টিপ্লায়ার
+  lightningEnabled:                { label: 'লাইটনিং রাউন্ড চালু', description: 'র‍্যান্ডমভাবে নির্দিষ্ট বেশি পেআউট মাল্টিপ্লায়ার দেখাবে।', type: 'boolean', category: 'লাইটনিং রাউন্ড' },
+  lightningChance:                 { label: 'লাইটনিং সম্ভাবনা', description: 'কত বেটে ১টি লাইটনিং রাউন্ড হবে (১/X)।', unit: 'বেট', min: 1, max: 10000, type: 'number', category: 'লাইটনিং রাউন্ড' },
+  lightningMinMultiplier:          { label: 'ন্যূনতম মাল্টিপ্লায়ার', description: 'লাইটনিং রাউন্ডে পেআউট কতগুণ থেকে শুরু হবে।', unit: 'x', min: 1.1, max: 100, type: 'number', category: 'লাইটনিং রাউন্ড' },
+  lightningMaxMultiplier:          { label: 'সর্বোচ্চ মাল্টিপ্লায়ার', description: 'লাইটনিং রাউন্ডে পেআউট কতগুণ পর্যন্ত যেতে পারে।', unit: 'x', min: 1.1, max: 500, type: 'number', category: 'লাইটনিং রাউন্ড' },
+  lightningDurationSeconds:        { label: 'প্রদর্শন সময়', description: 'কত সেকেন্ড লাইটনিং মাল্টিপ্লায়ার দেখাবে।', unit: 's', min: 1, max: 30, type: 'number', category: 'লাইটনিং রাউন্ড' },
+  lightningBudgetDailyUsd:         { label: 'দৈনিক বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার লাইটনিং বাড়তি পেআউট হিসেবে দেওয়া হবে।', unit: '$', min: 0, max: 10000, type: 'number', category: 'লাইটনিং রাউন্ড' },
+
+  // তহবিল / উত্তোলন
+  withdrawalMinCoins:              { label: 'ন্যূনতম উত্তোলন', description: 'একক উত্তোলনের ন্যূনতম পরিমাণ (কয়েন)।', unit: 'coin', min: 0.1, max: 10000, type: 'number', category: 'তহবিল / উত্তোলন' },
+  withdrawalMaxCoins:              { label: 'সর্বোচ্চ উত্তোলন', description: 'একক উত্তোলনের সর্বোচ্চ পরিমাণ (কয়েন)।', unit: 'coin', min: 1, max: 1000000, type: 'number', category: 'তহবিল / উত্তোলন' },
   withdrawalAutoApproveThreshold:  { label: 'Auto-approve threshold', description: 'এই পরিমাণের কম হলে অটো-অনুমোদন (0 = সবসময় ম্যানুয়াল)।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'উইথড্র' },
   dailyWithdrawalLimitCoins:       { label: 'Daily withdrawal limit', description: 'প্রতিদিন প্রতি ইউজার সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 0, max: 1000000, type: 'number', category: 'উইথড্র' },
 };

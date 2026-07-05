@@ -46,6 +46,12 @@ export interface BetResult {
     banked?: number;
     lost?: number;
   };
+  lightning?: {
+    triggered: boolean;
+    multiplier: number;
+    extraPayout: number;
+    durationSeconds: number;
+  };
   verification: {
     serverSeedHash: string;
     serverSeed: string;

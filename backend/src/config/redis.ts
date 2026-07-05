@@ -75,13 +75,25 @@ export async function resetStreakBonusAtRisk(userId: string): Promise<void> {
 }
 
 export async function getStreakBudgetSpent(date: string): Promise<number> {
-  const value = await redis.get(STREAK_BUDGET_SPENT_KEY(date));
-  return parseFloat(value || '0');
+  const spent = await redis.get(`streak_budget:${date}`);
+  return parseFloat(spent || '0');
 }
 
-export async function incrementStreakBudgetSpent(date: string, amount: number): Promise<number> {
-  const key = STREAK_BUDGET_SPENT_KEY(date);
-  const newValue = await redis.incrbyfloat(key, amount);
-  await redis.expire(key, 86400 * 2); // 2 days TTL to cover timezone edge cases
-  return parseFloat(newValue);
+export async function incrementStreakBudgetSpent(date: string, amount: number): Promise<void> {
+  await redis.incrbyfloat(`streak_budget:${date}`, amount);
+  // Expire at end of next day
+  const ttl = Math.ceil((new Date(`${date}T23:59:59.999Z`).getTime() + 86400000 - Date.now()) / 1000);
+  if (ttl > 0) await redis.expire(`streak_budget:${date}`, ttl);
+}
+
+// ── Lightning Budget Helpers ──────────────────────────────────
+export async function getLightningBudgetSpent(date: string): Promise<number> {
+  const spent = await redis.get(`lightning_budget:${date}`);
+  return parseFloat(spent || '0');
+}
+
+export async function incrementLightningBudgetSpent(date: string, amount: number): Promise<void> {
+  await redis.incrbyfloat(`lightning_budget:${date}`, amount);
+  const ttl = Math.ceil((new Date(`${date}T23:59:59.999Z`).getTime() + 86400000 - Date.now()) / 1000);
+  if (ttl > 0) await redis.expire(`lightning_budget:${date}`, ttl);
 }
