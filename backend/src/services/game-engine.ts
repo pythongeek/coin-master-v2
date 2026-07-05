@@ -72,6 +72,16 @@ export interface BetResponse {
   jackpotAmount?: number;
   jackpotRoll?: number;
   jackpotPool?: number;
+  scatter?: {
+    triggered: boolean;
+    pickIndex?: number;
+    multiplier?: number;
+    payout?: number;
+    serverSeed?: string;
+    clientSeed?: string;
+    nonce?: number;
+    scatterHash?: string;
+  };
   // Provably Fair ডেটা (ইউজার ভেরিফাই করতে পারবে)
   verification: {
     serverSeedHash: string;   // খেলার আগে দেওয়া হয়েছিল
@@ -197,6 +207,33 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       }
     }
 
+    // ── Scatter Bonus Roll (independent of main flip outcome) ──────
+    let scatterTriggered = false;
+    let scatterMultiplier = 0;
+    let scatterPayout = 0;
+    let scatterPickIndex = -1;
+    let scatterHash = '';
+    if (config.scatterEnabled) {
+      const scatterSignature = `${clientSeed}:${nonce}:scatter`;
+      scatterHash = crypto.createHmac('sha256', serverSeed).update(scatterSignature).digest('hex');
+      const rawScatterVal = parseInt(scatterHash.slice(0, 8), 16);
+      const scatterRoll = rawScatterVal % config.scatterChance;
+      scatterTriggered = scatterRoll === 0; // 1-in-X chance
+
+      if (scatterTriggered) {
+        // Use a second hash slice to pick the pre-committed multiplier deterministically.
+        const multiplierHash = crypto.createHmac('sha256', serverSeed).update(`${clientSeed}:${nonce}:scatter-multiplier`).digest('hex');
+        const rawMultiplierVal = parseInt(multiplierHash.slice(0, 8), 16);
+        const multiplierRange = config.scatterMaxMultiplier - config.scatterMinMultiplier;
+        scatterMultiplier = config.scatterMinMultiplier + (rawMultiplierVal / 0xFFFFFFFF) * multiplierRange;
+        scatterMultiplier = parseFloat(scatterMultiplier.toFixed(4));
+        scatterPayout = parseFloat((config.scatterStakeUsd * scatterMultiplier).toFixed(8));
+        // Pick index (0-2) is not yet chosen by the user; the client will reveal it.
+        // For the server response, we store the multiplier and the final pick will
+        // be applied by the client picking a coin and the server validating it later.
+      }
+    }
+
     // ── шаг ৭: ব্যালেন্স ও ওয়াগার/রেকব্যাক আপডেট করো ─────────────────────────────
     // Credit payout back to the same source. The DB trigger sync_user_balance
     // keeps users.balance = bonus_balance_coins + withdrawable_balance_coins.
@@ -284,11 +321,16 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     await client.query(
       `INSERT INTO bets
         (id, user_id, choice, amount, result, won, payout, house_edge, 
-         target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW())`,
+         target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at,
+         scatter_hash, scatter_multiplier, scatter_payout, scatter_picked)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW(),$13,$14,$15,$16)`,
       [betId, req.userId, req.choice, req.amount,
        outcome.result, won, outcome.payout, config.houseEdgePercent,
-       targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash]
+       targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash,
+       config.scatterEnabled ? scatterHash : null,
+       config.scatterEnabled && scatterTriggered ? scatterMultiplier : null,
+       config.scatterEnabled && scatterTriggered ? scatterPayout : null,
+       false]
     );
 
     // Run reconciliation check AFTER creditWagering so bonus/wager counters are committed
@@ -358,6 +400,15 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       jackpotAmount,
       jackpotRoll,
       jackpotPool: finalJackpotPool,
+      scatter: config.scatterEnabled ? {
+        triggered: scatterTriggered,
+        multiplier: scatterTriggered ? scatterMultiplier : undefined,
+        payout: scatterTriggered ? scatterPayout : undefined,
+        scatterHash,
+        serverSeed,
+        clientSeed,
+        nonce,
+      } : undefined,
       verification: {
         serverSeedHash,
         serverSeed,  // এখন প্রকাশ করা হলো

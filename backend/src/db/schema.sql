@@ -62,6 +62,10 @@ CREATE TABLE IF NOT EXISTS bets (
   status         VARCHAR(20) NOT NULL DEFAULT 'pending'
                    CHECK (status IN ('pending', 'resolved', 'cancelled')),
   flip_hash      TEXT,                       -- ভেরিফিকেশনের জন্য
+  scatter_hash   TEXT,                       -- স্ক্যাটার বোনাসের HMAC
+  scatter_multiplier DECIMAL(10, 4),         -- স্ক্যাটার বোনাস মাল্টিপ্লায়ার
+  scatter_payout DECIMAL(18, 8),             -- স্ক্যাটার বোনাস পেআউট
+  scatter_picked BOOLEAN DEFAULT FALSE,        -- ব্যবহারকারী কয়েন নির্বাচন করেছে কিনা
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resolved_at    TIMESTAMPTZ
 );

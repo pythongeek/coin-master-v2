@@ -12,7 +12,7 @@
 
 import { useEffect } from 'react';
 import { getSocket } from './socket';
-import { useGameStore, BetResult, ChatMessage, ActiveRain } from './store';
+import { useGameStore, BetResult, ChatMessage, ActiveRain, ScatterResult } from './store';
 import { useSound } from '@/hooks/useSound';
 
 export function useSocketEvents() {
@@ -22,7 +22,7 @@ export function useSocketEvents() {
     setGameStatus, setLastResult, addToBetHistory,
     updateBalance, addChatMessage, setChatHistory,
     setOnlineCount, setActiveRain, updateRainClaims,
-    addNotification,
+    addNotification, setActiveScatter, setPendingScatter,
   } = useGameStore();
 
   // In a tab or cross-page navigation the token may be in localStorage
@@ -56,6 +56,21 @@ export function useSocketEvents() {
       updateBalance(result.newBalance);
       addNotification(result.message, result.won ? 'win' : 'lose');
       play(result.won ? 'win' : 'lose');
+
+      // If a scatter bonus was triggered, hold the result in pendingScatter
+      // so the Pick-a-Coin UI can show up.
+      if (result.scatter?.triggered) {
+        setPendingScatter(result);
+      }
+    });
+
+    // ── Scatter Bonus Result ─────────────────────────────────────
+    socket.on('scatter:result', (scatter: ScatterResult) => {
+      setActiveScatter(scatter);
+      setPendingScatter(null);
+      updateBalance(scatter.newBalance);
+      addNotification(scatter.message, 'win');
+      play('win');
     });
 
     // ── ব্যালেন্স আপডেট ──────────────────────────────────────────
@@ -97,6 +112,7 @@ export function useSocketEvents() {
       socket.off('online:count');
       socket.off('game:spinning');
       socket.off('game:result');
+      socket.off('scatter:result');
       socket.off('balance:update');
       socket.off('game:error');
       socket.off('chat:message');

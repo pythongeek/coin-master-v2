@@ -107,6 +107,19 @@ export interface GameConfig {
   bonusFreeSpinCount: number;
   /** Default bet value per free spin (coins) */
   bonusFreeSpinValue: number;
+
+  // ── স্ক্যাটার বোনাস সেটিং ─────────────────────────────────────
+  /** স্ক্যাটার বোনাস ফিচার চালু আছে কিনা */
+  scatterEnabled: boolean;
+  /** স্ক্যাটার জয়ের সম্ভাবনা (১/X) */
+  scatterChance: number;
+  /** স্ক্যাটার পেআউটের সর্বনিম্ন মাল্টিপ্লায়ার */
+  scatterMinMultiplier: number;
+  /** স্ক্যাটার পেআউটের সর্বোচ্চ মাল্টিপ্লায়ার */
+  scatterMaxMultiplier: number;
+  /** স্ক্যাটার বোনাসের স্থির বেট মান */
+  scatterStakeUsd: number;
+
   /** Min withdrawal amount (coins) */
   withdrawalMinCoins: number;
   /** Max withdrawal amount per request (coins) */
@@ -176,6 +189,13 @@ export const DEFAULT_CONFIG: GameConfig = {
   bonusFreeSpinCount: 5.0,
   bonusFreeSpinValue: 1.0,
 
+  // স্ক্যাটার বোনাস
+  scatterEnabled: false,
+  scatterChance: 500,
+  scatterMinMultiplier: 0.5,
+  scatterMaxMultiplier: 20,
+  scatterStakeUsd: 1.0,
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -222,6 +242,11 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   bonusVipMonthlyAmount:         { label: 'VIP monthly bonus', description: 'মাসিক VIP tier bonus।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
   bonusFreeSpinCount:            { label: 'Free spin count', description: 'Welcome campaign-এ ফ্রি স্পিন সংখ্যা।', unit: 'টি', min: 0, max: 100, type: 'number', category: 'বোনাস' },
   bonusFreeSpinValue:            { label: 'Free spin value', description: 'প্রতি free spin-এর বেট মান।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'বোনাস' },
+  scatterEnabled:                { label: 'স্ক্যাটার বোনাস চালু', description: 'স্ক্যাটার বোনাস ফিচার সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'স্ক্যাটার বোনাস' },
+  scatterChance:                 { label: 'স্ক্যাটার বোনাস সুযোগ (১/X)', description: 'প্রতি বেটে স্ক্যাটার বোনাস জয়ের সম্ভাবনা (১/X)।', unit: 'টি', min: 2, max: 1000000, type: 'number', category: 'স্ক্যাটার বোনাস' },
+  scatterMinMultiplier:          { label: 'সর্বনিম্ন মাল্টিপ্লায়ার', description: 'স্ক্যাটার বোনাসের সর্বনিম্ন মাল্টিপ্লায়ার।', unit: '×', min: 0.1, max: 100, type: 'number', category: 'স্ক্যাটার বোনাস' },
+  scatterMaxMultiplier:          { label: 'সর্বোচ্চ মাল্টিপ্লায়ার', description: 'স্ক্যাটার বোনাসের সর্বোচ্চ মাল্টিপ্লায়ার।', unit: '×', min: 0.1, max: 1000, type: 'number', category: 'স্ক্যাটার বোনাস' },
+  scatterStakeUsd:               { label: 'স্ক্যাটার বোনাস স্টেক', description: 'স্ক্যাটার বোনাসের জন্য ব্যবহৃত স্থির বেট মান।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'স্ক্যাটার বোনাস' },
 
   withdrawalMinCoins:             { label: 'Min withdrawal', description: 'সর্বনিম্ন উইথড্র পরিমাণ।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'উইথড্র' },
   withdrawalMaxCoins:             { label: 'Max withdrawal', description: 'প্রতি অনুরোধে সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 1, max: 1000000, type: 'number', category: 'উইথড্র' },

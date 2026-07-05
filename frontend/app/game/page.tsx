@@ -38,6 +38,7 @@ import LanguageSelector from '@/components/layout/LanguageSelector';
 import MobileGamePanels from '@/components/game/MobileGamePanels';
 import { useTranslation } from '@/hooks/useTranslation';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
+import { ScatterBonus } from '@/components/game/ScatterBonus';
 import { shortenAddress } from '@/lib/wallet';
 
 const Coin3D = lazy(() => import('@/components/game/Coin3D'));
@@ -126,6 +127,7 @@ export default function GamePage() {
     <>
       <NotificationStack />
       <SupportChat />
+      <ScatterBonus />
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       {showSettings && <SettingsModal />}
 

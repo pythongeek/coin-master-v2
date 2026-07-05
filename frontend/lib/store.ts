@@ -2,11 +2,6 @@
  * ═══════════════════════════════════════════════════════════════
  *  GAME STORE — পুরো অ্যাপের গ্লোবাল স্টেট (Zustand)
  * ═══════════════════════════════════════════════════════════════
- *
- *  Zustand React-এর useState-এর মতোই, কিন্তু যেকোনো
- *  কম্পোনেন্ট থেকে সরাসরি অ্যাক্সেস করা যায়।
- *  Context বা Props drilling দরকার নেই।
- * ═══════════════════════════════════════════════════════════════
  */
 
 import { create } from 'zustand';
@@ -37,6 +32,15 @@ export interface BetResult {
   newBalance: number;
   winStreak: number;
   cryptoRainTriggered: boolean;
+  scatter?: {
+    triggered: boolean;
+    multiplier?: number;
+    payout?: number;
+    scatterHash?: string;
+    serverSeed?: string;
+    clientSeed?: string;
+    nonce?: number;
+  };
   verification: {
     serverSeedHash: string;
     serverSeed: string;
@@ -44,6 +48,15 @@ export interface BetResult {
     nonce: number;
     rawHash: string;
   };
+  message: string;
+}
+
+export interface ScatterResult {
+  betId: string;
+  pickIndex: number;
+  multiplier: number;
+  payout: number;
+  newBalance: number;
   message: string;
 }
 
@@ -83,6 +96,8 @@ interface GameStore {
   betHistory: BetResult[];
   isAutoPlayRunning: boolean;
   targetMultiplier: number;
+  activeScatter: ScatterResult | null;
+  pendingScatter: BetResult | null;
 
   setGameStatus: (status: GameStatus) => void;
   setCurrentChoice: (choice: FlipChoice) => void;
@@ -92,6 +107,8 @@ interface GameStore {
   setIsAutoPlayRunning: (running: boolean) => void;
   setTargetMultiplier: (multiplier: number) => void;
   resetGame: () => void;
+  setActiveScatter: (scatter: ScatterResult | null) => void;
+  setPendingScatter: (bet: BetResult | null) => void;
 
   // ── চ্যাট ──────────────────────────────────────────────────
   chatMessages: ChatMessage[];
@@ -124,23 +141,6 @@ interface GameStore {
   setLocale: (locale: string) => void;
 }
 
-// ── স্টোর তৈরি ─────────────────────────────────────────────────
-//
-// persist middleware: persists user/token to localStorage so the
-// user stays logged-in across page reloads. Storage key is
-// `cf_game_store`. The previous main coin UI (pre-merge) had this
-// working — when the user logged in, refreshing the page kept them
-// logged in. The merged remote code removed the persist wrapper
-// (it was a local-only addition), so reloads now show the user as
-// logged out even though the localStorage `cf_token` and `cf_user`
-// are still present.
-//
-// `partialize` chooses which slice of the store to persist. We
-// exclude transient per-bet state (gameStatus, betHistory,
-// chatMessages, notifications) so a reload doesn't restore stale
-// UI like "spinning" or a phantom last result. We DO persist the
-// user, token, settings, and locale — the things that should
-// survive a page refresh.
 export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => ({
@@ -160,10 +160,8 @@ export const useGameStore = create<GameStore>()(
         })),
 
       logout: () => {
-        set({ user: null, token: null, lastResult: null });
+        set({ user: null, token: null, lastResult: null, activeScatter: null, pendingScatter: null });
         if (typeof window !== 'undefined') {
-          // Keep the legacy keys for back-compat with anything
-          // (LoginModal, other pages) that still reads them.
           localStorage.removeItem('cf_token');
           localStorage.removeItem('cf_user');
         }
@@ -177,13 +175,17 @@ export const useGameStore = create<GameStore>()(
       betHistory: [],
       isAutoPlayRunning: false,
       targetMultiplier: 2.0,
+      activeScatter: null,
+      pendingScatter: null,
 
-      setGameStatus:   (status) => set({ gameStatus: status }),
+      setGameStatus: (status) => set({ gameStatus: status }),
       setCurrentChoice: (choice) => set({ currentChoice: choice }),
-      setBetAmount:    (amount) => set({ betAmount: amount }),
-      setLastResult:   (result) => set({ lastResult: result }),
+      setBetAmount: (amount) => set({ betAmount: amount }),
+      setLastResult: (result) => set({ lastResult: result }),
       setIsAutoPlayRunning: (running) => set({ isAutoPlayRunning: running }),
       setTargetMultiplier: (multiplier) => set({ targetMultiplier: multiplier }),
+      setActiveScatter: (scatter) => set({ activeScatter: scatter }),
+      setPendingScatter: (bet) => set({ pendingScatter: bet }),
 
       addToBetHistory: (result) =>
         set((state) => ({
@@ -191,7 +193,7 @@ export const useGameStore = create<GameStore>()(
         })),
 
       resetGame: () =>
-        set({ gameStatus: 'idle', lastResult: null, isAutoPlayRunning: false }),
+        set({ gameStatus: 'idle', lastResult: null, isAutoPlayRunning: false, activeScatter: null, pendingScatter: null }),
 
       // ── চ্যাট ──────────────────────────────────────────────────
       chatMessages: [],
@@ -209,7 +211,7 @@ export const useGameStore = create<GameStore>()(
       activeRain: null,
       hasClaimedRain: false,
 
-      setActiveRain:     (rain) => set({ activeRain: rain, hasClaimedRain: false }),
+      setActiveRain: (rain) => set({ activeRain: rain, hasClaimedRain: false }),
       setHasClaimedRain: (claimed) => set({ hasClaimedRain: claimed }),
 
       updateRainClaims: (claimCount) =>
@@ -243,9 +245,7 @@ export const useGameStore = create<GameStore>()(
       showSettings: false,
 
       loadSettings: () => {
-        // Settings + locale are now persisted via the persist
-        // middleware below, so this is a no-op kept for
-        // back-compat with anything that calls it.
+        // Settings + locale are now persisted via the persist middleware
       },
 
       updateSettings: (newSettings) => {
@@ -267,25 +267,12 @@ export const useGameStore = create<GameStore>()(
           : (undefined as unknown as Storage)
       ),
       partialize: (state) => ({
-        // Auth — these are what makes a reload keep the user logged in.
         user: state.user,
         token: state.token,
-        // Settings + locale — should also survive a refresh.
         settings: state.settings,
         locale: state.locale,
       }),
-      // Re-hydrate on the client. On the server (SSR / first render)
-      // the initial state stays as defined in the store. Setting
-      // skipHydration: true and calling useGameStore.persist.rehydrate()
-      // from a client-only effect would also work; the default
-      // (skipHydration: false) hydrates synchronously on first read
-      // which is fine for a localStorage-backed store.
       skipHydration: false,
-      // Migrate data from the pre-persist localStorage shape
-      // (cf_token, cf_user) into the new persisted store. Runs once
-      // on the first page load after this change ships. Without
-      // this, every existing logged-in user would appear logged
-      // out until they logged in again.
       version: 1,
       migrate: (persistedState, version) => {
         if (version < 1 && typeof window !== 'undefined') {

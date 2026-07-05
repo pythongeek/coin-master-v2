@@ -32,6 +32,7 @@
 
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
 import { placeBet } from './game-engine';
 import { generateServerSeed, hashServerSeed, computeFlip } from './provably-fair';
 import { getConfig } from './admin-config';
@@ -172,8 +173,82 @@ export function setupSocketHandlers(io: SocketIOServer) {
     });
 
     // ══════════════════════════════════════════════════════════
-    //  চ্যাট ইভেন্ট: বার্তা পাঠাও
+    //  Scatter Bonus: Pick-a-Coin
+    //  Client shows 3 mystery coins; when user taps one, server
+    //  validates the pre-committed multiplier and credits the payout.
     // ══════════════════════════════════════════════════════════
+    socket.on('scatter:pick', async (data: { betId: string; pickIndex: number }) => {
+      if (!user) return socket.emit('game:error', { message: 'স্ক্যাটার বোনাস ক্লেইম করতে লগইন করুন।' });
+
+      const client = await db.connect();
+      try {
+        await client.query('BEGIN');
+
+        const betResult = await client.query(
+          `SELECT id, user_id, scatter_hash, scatter_multiplier, scatter_payout, scatter_picked
+           FROM bets WHERE id = $1 FOR UPDATE`,
+          [data.betId]
+        );
+
+        if (!betResult.rows.length) {
+          throw new Error('বেট পাওয়া যায়নি।');
+        }
+        const bet = betResult.rows[0];
+        if (bet.user_id !== user.userId) {
+          throw new Error('এই বোনাস আপনার নয়।');
+        }
+        if (bet.scatter_picked) {
+          throw new Error('স্ক্যাটার বোনাস ইতিমধ্যে ক্লেইম করা হয়েছে।');
+        }
+        if (!bet.scatter_hash || !bet.scatter_multiplier || !bet.scatter_payout) {
+          throw new Error('এই বেটে স্ক্যাটার বোনাস নেই।');
+        }
+        if (data.pickIndex < 0 || data.pickIndex > 2) {
+          throw new Error('অবৈধ কয়েন নির্বাচন।');
+        }
+
+        // Credit the scatter payout as withdrawable (real money, no wagering).
+        const creditAmount = parseFloat(bet.scatter_payout);
+        await client.query(
+          'UPDATE users SET withdrawable_balance_coins = withdrawable_balance_coins + $1, updated_at = NOW() WHERE id = $2',
+          [creditAmount, user.userId]
+        );
+
+        // Mark the bet's scatter as picked.
+        await client.query(
+          'UPDATE bets SET scatter_picked = true WHERE id = $1',
+          [data.betId]
+        );
+
+        // Record a transaction for the scatter bonus credit.
+        await client.query(
+          `INSERT INTO transactions (id, user_id, type, amount, currency, direction, status, metadata, completed_at)
+           VALUES ($1, $2, 'scatter_bonus', $3, 'USD', 'credit', 'confirmed', $4, NOW())`,
+          [uuidv4(), user.userId, creditAmount, JSON.stringify({ bet_id: data.betId, pick_index: data.pickIndex, multiplier: bet.scatter_multiplier })]
+        );
+
+        await client.query('COMMIT');
+
+        const newBalanceResult = await query('SELECT balance FROM users WHERE id = $1', [user.userId]);
+        const newBalance = parseFloat(newBalanceResult.rows[0].balance);
+
+        socket.emit('scatter:result', {
+          betId: data.betId,
+          pickIndex: data.pickIndex,
+          multiplier: parseFloat(bet.scatter_multiplier),
+          payout: creditAmount,
+          newBalance,
+          message: `🪙 স্ক্যাটার বোনাস! ${bet.scatter_multiplier}x = $${creditAmount.toFixed(2)}`,
+        });
+
+        socket.emit('balance:update', { balance: newBalance });
+      } catch (err: unknown) {
+        await client.query('ROLLBACK');
+        socket.emit('game:error', { message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        client.release();
+      }
+    });
     socket.on('chat:message', async (data: { message: string }) => {
       if (!data.message?.trim()) return;
 
