@@ -167,6 +167,12 @@ export interface GameConfig {
   dailyWheelEnabled: boolean;
   dailyWheelPrizes: { label: string; value: number; type: 'coins'; weight: number }[];
   dailyWheelCooldownHours: number;
+
+  // লিডারবোর্ড / টুর্নামেন্ট
+  leaderboardEnabled: boolean;
+  leaderboardPrizePool: number;
+  leaderboardPrizes: { rank: number; prize: number }[];
+  leaderboardResetHours: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -271,6 +277,23 @@ export const DEFAULT_CONFIG: GameConfig = {
   ],
   dailyWheelCooldownHours: 24,
 
+  // লিডারবোর্ড / টুর্নামেন্ট
+  leaderboardEnabled: true,
+  leaderboardPrizePool: 100,
+  leaderboardPrizes: [
+    { rank: 1, prize: 30 },
+    { rank: 2, prize: 20 },
+    { rank: 3, prize: 15 },
+    { rank: 4, prize: 10 },
+    { rank: 5, prize: 5 },
+    { rank: 6, prize: 5 },
+    { rank: 7, prize: 5 },
+    { rank: 8, prize: 5 },
+    { rank: 9, prize: 5 },
+    { rank: 10, prize: 10 },
+  ],
+  leaderboardResetHours: 24,
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -354,6 +377,12 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   dailyWheelEnabled:               { label: 'ডেইলি হুইল চালু', description: 'দৈনিক ফ্রি স্পিন হুইল ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'ডেইলি হুইল' },
   dailyWheelCooldownHours:         { label: 'হুইল কুলডাউন (ঘণ্টা)', description: 'প্রতি স্পিনের মধ্যে কত ঘণ্টা অপেক্ষা করতে হবে।', unit: 'h', min: 1, max: 168, type: 'number', category: 'ডেইলি হুইল' },
   dailyWheelPrizes:                { label: 'হুইল পুরস্কার', description: 'JSON array: {label,value,type,weight}।', type: 'string', category: 'ডেইলি হুইল' },
+
+  // লিডারবোর্ড / টুর্নামেন্ট
+  leaderboardEnabled:              { label: 'লিডারবোর্ড চালু', description: 'ওয়েজারিং লিডারবোর্ড ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'লিডারবোর্ড' },
+  leaderboardPrizePool:            { label: 'প্রাইজ পুল', description: 'প্রতি সেশনে সর্বমোট পুরস্কারের পরিমাণ।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'লিডারবোর্ড' },
+  leaderboardPrizes:               { label: 'পুরস্কার বন্টন', description: 'JSON array: {rank,prize}।', type: 'string', category: 'লিডারবোর্ড' },
+  leaderboardResetHours:             { label: 'রিসেট সময়', description: 'কত ঘণ্টা পর লিডারবোর্ড রিসেট হবে।', unit: 'h', min: 1, max: 168, type: 'number', category: 'লিডারবোর্ড' },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -389,6 +418,12 @@ export async function getConfig(): Promise<GameConfig> {
             (config as any)[camelKey] = JSON.parse(row.value);
           } catch {
             (config as any)[camelKey] = DEFAULT_CONFIG.dailyWheelPrizes;
+          }
+        } else if (camelKey === 'leaderboardPrizes') {
+          try {
+            (config as any)[camelKey] = JSON.parse(row.value);
+          } catch {
+            (config as any)[camelKey] = DEFAULT_CONFIG.leaderboardPrizes;
           }
         } else {
           (config as any)[camelKey] = row.value;

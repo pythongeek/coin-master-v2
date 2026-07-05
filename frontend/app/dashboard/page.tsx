@@ -13,6 +13,7 @@ import BetHistory from '@/components/dashboard/BetHistory';
 import { VipProgressCard } from '@/components/dashboard/VipProgressCard';
 import { AchievementsGrid } from '@/components/dashboard/AchievementsGrid';
 import { DailyWheelCard } from '@/components/dashboard/DailyWheelCard';
+import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
@@ -163,6 +164,9 @@ export default function DashboardPage() {
 
         {/* Daily wheel */}
         <DailyWheelCard wheel={stats?.wheel} token={token} onSpin={loadStats} />
+
+        {/* Leaderboard */}
+        <LeaderboardCard token={token} />
 
         {/* Achievements */}
         <AchievementsGrid achievements={stats?.achievements} />

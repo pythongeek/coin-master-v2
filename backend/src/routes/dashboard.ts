@@ -20,6 +20,7 @@ import { getOrSet } from '../services/cache';
 import { getVipProgress } from '../services/vip';
 import { checkAndUnlockAchievements, getUserAchievements } from '../services/achievements';
 import { getWheelStatus, spinDailyWheel } from '../services/daily-wheel';
+import { getLeaderboard, getLeaderboardPosition } from '../services/leaderboard';
 
 const router = Router();
 
@@ -430,6 +431,21 @@ router.post('/wheel/spin', authMiddleware, async (req: Request, res: Response) =
     res.json({ success: true, data: result });
   } catch (err: unknown) {
     res.status(400).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/dashboard/leaderboard — ইউজারের জন্য লিডারবোর্ড
+// ══════════════════════════════════════════════════════════════
+router.get('/leaderboard', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const period = (req.query.period as 'daily' | 'weekly') || 'daily';
+    const entries = await getLeaderboard(period);
+    const position = await getLeaderboardPosition(self.userId, period);
+    res.json({ success: true, data: { entries, position } });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
   }
 });
 

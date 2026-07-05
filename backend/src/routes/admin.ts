@@ -24,6 +24,7 @@ import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
 import { invalidateCache } from '../services/cache';
 import { getAchievementStats } from '../services/achievements';
 import { getWheelStatus, spinDailyWheel, getWheelStats } from '../services/daily-wheel';
+import { getLeaderboard, getLeaderboardPosition, distributeLeaderboardPrizes, getLeaderboardStats } from '../services/leaderboard';
 
 const router = Router();
 
@@ -236,6 +237,33 @@ router.get('/wheel-stats', adminLimiter, authMiddleware, roleMiddleware(['super_
   try {
     const stats = await getWheelStats();
     res.json({ success: true, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/leaderboard — ওয়েজারিং লিডারবোর্ড
+// ══════════════════════════════════════════════════════════════
+router.get('/leaderboard', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const period = (req.query.period as 'daily' | 'weekly') || 'daily';
+    const entries = await getLeaderboard(period);
+    const stats = await getLeaderboardStats();
+    res.json({ success: true, entries, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/admin/leaderboard/distribute — পুরস্কার বিতরণ
+// ══════════════════════════════════════════════════════════════
+router.post('/leaderboard/distribute', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+  try {
+    const { period = 'daily' } = req.body as { period?: 'daily' | 'weekly' };
+    const result = await distributeLeaderboardPrizes(period);
+    res.json({ success: true, result });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });
   }
