@@ -189,7 +189,10 @@ CREATE TABLE IF NOT EXISTS transactions (
   type           VARCHAR(20) NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'bet', 'win', 'rakeback', 'rain', 'bonus', 'fee')),
   amount         DECIMAL(36, 18) NOT NULL CHECK (amount > 0),
   fee            DECIMAL(36, 18) DEFAULT 0.000000000000000000,
-  status         VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirming', 'completed', 'failed', 'cancelled')),
+  status         VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirming', 'completed', 'failed', 'cancelled', 'confirmed')),
+  currency       VARCHAR(10) DEFAULT 'COIN',
+  direction      VARCHAR(10) CHECK (direction IN ('debit', 'credit')) DEFAULT 'credit',
+  related_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   tx_hash        VARCHAR(255),
   block_number   BIGINT,
   confirmations  INTEGER DEFAULT 0,
@@ -229,7 +232,27 @@ CREATE TABLE IF NOT EXISTS ledger_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_ledger_alerts_user_id ON ledger_alerts(user_id);
 
+-- ── TABLE: audit_log ─────────────────────────────
+-- Append-only log of sensitive actions: admin config changes,
+-- admin user promotions, JWT issuance, rate-limit triggers, security events.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+  category        VARCHAR(20) NOT NULL CHECK (category IN ('admin', 'auth', 'security', 'config', 'system')),
+  action          VARCHAR(100) NOT NULL,
+  ip_address      INET,
+  user_agent      TEXT,
+  details         JSONB DEFAULT '{}',
+  severity        VARCHAR(10) NOT NULL DEFAULT 'info' CHECK (severity IN ('debug', 'info', 'warn', 'error', 'critical')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_created ON audit_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_category_severity ON audit_log(category, severity, created_at DESC);
+
 -- ── TABLE: audit_logs ─────────────────────────────
+-- Each row includes a SHA-256 chain_hash over the previous_hash + id + data,
+-- making tampering detectable for compliance / forensics.
 CREATE TABLE IF NOT EXISTS audit_logs (
   id BIGSERIAL PRIMARY KEY,
   table_name VARCHAR(50) NOT NULL,
@@ -240,12 +263,14 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
   ip_address INET,
   user_agent TEXT,
+  chain_hash VARCHAR(64), -- nullable until chain-hash feature is enabled
   archived_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_table_record ON audit_logs(table_name, record_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_chain_hash ON audit_logs(chain_hash);
 
 -- Trigger for audit logging
 CREATE OR REPLACE FUNCTION audit_trigger()
@@ -254,6 +279,8 @@ DECLARE
     v_changed_by UUID;
     v_ip INET;
     v_user_agent TEXT;
+    v_prev_hash TEXT;
+    v_chain_hash BYTEA;
 BEGIN
     BEGIN
         v_changed_by := NULLIF(current_setting('audit.user_id', true), '')::UUID;
@@ -274,16 +301,22 @@ BEGIN
     END;
 
     IF TG_OP = 'DELETE' THEN
-        INSERT INTO audit_logs (table_name, record_id, action, old_data, changed_by, ip_address, user_agent)
-        VALUES (TG_TABLE_NAME, OLD.id, 'DELETE', row_to_json(OLD), v_changed_by, v_ip, v_user_agent);
+        v_prev_hash := COALESCE((SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1), 'genesis');
+        v_chain_hash := digest(v_prev_hash || TG_TABLE_NAME || OLD.id::text || 'DELETE' || COALESCE(row_to_json(OLD)::text, ''), 'sha256');
+        INSERT INTO audit_logs (table_name, record_id, action, old_data, changed_by, ip_address, user_agent, chain_hash)
+        VALUES (TG_TABLE_NAME, OLD.id, 'DELETE', row_to_json(OLD), v_changed_by, v_ip, v_user_agent, encode(v_chain_hash, 'hex'));
         RETURN OLD;
     ELSIF TG_OP = 'UPDATE' THEN
-        INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data, changed_by, ip_address, user_agent)
-        VALUES (TG_TABLE_NAME, OLD.id, 'UPDATE', row_to_json(OLD), row_to_json(NEW), v_changed_by, v_ip, v_user_agent);
+        v_prev_hash := COALESCE((SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1), 'genesis');
+        v_chain_hash := digest(v_prev_hash || TG_TABLE_NAME || OLD.id::text || 'UPDATE' || COALESCE(row_to_json(OLD)::text, '') || COALESCE(row_to_json(NEW)::text, ''), 'sha256');
+        INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data, changed_by, ip_address, user_agent, chain_hash)
+        VALUES (TG_TABLE_NAME, OLD.id, 'UPDATE', row_to_json(OLD), row_to_json(NEW), v_changed_by, v_ip, v_user_agent, encode(v_chain_hash, 'hex'));
         RETURN NEW;
     ELSIF TG_OP = 'INSERT' THEN
-        INSERT INTO audit_logs (table_name, record_id, action, new_data, changed_by, ip_address, user_agent)
-        VALUES (TG_TABLE_NAME, NEW.id, 'INSERT', row_to_json(NEW), v_changed_by, v_ip, v_user_agent);
+        v_prev_hash := COALESCE((SELECT chain_hash FROM audit_logs ORDER BY id DESC LIMIT 1), 'genesis');
+        v_chain_hash := digest(v_prev_hash || TG_TABLE_NAME || NEW.id::text || 'INSERT' || COALESCE(row_to_json(NEW)::text, ''), 'sha256');
+        INSERT INTO audit_logs (table_name, record_id, action, new_data, changed_by, ip_address, user_agent, chain_hash)
+        VALUES (TG_TABLE_NAME, NEW.id, 'INSERT', row_to_json(NEW), v_changed_by, v_ip, v_user_agent, encode(v_chain_hash, 'hex'));
         RETURN NEW;
     END IF;
 END;

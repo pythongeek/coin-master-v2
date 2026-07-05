@@ -1,7 +1,7 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  STATS CARDS — ইউজারের মূল পরিসংখ্যান কার্ড
+ *  STATS CARDS — ইউজারের মূল Stats কার্ড
  * ═══════════════════════════════════════════════════════════════
  */
 import { Wallet, Dices, BarChart3, Coins, TrendingUp, TrendingDown, Trophy, type LucideIcon } from 'lucide-react';
@@ -62,44 +62,44 @@ export default function StatsCards({ stats, loading }: { stats: Stats | null; lo
 
   const cards: CardProps[] = [
     {
-      label: 'ব্যালেন্স',
+      label: 'Balance',
       value: `$${stats.balance.toFixed(2)}`,
-      sub: 'বর্তমান ওয়ালেট',
+      sub: 'বর্তমান Wallet',
       color: 'green',
       Icon: Wallet,
     },
     {
-      label: 'মোট বেট',
+      label: 'Total Bets',
       value: stats.totalBets.toLocaleString(),
       sub: `${stats.totalWins}জয় / ${stats.totalBets - stats.totalWins}হার`,
       color: 'blue',
       Icon: Dices,
     },
     {
-      label: 'জয়ের হার',
+      label: 'Win Rate',
       value: `${stats.winRate}%`,
       sub: stats.winRate >= 50 ? 'ভালো চলছে' : 'সাবধান',
       color: stats.winRate >= 50 ? 'green' : 'red',
       Icon: BarChart3,
     },
     {
-      label: 'মোট বাজি',
+      label: 'Total Wagered',
       value: `$${stats.totalWagered.toFixed(2)}`,
-      sub: 'সব বেটের সমষ্টি',
+      sub: 'সব Betের সমষ্টি',
       color: 'purple',
       Icon: Coins,
     },
     {
-      label: 'নেট লাভ/লোকসান',
+      label: 'Net P/L',
       value: `${stats.netPnl >= 0 ? '+' : ''}$${stats.netPnl.toFixed(2)}`,
       sub: stats.netPnl >= 0 ? 'মোট লাভ' : 'মোট লোকসান',
       color: stats.netPnl >= 0 ? 'green' : 'red',
       Icon: stats.netPnl >= 0 ? TrendingUp : TrendingDown,
     },
     {
-      label: 'সর্বোচ্চ জয়',
+      label: 'Biggest Win',
       value: `$${stats.biggestWin.toFixed(2)}`,
-      sub: 'একক বেটে সর্বোচ্চ',
+      sub: 'একক Betে সর্বোচ্চ',
       color: 'gold',
       Icon: Trophy,
     },

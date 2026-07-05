@@ -1,7 +1,7 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  USER DASHBOARD PAGE — ইউজারের সম্পূর্ণ ড্যাশবোর্ড
+ *  USER DASHBOARD PAGE — Complete player dashboard
  * ═══════════════════════════════════════════════════════════════
  */
 import { useState, useEffect } from 'react';
@@ -10,10 +10,15 @@ import { BarChart3, Gamepad2, ShieldCheck, AlertTriangle, Loader2 } from 'lucide
 import StatsCards from '@/components/dashboard/StatsCards';
 import ProfitChart from '@/components/dashboard/ProfitChart';
 import BetHistory from '@/components/dashboard/BetHistory';
+import { useTranslation } from '@/hooks/useTranslation';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
   const [stats,   setStats]   = useState(null);
   const [chart,   setChart]   = useState([]);
   const [history, setHistory] = useState([]);
@@ -21,7 +26,7 @@ export default function DashboardPage() {
   const [kycStatus, setKycStatus] = useState<'unverified' | 'pending' | 'verified' | 'rejected'>('unverified');
   const [loading, setLoading] = useState(true);
 
-  // Demo userId — real app এ JWT থেকে আসবে
+  // Demo userId — real app: comes from JWT
   const userId = typeof window !== 'undefined'
     ? JSON.parse(localStorage.getItem('cf_user') || '{}')?.userId || 'demo'
     : 'demo';
@@ -36,10 +41,10 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const [statsRes, chartRes, histRes, kycRes] = await Promise.all([
-        fetch(`${API}/api/dashboard/stats/${userId}`,    { headers }),
-        fetch(`${API}/api/dashboard/chart/${userId}?days=30`, { headers }),
-        fetch(`${API}/api/dashboard/history/${userId}?page=${page}&limit=15`, { headers }),
-        fetch(`${API}/api/kyc/status`, { headers }),
+        fetch(`${API}/dashboard/stats/${userId}`,    { headers }),
+        fetch(`${API}/dashboard/chart/${userId}?days=30`, { headers }),
+        fetch(`${API}/dashboard/history/${userId}?page=${page}&limit=15`, { headers }),
+        fetch(`${API}/kyc/status`, { headers }),
       ]);
 
       const [s, c, h, k] = await Promise.all([
@@ -48,7 +53,7 @@ export default function DashboardPage() {
         histRes.json(),
         kycRes.json()
       ]);
-      
+
       if (s.success) setStats(s.data);
       if (c.success) setChart(c.data);
       if (h.success) {
@@ -68,7 +73,7 @@ export default function DashboardPage() {
 
   return (
     <main className="min-h-screen p-4 md:p-6 max-w-5xl mx-auto">
-      {/* হেডার */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-brand-info/10 border border-brand-info/25
@@ -77,20 +82,20 @@ export default function DashboardPage() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="heading-display text-xl text-text-primary">আমার ড্যাশবোর্ড</h1>
+              <h1 className="heading-display text-xl text-text-primary">My Dashboard</h1>
               {kycStatus === 'verified' && (
                 <span className="flex items-center gap-1 text-[10px] font-mono text-brand-green bg-brand-green/10 border border-brand-green/20 px-2 py-0.5 rounded-full">
                   <ShieldCheck size={10} />
-                  ভেরিফাইড
+                  Verified
                 </span>
               )}
             </div>
-            <p className="text-text-muted text-xs font-mono mt-0.5">আপনার সম্পূর্ণ গেমিং পরিসংখ্যান</p>
+            <p className="text-text-muted text-xs font-mono mt-0.5">Your complete gaming statistics</p>
           </div>
         </div>
         <Link href="/game" className="btn-brand flex items-center gap-1.5 text-sm py-2 px-4">
           <Gamepad2 size={15} />
-          গেম খেলুন
+          Play Now
         </Link>
       </div>
 
@@ -119,14 +124,14 @@ export default function DashboardPage() {
             </div>
             <div>
               <p className="text-xs font-semibold text-text-primary">
-                {kycStatus === 'unverified' && 'কেওয়াইসি (KYC) যাচাইকরণ প্রয়োজন'}
-                {kycStatus === 'pending' && 'আপনার ভেরিফিকেশন প্রক্রিয়াধীন রয়েছে'}
-                {kycStatus === 'rejected' && 'ভেরিফিকেশন প্রত্যাখ্যান করা হয়েছে'}
+                {kycStatus === 'unverified' && 'KYC verification required'}
+                {kycStatus === 'pending' && 'Your verification is in progress'}
+                {kycStatus === 'rejected' && 'Verification was rejected'}
               </p>
               <p className="text-[11px] text-text-muted mt-0.5">
-                {kycStatus === 'unverified' && 'নিরাপদ ক্রিপ্টো উইথড্রয়াল সক্ষম করতে আপনার পরিচয় যাচাই করুন।'}
-                {kycStatus === 'pending' && 'আমাদের নিরাপত্তা টিম আপনার ডকুমেন্টস চেক করছে। এটিতে ২-৫ মিনিট সময় লাগতে পারে।'}
-                {kycStatus === 'rejected' && 'আপনার ডকুমেন্টস পলিসি পূরণ করতে পারেনি। অনুগ্রহ করে সঠিক তথ্য দিয়ে আবার চেষ্টা করুন।'}
+                {kycStatus === 'unverified' && 'Verify your identity to enable secure crypto withdrawals.'}
+                {kycStatus === 'pending' && 'Our security team is reviewing your documents. This usually takes 2-5 minutes.'}
+                {kycStatus === 'rejected' && 'Your documents did not meet policy requirements. Please try again with correct info.'}
               </p>
             </div>
           </div>
@@ -135,20 +140,20 @@ export default function DashboardPage() {
               href="/kyc"
               className="text-xs font-semibold px-4 py-2 rounded-lg bg-surface hover:bg-surface2 border border-border text-text-primary hover:text-brand-green transition-all self-start sm:self-center font-mono"
             >
-              ভেরিফাই করুন
+              Verify Now
             </Link>
           )}
         </div>
       )}
 
       <div className="space-y-5">
-        {/* স্ট্যাটস কার্ড */}
+        {/* Stats cards */}
         <StatsCards stats={stats} loading={loading} />
 
-        {/* P&L চার্ট */}
+        {/* P&L chart */}
         <ProfitChart data={chart} loading={loading} />
 
-        {/* বেট ইতিহাস */}
+        {/* Bet history */}
         <BetHistory
           history={history}
           loading={loading}

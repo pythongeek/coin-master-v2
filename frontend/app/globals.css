@@ -34,6 +34,8 @@
 @layer components {
 
   /* ── প্রাইমারি বাটন — Stake-স্টাইল সলিড ফিল + টপ বেভেল হাইলাইট ── */
+  .bg-void { background-color: #0B0E11; }
+
   .btn-brand {
     @apply relative px-6 py-3 font-display font-semibold text-void
            bg-brand-green rounded-lg shadow-elevate-sm
@@ -124,6 +126,22 @@
   @keyframes ambientPulse {
     0%, 100% { opacity: 0.04; transform: scale(1); }
     50% { opacity: 0.09; transform: scale(1.06); }
+  }
+
+  .arena-win-glow {
+    animation: arenaWinGlow 0.8s ease-out infinite alternate;
+  }
+  @keyframes arenaWinGlow {
+    from { box-shadow: inset 0 0 60px rgba(0, 197, 102, 0.15); }
+    to   { box-shadow: inset 0 0 120px rgba(0, 197, 102, 0.35); }
+  }
+
+  .arena-loss-glow {
+    animation: arenaLossGlow 0.8s ease-out infinite alternate;
+  }
+  @keyframes arenaLossGlow {
+    from { box-shadow: inset 0 0 60px rgba(232, 56, 79, 0.12); }
+    to   { box-shadow: inset 0 0 120px rgba(232, 56, 79, 0.3); }
   }
 
   .screen-shake {

@@ -3,7 +3,10 @@ import crypto from 'crypto';
 const ENCRYPTION_ALGORITHM = 'aes-256-cbc';
 
 function getEncryptionKey(): Buffer {
-  const secret = process.env.JWT_SECRET || 'dev_secret_fallback_key_32_bytes_long_123456';
+const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('FATAL: JWT_SECRET environment variable is required and must be at least 32 characters. Refusing to start.');
+  }
   return crypto.createHash('sha256').update(secret).digest();
 }
 

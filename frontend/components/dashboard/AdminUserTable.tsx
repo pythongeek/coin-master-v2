@@ -1,7 +1,7 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  ADMIN USER MANAGEMENT — ইউজার ম্যানেজমেন্ট টেবিল
+ *  ADMIN USER MANAGEMENT — User Management টেবিল
  * ═══════════════════════════════════════════════════════════════
  *
  *  এডমিন এখান থেকে:
@@ -12,9 +12,12 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Check, X, Pencil, Lock, Unlock } from 'lucide-react';
+import { Search, Check, X, Pencil, Lock, Unlock, ChevronLeft, ChevronRight } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 interface UserRow {
   id:             string;
@@ -29,60 +32,81 @@ interface UserRow {
   created_at:     string;
 }
 
-// ডেমো ডেটা — ব্যাকএন্ড কানেক্ট না থাকলে দেখাবে
-const DEMO_USERS: UserRow[] = [
-  { id: '1', username: 'rakib_99',    email: 'rakib@example.com', wallet_address: null, balance: 142.50, is_active: true,  is_admin: false, total_bets: 312, net_pnl: 42.50,  created_at: '2026-05-12' },
-  { id: '2', username: 'player_a3f2', email: null, wallet_address: '0xA3f2...8B1c', balance: 8.20,   is_active: true,  is_admin: false, total_bets: 88,  net_pnl: -91.80, created_at: '2026-06-01' },
-  { id: '3', username: 'sumaiya_k',   email: 'sumaiya@example.com', wallet_address: null, balance: 0.00, is_active: false, is_admin: false, total_bets: 1204,net_pnl: -340.10, created_at: '2026-03-22' },
-  { id: '4', username: 'admin_main',  email: 'admin@cryptoflip.com', wallet_address: null, balance: 1000.00, is_active: true, is_admin: true, total_bets: 0, net_pnl: 0, created_at: '2026-01-01' },
-];
-
 export default function AdminUserTable() {
   const [users, setUsers]     = useState<UserRow[]>([]);
   const [search, setSearch]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
+  const [page, setPage]       = useState(1);
+  const [limit, setLimit]     = useState(20);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal]     = useState(0);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBalance, setEditBalance] = useState('');
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
-  const fetchUsers = useCallback(async (q = '') => {
+  const fetchUsers = useCallback(async (q = '', p = 1, l = 20) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/api/dashboard/admin/users?search=${encodeURIComponent(q)}`, {
+      const res = await fetch(`${API}/dashboard/admin/users?search=${encodeURIComponent(q)}&page=${p}&limit=${l}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (data.success) {
-        setUsers(data.data || []);
+        setUsers((data.data || []).map((u: any) => ({
+          id: u.id,
+          username: u.username,
+          email: u.email ?? null,
+          wallet_address: u.wallet_address ?? null,
+          balance: parseFloat(u.balance || '0'),
+          is_active: u.is_active,
+          is_admin: u.is_admin,
+          total_bets: parseInt(u.total_bets || '0', 10),
+          net_pnl: parseFloat(u.net_pnl || '0'),
+          created_at: u.created_at,
+        })));
+        setTotal(data.pagination?.total || 0);
+        setTotalPages(data.pagination?.totalPages || 1);
       } else {
-        setError(data.error || 'ইউজার লোড করতে ব্যর্থ');
+        setError(data.error || 'Failed to load users');
       }
     } catch (e) {
-      setError('ব্যাকএন্ডের সাথে সংযোগ স্থাপন করা যায়নি');
+      setError('Cannot connect to backend');
     }
     setLoading(false);
   }, [token]);
 
   useEffect(() => {
-    const timer = setTimeout(() => fetchUsers(search), 400); // ডিবাউন্স
+    const timer = setTimeout(() => { setPage(1); fetchUsers(search, 1, limit); }, 400);
     return () => clearTimeout(timer);
-  }, [search, fetchUsers]);
+  }, [search, limit, fetchUsers]);
+
+  useEffect(() => {
+    fetchUsers(search, page, limit);
+  }, [page, fetchUsers]);
 
   // ── ইউজার ফ্রিজ/আনফ্রিজ ──────────────────────────────────────
   const toggleActive = async (user: UserRow) => {
+    if (user.is_admin) return;
     const newStatus = !user.is_active;
     setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: newStatus } : u));
-
     try {
-      await fetch(`${API}/api/dashboard/admin/users/${user.id}`, {
+      const res = await fetch(`${API}/dashboard/admin/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ isActive: newStatus }),
       });
-    } catch { /* demo mode */ }
+      const data = await res.json();
+      if (!data.success) {
+        setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !newStatus } : u));
+        setError(data.error || 'Update failed');
+      }
+    } catch {
+      setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !newStatus } : u));
+      setError('Network error');
+    }
   };
 
   // ── ব্যালেন্স এডিট সেভ করো ───────────────────────────────────
@@ -90,28 +114,37 @@ export default function AdminUserTable() {
     const newBalance = parseFloat(editBalance);
     if (isNaN(newBalance) || newBalance < 0) return;
 
+    const prevBalance = users.find(u => u.id === userId)?.balance ?? 0;
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: newBalance } : u));
     setEditingId(null);
 
     try {
-      await fetch(`${API}/api/dashboard/admin/users/${userId}`, {
+      const res = await fetch(`${API}/dashboard/admin/users/${userId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ balance: newBalance }),
       });
-    } catch { /* demo mode */ }
+      const data = await res.json();
+      if (!data.success) {
+        setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: prevBalance } : u));
+        setError(data.error || 'Balance update failed');
+      }
+    } catch {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: prevBalance } : u));
+      setError('Network error');
+    }
   };
 
   return (
     <div className="glass-card overflow-hidden">
       {/* হেডার ও সার্চ */}
       <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
-        <h3 className="heading-display text-sm text-text-primary">ইউজার ম্যানেজমেন্ট</h3>
+        <h3 className="heading-display text-sm text-text-primary">User Management</h3>
         <div className="relative max-w-xs w-full">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
           <input
             type="text"
-            placeholder="ইউজারনেম বা ইমেইল খুঁজুন..."
+            placeholder="Search username or email..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="input-cyber text-xs py-1.5 pl-8"
@@ -124,18 +157,18 @@ export default function AdminUserTable() {
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="border-b border-border text-text-muted text-left">
-              {['ইউজার', 'যোগাযোগ', 'ব্যালেন্স', 'বেট', 'P&L', 'স্ট্যাটাস', 'অ্যাকশন'].map(h => (
+              {['User', 'Contact', 'Balance', 'Bets', 'P&L', 'Status', 'Actions'].map(h => (
                 <th key={h} className="px-4 py-2 font-mono font-normal">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">লোড হচ্ছে...</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">Loading...</td></tr>
             ) : error ? (
               <tr><td colSpan={7} className="px-4 py-8 text-center text-brand-red">{error}</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">কোনো ইউজার পাওয়া যায়নি।</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">No users found.</td></tr>
             ) : (
               users.map((u) => (
                 <tr key={u.id} className="border-b border-border/50 hover:bg-white/2">
@@ -172,14 +205,14 @@ export default function AdminUserTable() {
                       <button
                         onClick={() => { setEditingId(u.id); setEditBalance(String(u.balance)); }}
                         className="flex items-center gap-1.5 text-brand-green hover:underline"
-                        title="ব্যালেন্স এডিট করুন"
+                        title="Edit balance"
                       >
                         ${u.balance.toFixed(2)} <Pencil size={11} className="text-text-muted" />
                       </button>
                     )}
                   </td>
 
-                  {/* বেট সংখ্যা */}
+                  {/* Number of bets */}
                   <td className="px-4 py-2.5 text-text-secondary">{u.total_bets}</td>
 
                   {/* P&L */}
@@ -195,7 +228,7 @@ export default function AdminUserTable() {
                         : 'bg-brand-red/15 text-brand-red'
                     }`}>
                       <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                      {u.is_active ? 'সক্রিয়' : 'ফ্রিজড'}
+                      {u.is_active ? 'Active' : 'Frozen'}
                     </span>
                   </td>
 
@@ -211,7 +244,7 @@ export default function AdminUserTable() {
                         }`}
                       >
                         {u.is_active ? <Lock size={11} /> : <Unlock size={11} />}
-                        {u.is_active ? 'ফ্রিজ করুন' : 'আনফ্রিজ করুন'}
+                        {u.is_active ? 'Freeze' : 'Unfreeze'}
                       </button>
                     )}
                   </td>
@@ -220,6 +253,37 @@ export default function AdminUserTable() {
             )}
           </tbody>
         </table>
+      </div>
+
+      {/* Pagination */}
+      <div className="px-4 py-3 border-t border-border flex items-center justify-between gap-3">
+        <div className="text-xs text-text-muted">
+          Showing {users.length} of {total} users
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="px-2 py-1 rounded border border-border text-text-secondary disabled:opacity-40"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          <span className="text-xs text-text-muted">Page {page} / {totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="px-2 py-1 rounded border border-border text-text-secondary disabled:opacity-40"
+          >
+            <ChevronRight size={14} />
+          </button>
+          <select
+            value={limit}
+            onChange={(e) => setLimit(parseInt(e.target.value))}
+            className="ml-2 px-2 py-1 rounded border border-border text-xs bg-void text-text-secondary"
+          >
+            {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+          </select>
+        </div>
       </div>
     </div>
   );

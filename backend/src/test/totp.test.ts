@@ -39,8 +39,8 @@ const mockUsers: any[] = [
     email: 'testuser@example.com',
     password_hash: '', // will be set in runTests
     balance: '100.00',
-    is_admin: true,
-    role: 'super_admin',
+    is_admin: false,
+    role: 'user',
     two_factor_secret: null,
     two_factor_enabled: false,
     two_factor_temp_secret: null,
@@ -98,6 +98,12 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
     const id = params[0];
     const user = mockUsers.find(u => u.id === id);
     return { rows: user ? [{ two_factor_secret: user.two_factor_secret, two_factor_enabled: user.two_factor_enabled }] : [] };
+  }
+  
+  if (normalized.includes('SELECT two_factor_secret, two_factor_enabled, is_admin FROM users WHERE id = $1')) {
+    const id = params[0];
+    const user = mockUsers.find(u => u.id === id);
+    return { rows: user ? [{ two_factor_secret: user.two_factor_secret, two_factor_enabled: user.two_factor_enabled, is_admin: user.is_admin }] : [] };
   }
   
   if (normalized.includes('UPDATE users SET two_factor_secret = NULL, two_factor_enabled = false WHERE id = $1')) {

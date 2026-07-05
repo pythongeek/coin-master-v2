@@ -1,19 +1,19 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  SQUAD FLIP — সামাজিক পুল বেটিং ফিচার
+ *  SQUAD FLIP — Social pool betting feature
  * ═══════════════════════════════════════════════════════════════
  *
- *  বন্ধুরা মিলে একসাথে বেট করার ইউনিক ফিচার।
+ *  A unique feature that lets friends bet together.
  *
- *  ফ্লো:
+ *  Flow:
  *  ──────────────────────────────────────────────────────────────
- *  ১. কেউ একজন স্কোয়াড তৈরি করে (বেট পরিমাণ + পছন্দ ঠিক করে)
- *  ২. একটি ইনভাইট কোড/লিংক জেনারেট হয়
- *  ৩. বন্ধুরা সেই লিংকে ক্লিক করে যোগ দেয়
- *  ৪. ২+ জন হলে স্কোয়াড "রেডি" হয়ে যায়
- *  ৫. ক্রিয়েটর "ফ্লিপ" চাপলে কয়েন ঘোরে
- *  ৬. জিতলে সবার মধ্যে সমান ভাগে টাকা বণ্টন হয়
+ *  1. Someone creates a squad (sets bet amount + choice)
+ *  2. An invite code/link is generated
+ *  3. Friends click the link to join
+ *  4. Once 2+ people join, the squad becomes "ready"
+ *  ৫. ক্রিয়েটর "ফ্লিপ" চাপলে Coin ঘোরে
+ *  6. On a win, the payout is split equally among members
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -53,7 +53,7 @@ export default function SquadFlip() {
   const [squadChoice, setSquadChoice] = useState<'heads' | 'tails'>(currentChoice);
   const [copied, setCopied] = useState(false);
 
-  // ── সকেট ইভেন্ট শোনো ────────────────────────────────────────
+  // ── Listen for socket events ────────────────────────────────────────
   useEffect(() => {
     const socket = getSocket(undefined);
 
@@ -86,7 +86,7 @@ export default function SquadFlip() {
     };
   }, [activeSquad, updateBalance]);
 
-  // ── নতুন স্কোয়াড তৈরি করো ───────────────────────────────────
+  // ── Create new squad ───────────────────────────────────
   const createSquad = () => {
     if (!user) return;
     setCreating(true);
@@ -94,14 +94,14 @@ export default function SquadFlip() {
     socket.emit('squad:create', { betAmount: squadBetAmount, choice: squadChoice });
   };
 
-  // ── স্কোয়াডে যোগ দাও ────────────────────────────────────────
+  // ── Join squad ────────────────────────────────────────
   const joinSquad = () => {
     if (!user || !joinCode.trim()) return;
     const socket = getSocket(undefined);
     socket.emit('squad:join', { squadId: joinCode.trim() });
   };
 
-  // ── ইনভাইট লিংক কপি করো ────────────────────────────────────
+  // ── Copy invite link ────────────────────────────────────
   const copyInviteLink = () => {
     if (!activeSquad) return;
     const link = `${window.location.origin}/game?squad=${activeSquad.squadId}`;
@@ -110,14 +110,14 @@ export default function SquadFlip() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ── স্কোয়াড ফ্লিপ শুরু করো (শুধু ক্রিয়েটর) ───────────────────
+  // ── Start squad flip (creator only) ───────────────────
   const startFlip = () => {
     if (!activeSquad || flipping) return;
     const socket = getSocket(undefined);
     socket.emit('squad:flip', { squadId: activeSquad.squadId });
   };
 
-  // ── স্কোয়াড ছেড়ে দাও ───────────────────────────────────────
+  // ── Leave squad ───────────────────────────────────────
   const leaveSquad = () => {
     setActiveSquad(null);
     setSquadResult(null);
@@ -127,7 +127,7 @@ export default function SquadFlip() {
     return (
       <div className="glass-card p-5 text-center border-brand-maroon/20">
         <Users size={26} className="mx-auto mb-2 text-text-muted" />
-        <p className="text-text-muted text-xs font-mono">স্কোয়াড ফ্লিপ খেলতে লগইন করুন</p>
+        <p className="text-text-muted text-xs font-mono">Log in to play Squad Flip</p>
       </div>
     );
   }
@@ -136,17 +136,17 @@ export default function SquadFlip() {
     return (
       <div className="glass-card p-5 text-center border-brand-maroon/20 bg-void/80 backdrop-blur-sm animate-pulse-soft">
         <Users size={26} className="mx-auto mb-2 text-brand-maroon" />
-        <p className="text-brand-maroon text-xs font-mono font-bold">অটো-প্লে চালু আছে</p>
-        <p className="text-text-muted text-[10px] font-mono mt-1">স্কোয়াড ফ্লিপ খেলার আগে অটো-প্লে বন্ধ করুন</p>
+        <p className="text-brand-maroon text-xs font-mono font-bold">Autoplay is enabled</p>
+        <p className="text-text-muted text-[10px] font-mono mt-1">Disable autoplay before playing Squad Flip</p>
       </div>
     );
   }
 
-  // ── সক্রিয় স্কোয়াড থাকলে তার স্ট্যাটাস দেখাও ───────────────
+  // ── If a squad is active, show its status ───────────────
   if (activeSquad) {
     const perPersonPayout = (activeSquad.betAmount * activeSquad.memberCount * 0.99 / activeSquad.memberCount).toFixed(2);
 
-    // ── রেজাল্ট এসে গেলে আলাদা কার্ড দেখাও ──────────────────
+    // ── When result arrives, show a separate card ──────────────────
     if (squadResult) {
       return (
         <div className={`glass-card-raised p-6 text-center border ${
@@ -158,14 +158,14 @@ export default function SquadFlip() {
             {squadResult.won ? <Trophy size={28} /> : <XCircle size={28} />}
           </div>
           <div className={`heading-display text-xl mb-1 ${squadResult.won ? 'text-brand-green' : 'text-brand-red'}`}>
-            {squadResult.won ? 'স্কোয়াড জিতেছে!' : 'স্কোয়াড হেরেছে!'}
+            {squadResult.won ? 'Squad won!' : 'Squad lost!'}
           </div>
           <div className="text-text-secondary font-mono text-sm mb-3">
-            {squadResult.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'} | {squadResult.memberCount} জন সদস্য
+            {squadResult.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'} | {squadResult.memberCount} members
           </div>
           {squadResult.won && (
             <div className="text-brand-green font-mono font-semibold text-2xl mb-1">
-              +${squadResult.perPersonPayout.toFixed(2)} <span className="text-sm">/ জন</span>
+              +${squadResult.perPersonPayout.toFixed(2)} <span className="text-sm">/ person</span>
             </div>
           )}
           <button
@@ -174,7 +174,7 @@ export default function SquadFlip() {
                        text-brand-maroon text-sm font-mono hover:bg-brand-maroon/25 transition-all"
           >
             <RotateCcw size={13} />
-            নতুন স্কোয়াড তৈরি করুন
+            Create new squad
           </button>
         </div>
       );
@@ -185,18 +185,18 @@ export default function SquadFlip() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="heading-display text-sm text-brand-maroon flex items-center gap-1.5">
             <Users size={14} />
-            স্কোয়াড ফ্লিপ
+            Squad Flip
           </h3>
           <button onClick={leaveSquad} className="flex items-center gap-1 text-text-muted hover:text-brand-red text-xs">
             <X size={12} />
-            ছেড়ে দিন
+            Leave
           </button>
         </div>
 
-        {/* মেম্বার প্রগ্রেস */}
+        {/* Member progress */}
         <div className="mb-4">
           <div className="flex justify-between text-xs font-mono text-text-muted mb-1">
-            <span>সদস্য</span>
+            <span>Members</span>
             <span>{activeSquad.memberCount} / {activeSquad.maxMembers}</span>
           </div>
           <div className="h-2 bg-void rounded-full overflow-hidden">
@@ -207,7 +207,7 @@ export default function SquadFlip() {
           </div>
         </div>
 
-        {/* অবতার গ্রিড */}
+        {/* Avatar grid */}
         <div className="flex gap-2 mb-4">
           {Array.from({ length: activeSquad.maxMembers }).map((_, i) => (
             <div
@@ -223,39 +223,39 @@ export default function SquadFlip() {
           ))}
         </div>
 
-        {/* পুল তথ্য */}
+        {/* Pool info */}
         <div className="grid grid-cols-2 gap-2 mb-4">
           <div className="bg-void rounded-lg p-2 text-center">
-            <div className="text-text-muted text-xs font-mono">প্রতিজনের বেট</div>
+            <div className="text-text-muted text-xs font-mono">Bet per person</div>
             <div className="text-brand-maroon font-mono font-bold">${activeSquad.betAmount.toFixed(2)}</div>
           </div>
           <div className="bg-void rounded-lg p-2 text-center">
-            <div className="text-text-muted text-xs font-mono">মোট পুল</div>
+            <div className="text-text-muted text-xs font-mono">Total pool</div>
             <div className="text-brand-gold font-mono font-bold">
               ${(activeSquad.betAmount * activeSquad.memberCount).toFixed(2)}
             </div>
           </div>
         </div>
 
-        {/* জিতলে পাবে */}
+        {/* Wins on a win */}
         {activeSquad.memberCount >= 2 && (
           <div className="bg-brand-green/10 border border-brand-green/30 rounded-lg p-2 text-center mb-4">
-            <span className="text-text-muted text-xs font-mono">জিতলে প্রতিজন পাবে: </span>
+            <span className="text-text-muted text-xs font-mono">Each person wins on win: </span>
             <span className="text-brand-green font-mono font-bold">${perPersonPayout}</span>
           </div>
         )}
 
-        {/* ইনভাইট লিংক */}
+        {/* Invite link */}
         <button
           onClick={copyInviteLink}
           className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-brand-maroon/35 text-brand-maroon
                      text-xs font-mono hover:bg-brand-maroon/10 transition-all mb-3"
         >
           {copied ? <Check size={13} /> : <Link2 size={13} />}
-          {copied ? 'কপি হয়েছে' : 'ইনভাইট লিংক কপি করুন'}
+          {copied ? 'Copied!' : 'Copy invite link'}
         </button>
 
-        {/* ফ্লিপ বাটন — ২+ জন হলেই সক্রিয় */}
+        {/* Flip button — active only when 2+ members */}
         <button
           onClick={startFlip}
           disabled={activeSquad.memberCount < 2 || flipping}
@@ -266,30 +266,30 @@ export default function SquadFlip() {
           {flipping && <Loader2 size={16} className="animate-spin" />}
           {!flipping && <Coins size={16} />}
           {flipping
-            ? 'কয়েন ঘুরছে...'
+            ? 'Coin flipping...'
             : activeSquad.memberCount < 2
-            ? 'আরো সদস্যের অপেক্ষায়...'
-            : 'স্কোয়াড ফ্লিপ শুরু করুন'}
+            ? 'আরো Membersের অপেক্ষায়...'
+            : 'Squad Flip শুরু করুন'}
         </button>
       </div>
     );
   }
 
-  // ── স্কোয়াড তৈরি বা যোগ দেওয়ার ফর্ম ───────────────────────
+  // ── Create or join squad form ───────────────────────
   return (
     <div className="glass-card p-5 border-brand-maroon/20">
       <div className="flex items-center gap-2 mb-1">
         <Users size={16} className="text-brand-maroon" />
-        <h3 className="heading-display text-sm text-brand-maroon">স্কোয়াড ফ্লিপ</h3>
+        <h3 className="heading-display text-sm text-brand-maroon">Squad Flip</h3>
       </div>
       <p className="text-text-muted text-xs font-mono mb-4">
-        বন্ধুদের সাথে একসাথে বেট করুন — জিতলে সমান ভাগ!
+        Bet together with friends — split winnings equally!
       </p>
 
       <div className="space-y-3">
-        {/* নতুন স্কোয়াড তৈরি */}
+        {/* Create new squad */}
         <div className="bg-void rounded-lg p-3">
-          <p className="text-text-secondary text-xs font-mono mb-2">নতুন স্কোয়াড তৈরি করুন</p>
+          <p className="text-text-secondary text-xs font-mono mb-2">Create new squad</p>
           <div className="flex gap-2 mb-2">
             <input
               type="number"
@@ -298,7 +298,7 @@ export default function SquadFlip() {
               value={squadBetAmount}
               onChange={(e) => setSquadBetAmount(parseFloat(e.target.value) || 0)}
               className="input-cyber flex-1 text-sm py-2"
-              placeholder="বেট পরিমাণ ($)"
+              placeholder="Bet amount ($)"
             />
             <select
               value={squadChoice}
@@ -317,24 +317,24 @@ export default function SquadFlip() {
                        disabled:opacity-40"
           >
             {creating ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-            {creating ? 'তৈরি হচ্ছে...' : 'স্কোয়াড তৈরি করুন'}
+            {creating ? 'Creating...' : 'Create squad'}
           </button>
         </div>
 
-        {/* বিভাজক */}
+        {/* Divider */}
         <div className="flex items-center gap-2">
           <div className="flex-1 h-px bg-border" />
-          <span className="text-text-muted text-xs font-mono">অথবা</span>
+          <span className="text-text-muted text-xs font-mono">or</span>
           <div className="flex-1 h-px bg-border" />
         </div>
 
-        {/* কোড দিয়ে যোগ দাও */}
+        {/* Join with code */}
         <div className="flex gap-2">
           <input
             value={joinCode}
             onChange={(e) => setJoinCode(e.target.value)}
             className="input-cyber flex-1 text-sm py-2"
-            placeholder="স্কোয়াড কোড পেস্ট করুন..."
+            placeholder="Paste squad code..."
           />
           <button
             onClick={joinSquad}
@@ -342,7 +342,7 @@ export default function SquadFlip() {
             className="px-4 py-2 rounded-lg border border-brand-info/50 text-brand-info text-sm
                        font-mono hover:bg-brand-info/10 transition-all disabled:opacity-40"
           >
-            যোগ দিন
+            Join
           </button>
         </div>
       </div>

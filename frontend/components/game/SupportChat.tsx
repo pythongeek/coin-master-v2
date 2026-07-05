@@ -13,11 +13,11 @@ declare global {
 export default function SupportChat() {
   const { user } = useGameStore();
 
-  // 1. Crisp Chat স্ক্রিপ্ট লোডার
+  // 1. Crisp Chat script loader
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // যদি ইতিমধ্যে স্ক্রিপ্ট লোড করা থাকে, আবার লোড করার দরকার নেই
+    // If the script is already loaded, don't reload it
     if (document.getElementById('crisp-chat-script')) return;
 
     window.$crisp = window.$crisp || [];
@@ -58,7 +58,7 @@ export default function SupportChat() {
         ]],
       ]);
     } else {
-      // ইউজার লগআউট করলে সেশন রিসেট করো যেন আগের তথ্য না থাকে
+      // Reset session on logout so prior info doesn't remain
       window.$crisp.push(['do', 'session:reset']);
     }
   }, [user]);

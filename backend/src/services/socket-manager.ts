@@ -37,7 +37,7 @@ import { generateServerSeed, hashServerSeed, computeFlip } from './provably-fair
 import { getConfig } from './admin-config';
 import { query, db } from '../config/database';
 import { redis } from '../config/redis';
-import { AuthPayload } from '../middleware/auth';
+import { JWT_SECRET, AuthPayload } from '../middleware/auth';
 
 // অনলাইন ইউজার ট্র্যাক করা
 const onlineUsers = new Map<string, { userId: string; username: string; socketId: string }>();
@@ -62,7 +62,7 @@ export function setupSocketHandlers(io: SocketIOServer) {
     }
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') as AuthPayload;
+      const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload;
       socket.data.user = decoded;
       socket.data.isGuest = false;
       next();

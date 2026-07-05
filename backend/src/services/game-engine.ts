@@ -37,6 +37,12 @@ import {
 import { reconcileUser } from './reconciliation-engine';
 import { invalidateCache } from './cache';
 import { dispatchWebhook } from './webhook';
+import {
+  determineBalanceSource,
+  debitBalanceForBet,
+  creditPayout,
+  creditWagering,
+} from './bonus';
 
 // ── ইনপুট ও আউটপুটের ধরন ───────────────────────────────────────
 export interface BetRequest {
@@ -124,7 +130,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
 
     // ── шаг ৪: ইউজারের ব্যালেন্স চেক করো (Row Lock সহ) ──────────────────────
     const userResult = await client.query(
-      'SELECT balance, total_wagered, pending_rakeback, referred_by FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
+      'SELECT balance, bonus_balance_coins, withdrawable_balance_coins, total_wagered, pending_rakeback, referred_by FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
       [req.userId]
     );
     if (!userResult.rows.length) throw new Error('ইউজার পাওয়া যায়নি।');
@@ -137,6 +143,15 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     if (currentBalance < req.amount) {
       throw new Error(`অপর্যাপ্ত ব্যালেন্স। আপনার কাছে আছে: $${currentBalance.toFixed(2)}`);
     }
+
+    // Transaction-scoped query wrapper compatible with the bonus service.
+    const txClient = client.query.bind(client) as unknown as (
+      text: string, params?: unknown[]
+    ) => Promise<{ rows: any[]; rowCount: number }>;
+
+    // ── ব্যালেন্স সোর্স নির্ধারণ করো এবং বেট ডেবিট করো ──
+    const source = await determineBalanceSource(req.userId, req.amount, txClient);
+    await debitBalanceForBet(req.userId, req.amount, source, txClient);
 
     // ── Provably Fair সিড তৈরি করো ──────────────────────
     const serverSeed = generateServerSeed();
@@ -183,11 +198,14 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     }
 
     // ── шаг ৭: ব্যালেন্স ও ওয়াগার/রেকব্যাক আপডেট করো ─────────────────────────────
-    let balanceChange = won ? outcome.payout - req.amount : -req.amount;
-    if (jackpotWon) {
-      balanceChange += jackpotAmount;
+    // Credit payout back to the same source. The DB trigger sync_user_balance
+    // keeps users.balance = bonus_balance_coins + withdrawable_balance_coins.
+    if (won) {
+      await creditPayout(req.userId, outcome.payout, source, txClient);
     }
-    const newBalance = parseFloat((currentBalance + balanceChange).toFixed(8));
+    if (jackpotWon) {
+      await creditPayout(req.userId, jackpotAmount, source, txClient);
+    }
 
     const newTotalWagered = totalWagered + req.amount;
     const rakebackRate = getVipRakebackPercent(newTotalWagered);
@@ -195,8 +213,8 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     const newPendingRakeback = parseFloat((pendingRakeback + rakebackAmount).toFixed(8));
 
     await client.query(
-      'UPDATE users SET balance = $1, total_wagered = $2, pending_rakeback = $3, updated_at = NOW() WHERE id = $4',
-      [newBalance, newTotalWagered, newPendingRakeback, req.userId]
+      'UPDATE users SET total_wagered = $1, pending_rakeback = $2, updated_at = NOW() WHERE id = $3',
+      [newTotalWagered, newPendingRakeback, req.userId]
     );
 
     // ── Update Referrer's Affiliate Balance ──
@@ -273,7 +291,9 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
        targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash]
     );
 
-    // Run reconciliation check
+    // Run reconciliation check AFTER creditWagering so bonus/wager counters are committed
+    // and the ledger matches the actual balance columns.
+    await creditWagering(req.userId, req.amount, txClient);
     await reconcileUser(req.userId, client);
 
     await client.query('COMMIT');
@@ -303,6 +323,13 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     } else {
       await resetWinStreak(req.userId);
     }
+
+    // Read the final balance from the DB (trigger keeps it synced with source columns).
+    const finalBalanceResult = await client.query(
+      'SELECT balance FROM users WHERE id = $1',
+      [req.userId]
+    );
+    const newBalance = parseFloat(finalBalanceResult.rows[0]?.balance ?? '0');
 
     // ── ধাপ ১০: বার্তা তৈরি করো ─────────────────────────────────
     let message = won

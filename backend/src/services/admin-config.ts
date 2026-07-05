@@ -75,12 +75,46 @@ export interface GameConfig {
   jackpotMinBet: number;
   /** বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে */
   jackpotContributionPercent: number;
-  /** জ্যাকপট জয়ের সম্ভাবনা (১/X) */
+  /** জ্যাকপট জয়ের সম্ভাবনা (১/X) */
   jackpotHitChance: number;
   /** জ্যাকপট শুরুর পুলের পরিমাণ */
   jackpotStartPool: number;
   /** জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থ */
   jackpotPool: number;
+
+  // ── বোনাস ও wagering সেটিং ─────────────────────────────────
+  /** স্বাগতম বোনাসের পরিমাণ (কয়েন) — এডমিন যেকোনো সময় বদলাতে পারবে */
+  bonusWelcomeAmount: number;
+  /** বোনাস wagering multiplier (বোনাস × N = wagering required) */
+  bonusWagerMultiplier: number;
+  /** বোনাস উইথড্র সর্বোচ্চ (বোনাস × N) */
+  bonusMaxWithdrawalMultiplier: number;
+  /** বোনাস expire হতে কত দিন */
+  bonusExpiryDays: number;
+  /** উইথড্র করতে বোনাসের শতকরা কত % deposit করতে হবে */
+  bonusMinDepositToWithdrawPct: number;
+  /** বোনাস পাওয়ার পর কত ঘণ্টা cooldown */
+  bonusCooldownHours: number;
+  /** Deposit match bonus (% of deposit, 0 = disabled) */
+  bonusDepositMatchPct: number;
+  /** Max deposit match bonus per deposit (coins) */
+  bonusDepositMatchCap: number;
+  /** Default cashback % of net losses */
+  bonusCashbackPct: number;
+  /** Default monthly VIP tier bonus amount */
+  bonusVipMonthlyAmount: number;
+  /** Default number of free spins per welcome campaign */
+  bonusFreeSpinCount: number;
+  /** Default bet value per free spin (coins) */
+  bonusFreeSpinValue: number;
+  /** Min withdrawal amount (coins) */
+  withdrawalMinCoins: number;
+  /** Max withdrawal amount per request (coins) */
+  withdrawalMaxCoins: number;
+  /** Auto-approve withdrawals below this (0 = always manual) */
+  withdrawalAutoApproveThreshold: number;
+  /** Daily withdrawal limit per user (coins) */
+  dailyWithdrawalLimitCoins: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -127,6 +161,25 @@ export const DEFAULT_CONFIG: GameConfig = {
   jackpotHitChance: 10000,
   jackpotStartPool: 10.0,
   jackpotPool: 10.0,
+
+  // বোনাস ও wagering — এডমিন PATCH /api/admin/config দিয়ে লাইভ বদলাতে পারবে
+  bonusWelcomeAmount: 10.0,
+  bonusWagerMultiplier: 30.0,
+  bonusMaxWithdrawalMultiplier: 3.0,
+  bonusExpiryDays: 7.0,
+  bonusMinDepositToWithdrawPct: 50.0,
+  bonusCooldownHours: 24.0,
+  bonusDepositMatchPct: 50.0,
+  bonusDepositMatchCap: 100.0,
+  bonusCashbackPct: 10.0,
+  bonusVipMonthlyAmount: 25.0,
+  bonusFreeSpinCount: 5.0,
+  bonusFreeSpinValue: 1.0,
+
+  withdrawalMinCoins: 1.0,
+  withdrawalMaxCoins: 10000.0,
+  withdrawalAutoApproveThreshold: 0.0,
+  dailyWithdrawalLimitCoins: 5000.0,
 };
 
 // ── কনফিগ কী → বাংলা লেবেল ম্যাপিং (UI-র জন্য) ───────────────
@@ -153,8 +206,27 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   jackpotMinBet:          { label: 'জ্যাকপট সর্বনিম্ন বেট', description: 'জ্যাকপটে অংশ নেওয়ার জন্য সর্বনিম্ন বেট পরিমাণ।', unit: '$', min: 0.01, max: 100, type: 'number', category: 'জ্যাকপট' },
   jackpotContributionPercent: { label: 'জ্যাকপট কন্ট্রিবিউশন (%)', description: 'প্রতি বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'জ্যাকপট' },
   jackpotHitChance:       { label: 'জ্যাকপট জয়ের সুযোগ (১/X)', description: 'জ্যাকপট জয়ের সম্ভাবনা (১/X chance)। যেমন ১০০০০ দিলে প্রতি ১০,০০০ গেমে গড়ে একবার জিতবে।', unit: 'টি গেম', min: 2, max: 1000000, type: 'number', category: 'জ্যাকপট' },
-  jackpotStartPool:       { label: 'জ্যাকপট শুরুর মান', description: 'জ্যাকপট জয়ের পর পুলটি যে প্রারম্ভিক অ্যামাউন্টে রিসেট হবে।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'জ্যাকপট' },
+  jackpotStartPool:       { label: 'জ্যাকপট শুরুর মান', description: 'জ্যাকপট জয়ের পর পুলটি যে প্রারম্ভিক অ্যামাউন্টে রিসেট হবে।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'জ্যাকপট' },
   jackpotPool:            { label: 'জ্যাকপট পুল ব্যালেন্স', description: 'জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থের পরিমাণ।', unit: '$', min: 0, max: 1000000, type: 'number', category: 'জ্যাকপট' },
+
+  // বোনাস
+  bonusWelcomeAmount:            { label: 'স্বাগতম বোনাস', description: 'নতুন ইউজারকে প্রথম লগইনে দেওয়া বোনাসের পরিমাণ।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
+  bonusWagerMultiplier:          { label: 'Wagering multiplier', description: 'বোনাস × N = wagering required (বেট করতে হবে)।', unit: '×', min: 0, max: 100, type: 'number', category: 'বোনাস' },
+  bonusMaxWithdrawalMultiplier:  { label: 'Max withdrawal multiplier', description: 'বোনাস × N = সর্বোচ্চ উইথড্র।', unit: '×', min: 0, max: 100, type: 'number', category: 'বোনাস' },
+  bonusExpiryDays:               { label: 'বোনাস expire দিন', description: 'বোনাস কত দিন পর expire হবে।', unit: 'দিন', min: 1, max: 365, type: 'number', category: 'বোনাস' },
+  bonusMinDepositToWithdrawPct:  { label: 'Min deposit %', description: 'বোনাস তুলতে বোনাসের শতকরা কত % deposit করতে হবে।', unit: '%', min: 0, max: 100, type: 'number', category: 'বোনাস' },
+  bonusCooldownHours:            { label: 'Cooldown hours', description: 'বোনাস পাওয়ার পর কত ঘণ্টা cooldown।', unit: 'ঘণ্টা', min: 0, max: 720, type: 'number', category: 'বোনাস' },
+  bonusDepositMatchPct:          { label: 'Deposit match %', description: 'ডিপোজিটের শতকরা কত ভাগ match bonus (0 = disabled)।', unit: '%', min: 0, max: 500, type: 'number', category: 'বোনাস' },
+  bonusDepositMatchCap:          { label: 'Deposit match cap', description: 'প্রতি ডিপোজিটে সর্বোচ্চ match bonus।', unit: 'কয়েন', min: 0, max: 100000, type: 'number', category: 'বোনাস' },
+  bonusCashbackPct:              { label: 'Cashback %', description: 'নেট loss-এর শতকরা কত ভাগ cashback।', unit: '%', min: 0, max: 100, type: 'number', category: 'বোনাস' },
+  bonusVipMonthlyAmount:         { label: 'VIP monthly bonus', description: 'মাসিক VIP tier bonus।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
+  bonusFreeSpinCount:            { label: 'Free spin count', description: 'Welcome campaign-এ ফ্রি স্পিন সংখ্যা।', unit: 'টি', min: 0, max: 100, type: 'number', category: 'বোনাস' },
+  bonusFreeSpinValue:            { label: 'Free spin value', description: 'প্রতি free spin-এর বেট মান।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'বোনাস' },
+
+  withdrawalMinCoins:             { label: 'Min withdrawal', description: 'সর্বনিম্ন উইথড্র পরিমাণ।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'উইথড্র' },
+  withdrawalMaxCoins:             { label: 'Max withdrawal', description: 'প্রতি অনুরোধে সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 1, max: 1000000, type: 'number', category: 'উইথড্র' },
+  withdrawalAutoApproveThreshold:  { label: 'Auto-approve threshold', description: 'এই পরিমাণের কম হলে অটো-অনুমোদন (0 = সবসময় ম্যানুয়াল)।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'উইথড্র' },
+  dailyWithdrawalLimitCoins:       { label: 'Daily withdrawal limit', description: 'প্রতিদিন প্রতি ইউজার সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 0, max: 1000000, type: 'number', category: 'উইথড্র' },
 };
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,12 +1,12 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  LOGIN MODAL — লগইন/রেজিস্ট্রেশন পপআপ
+ *  LOGIN MODAL — Login / Register popup
  * ═══════════════════════════════════════════════════════════════
  *
- *  দুটি উপায়ে লগইন:
- *  ① Web3 ওয়ালেট (MetaMask/Phantom) — এক ক্লিকে, পাসওয়ার্ড লাগে না
- *  ② ইউজারনেম/পাসওয়ার্ড — ঐতিহ্যবাহী পদ্ধতি
+ *  Two ways to log in:
+ *  ① Web3 wallet (MetaMask/Phantom) — one click, no password
+ *  ② Username/password — traditional method
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -22,7 +22,10 @@ import { getBrowserFingerprint } from '@/utils/fingerprint';
 import { trackEvent, identifyUser } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 interface Props {
   onClose: () => void;
@@ -42,7 +45,7 @@ export default function LoginModal({ onClose }: Props) {
     trackEvent('login_modal_open');
   }, []);
 
-  // ── সফল লগইন হ্যান্ডল করো ─────────────────────────────────────
+  // ── Handle successful login ─────────────────────────────────
   const handleSuccess = (data: { token: string; user: Record<string, unknown> }) => {
     const user: User = {
       userId:        data.user.userId as string,
@@ -58,10 +61,10 @@ export default function LoginModal({ onClose }: Props) {
     login({ user, token: data.token });
     localStorage.setItem('cf_user', JSON.stringify(data.user));
 
-    // সকেট কানেকশন টোকেন দিয়ে আপগ্রেড করো যাতে গেম বেট পাঠাতে পারে
+    // Upgrade socket connection with the token so game bets can be sent
     reconnectWithToken(data.token);
 
-    // অ্যানালিটিক্স সিঙ্ক
+    // Sync analytics
     identifyUser(data.user.userId as string, {
       username: data.user.username as string,
       email: data.user.email as string | undefined,
@@ -75,7 +78,7 @@ export default function LoginModal({ onClose }: Props) {
     onClose();
   };
 
-  // ── MetaMask দিয়ে কানেক্ট করো ───────────────────────────────────
+  // ── Connect with MetaMask ───────────────────────────────────
   const handleMetaMask = async () => {
     if (!isMetaMaskInstalled()) {
       window.open('https://metamask.io/download/', '_blank');
@@ -86,7 +89,7 @@ export default function LoginModal({ onClose }: Props) {
     try {
       const conn = await connectMetaMask();
       const fingerprint = await getBrowserFingerprint();
-      const res = await fetch(`${API}/api/auth/wallet`, {
+      const res = await fetch(`${API}/auth/wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
@@ -106,7 +109,7 @@ export default function LoginModal({ onClose }: Props) {
     setConnectingType(null);
   };
 
-  // ── Phantom দিয়ে কানেক্ট করো ──────────────────────────────────
+  // ── Connect with Phantom ────────────────────────────────────
   const handlePhantom = async () => {
     if (!isPhantomInstalled()) {
       window.open('https://phantom.app/download', '_blank');
@@ -117,7 +120,7 @@ export default function LoginModal({ onClose }: Props) {
     try {
       const conn = await connectPhantom();
       const fingerprint = await getBrowserFingerprint();
-      const res = await fetch(`${API}/api/auth/wallet`, {
+      const res = await fetch(`${API}/auth/wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
@@ -137,7 +140,7 @@ export default function LoginModal({ onClose }: Props) {
     setConnectingType(null);
   };
 
-  // ── ইমেইল/পাসওয়ার্ড লগইন বা রেজিস্ট্রেশন ───────────────────────
+  // ── Email/password login or registration ───────────────────────
   const handleEmailAuth = async () => {
     setError('');
     if (!form.username || !form.password) {
@@ -146,7 +149,7 @@ export default function LoginModal({ onClose }: Props) {
     }
     setLoading(true);
     try {
-      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+      const endpoint = isRegister ? '/auth/register' : '/auth/login';
       const fingerprint = isRegister ? await getBrowserFingerprint() : undefined;
       const res = await fetch(`${API}${endpoint}`, {
         method: 'POST',
@@ -177,16 +180,16 @@ export default function LoginModal({ onClose }: Props) {
         className="glass-card w-full max-w-sm p-6 relative animate-float-up"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* বন্ধ বাটন */}
+        {/* Close button */}
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-text-muted hover:text-text-primary"
-          aria-label="বন্ধ করুন"
+          aria-label={t('close')}
         >
           <X size={18} />
         </button>
 
-        {/* হেডার */}
+        {/* Header */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-brand-green/10 text-brand-green mb-3">
             <Coins size={24} />
@@ -203,7 +206,7 @@ export default function LoginModal({ onClose }: Props) {
 
         {mode === 'choose' && (
           <div className="space-y-3">
-            {/* MetaMask বাটন */}
+            {/* MetaMask button */}
             <button
               onClick={handleMetaMask}
               disabled={connectingType !== null}
@@ -224,7 +227,7 @@ export default function LoginModal({ onClose }: Props) {
               )}
             </button>
 
-            {/* Phantom বাটন */}
+            {/* Phantom button */}
             <button
               onClick={handlePhantom}
               disabled={connectingType !== null}
@@ -245,14 +248,14 @@ export default function LoginModal({ onClose }: Props) {
               )}
             </button>
 
-            {/* বিভাজক */}
+            {/* Divider */}
             <div className="flex items-center gap-3 py-2">
               <div className="flex-1 h-px bg-border" />
               <span className="text-text-muted text-xs font-mono">{t('or')}</span>
               <div className="flex-1 h-px bg-border" />
             </div>
 
-            {/* ইমেইল অপশন */}
+            {/* Email option */}
             <button
               onClick={() => setMode('email')}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-border
@@ -298,7 +301,7 @@ export default function LoginModal({ onClose }: Props) {
             <input
               className="input-cyber"
               type="password"
-              placeholder="পাসওয়ার্ড"
+              placeholder={t('password')}
               value={form.password}
               onChange={(e) => setForm(p => ({ ...p, password: e.target.value }))}
               onKeyDown={(e) => e.key === 'Enter' && handleEmailAuth()}
@@ -310,16 +313,16 @@ export default function LoginModal({ onClose }: Props) {
               className="btn-brand w-full flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {loading && <Loader2 size={15} className="animate-spin" />}
-              {loading ? 'অপেক্ষা করুন...' : isRegister ? 'রেজিস্ট্রেশন করুন' : 'লগইন করুন'}
+              {loading ? t('connecting') : isRegister ? t('signUpBtn') : t('loginBtn')}
             </button>
 
             <p className="text-center text-text-muted text-xs font-mono">
-              {isRegister ? 'অ্যাকাউন্ট আছে?' : 'নতুন এসেছেন?'}{' '}
+              {isRegister ? t('haveAccount') : t('noAccount')}{' '}
               <button
                 onClick={() => setIsRegister(!isRegister)}
                 className="text-brand-green hover:underline"
               >
-                {isRegister ? 'লগইন করুন' : 'রেজিস্ট্রেশন করুন'}
+                {isRegister ? t('loginBtn') : t('signUpBtn')}
               </button>
             </p>
           </div>

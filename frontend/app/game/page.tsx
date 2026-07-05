@@ -8,7 +8,7 @@
  *  ┌─────────────────────────────────────────────────────────────┐
  *  │  NAVBAR — ব্যালেন্স | অনলাইন | সেটিংস | লগইন/ওয়ালেট      │
  *  ├────────────┬───────────────────────────┬────────────────────┤
- *  │ বেট        │  থ্রিডি কয়েন Arena      │  লাইভ চ্যাট       │
+ *  │ বেট        │  থ্রিডি Coin Arena      │  লাইভ চ্যাট       │
  *  │ কন্ট্রোলস │  + হিস্ট্রি ডটস         │  + Big Wins        │
  *  │ + স্কোয়াড │  + Win/Loss ওভারলে      │  + Crypto Rain     │
  *  │ + ফেয়ার   │  + সেটিংস বার           │                    │
@@ -20,25 +20,22 @@
 
 import { useEffect, useState, useRef, Suspense, lazy } from 'react';
 import Link from 'next/link';
-import confetti from 'canvas-confetti';
 import {
-  Coins, Dices, Users, Trophy, XCircle, Loader2,
+  Coins, Trophy, XCircle, Loader2,
   LayoutDashboard, LogOut, Settings, AlertTriangle,
 } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { useSocketEvents } from '@/lib/useSocketEvents';
 import { getSocket, clearToken } from '@/lib/socket';
 import { useSound } from '@/hooks/useSound';
-import BetControls from '@/components/game/BetControls';
+import MobileBetBar from '@/components/game/MobileBetBar';
 import LiveChat from '@/components/game/LiveChat';
-import SquadFlip from '@/components/game/SquadFlip';
-import ProvablyFairWidget from '@/components/game/ProvablyFair';
-import AffiliatePanel from '@/components/game/AffiliatePanel';
-import PromoWidget from '@/components/game/PromoWidget';
+import GameSidebar from '@/components/game/GameSidebar';
 import SettingsModal from '@/components/game/SettingsModal';
 import SupportChat from '@/components/game/SupportChat';
 import LoginModal from '@/components/layout/LoginModal';
 import LanguageSelector from '@/components/layout/LanguageSelector';
+import MobileGamePanels from '@/components/game/MobileGamePanels';
 import { useTranslation } from '@/hooks/useTranslation';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
 import { shortenAddress } from '@/lib/wallet';
@@ -53,62 +50,76 @@ export default function GamePage() {
   } = useGameStore();
 
   const [showLogin, setShowLogin] = useState(false);
-  const [showSquad, setShowSquad] = useState(false);
   const arenaRef = useRef<HTMLDivElement>(null);
   const { play } = useSound();
 
   useSocketEvents();
 
-  // ── সকেট ইনিশিয়ালাইজ + সেটিংস লোড ────────────────────────
+  // ── Initialize socket + load settings ────────────────────────
   useEffect(() => {
     getSocket(undefined);
     loadSettings();
   }, [loadSettings]);
+
+  // Play flip sound when the coin starts spinning
+  useEffect(() => {
+    if (gameStatus === 'spinning') {
+      play('flip');
+    }
+  }, [gameStatus, play]);
 
   const handleLogout = () => {
     clearToken();
     logout();
   };
 
-  // ── Win/Loss ভিজ্যুয়াল ফিডব্যাক (confetti, shake, flash) ───
+  // ── Win/loss visual feedback, sounds, and accessibility ───
   useEffect(() => {
     if (gameStatus !== 'result' || !lastResult) return;
 
+    // Play result sound
     if (lastResult.won) {
-      // Big win: large confetti + screen shake
-      if (lastResult.payout >= 50) {
-        const fire = () => {
-          confetti({
-            particleCount: 90,
-            spread: 80,
+      play('win');
+    } else {
+      play('lose');
+    }
+
+    // Arena glow
+    const glowClass = lastResult.won ? 'arena-win-glow' : 'arena-loss-glow';
+    arenaRef.current?.classList.add(glowClass);
+    const glowTimer = setTimeout(() => {
+      arenaRef.current?.classList.remove(glowClass);
+    }, 2500);
+
+    if (lastResult.won) {
+      // Confetti based on payout size
+      const bigWin = lastResult.payout >= 50;
+      const burst = () => {
+        if (typeof window !== 'undefined' && (window as any).confetti) {
+          (window as any).confetti({
+            particleCount: bigWin ? 90 : 55,
+            spread: bigWin ? 80 : 65,
             origin: { x: 0.5, y: 0.55 },
-            colors: ['#FFD700', '#00C566', '#FFFFFF', '#E8A93D'],
+            colors: bigWin
+              ? ['#FFD700', '#00C566', '#FFFFFF', '#E8A93D']
+              : ['#FFD700', '#00C566'],
             disableForReducedMotion: true,
           });
-        };
-        fire();
-        setTimeout(fire, 250);
-        setTimeout(fire, 500);
+        }
+      };
+      burst();
+      if (bigWin) {
+        setTimeout(burst, 250);
+        setTimeout(burst, 500);
         arenaRef.current?.classList.add('screen-shake');
         setTimeout(() => arenaRef.current?.classList.remove('screen-shake'), 500);
-      } else {
-        // Regular win: small confetti
-        confetti({
-          particleCount: 55,
-          spread: 65,
-          origin: { x: 0.5, y: 0.55 },
-          colors: ['#FFD700', '#00C566'],
-          disableForReducedMotion: true,
-        });
       }
-    } else {
-      // Loss: flash maroon overlay
-      arenaRef.current?.classList.add('loss-flash');
-      setTimeout(() => arenaRef.current?.classList.remove('loss-flash'), 500);
     }
-  }, [gameStatus, lastResult]);
 
-  // ── রিসেন্ট হিস্ট্রি ডটস (শেষ ২৫টি) ──────────────────────
+    return () => clearTimeout(glowTimer);
+  }, [gameStatus, lastResult, play]);
+
+  // ── Recent history dots (last 25) ──────────────────────
   const historyDots = betHistory.slice(0, 25);
 
   return (
@@ -188,76 +199,19 @@ export default function GamePage() {
         </nav>
 
         {/* ══════════════════════════════════════════════════════
-            মেইন 3-কলাম গেম এরিয়া
+            Main 3-column game area
            ══════════════════════════════════════════════════════ */}
-        <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 min-h-0 overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 min-h-0 overflow-y-auto lg:overflow-visible pb-28 lg:pb-4">
 
-          {/* ── বাম কলাম: বেট কন্ট্রোলস + স্কোয়াড + ফেয়ার ── */}
-          <aside className="lg:w-[340px] xl:w-[380px] shrink-0 flex flex-col gap-3 order-2 lg:order-1 overflow-y-auto min-h-0">
-
-            {/* মোড টগল: একক বেট vs স্কোয়াড ফ্লিপ */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowSquad(false)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-mono transition-all ${
-                  !showSquad
-                    ? 'bg-brand-green/15 text-brand-green border border-brand-green/35'
-                    : 'border border-border text-text-muted hover:border-brand-green/30'
-                }`}
-              >
-                <Dices size={14} />
-                {t('singleBet')}
-              </button>
-              <button
-                onClick={() => setShowSquad(true)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-mono transition-all ${
-                  showSquad
-                    ? 'bg-brand-maroon/15 text-brand-maroon border border-brand-maroon/35'
-                    : 'border border-border text-text-muted hover:border-brand-maroon/30'
-                }`}
-              >
-                <Users size={14} />
-                {t('squadFlip')}
-              </button>
-            </div>
-
-            {/* বেট কন্ট্রোলস অথবা স্কোয়াড */}
-            <div className="relative">
-              {showSquad ? (
-                <SquadFlip />
-              ) : (
-                <div className="glass-card p-5">
-                  <BetControls />
-                </div>
-              )}
-
-              {user?.isFlagged && (
-                <div className="absolute inset-0 bg-void/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center border border-brand-red/30 rounded-xl z-20">
-                  <div className="w-12 h-12 rounded-full bg-brand-red/10 flex items-center justify-center text-brand-red mb-3 animate-pulse">
-                    <AlertTriangle size={24} />
-                  </div>
-                  <h4 className="heading-display text-sm text-brand-red mb-1">অ্যাকাউন্ট স্থগিত করা হয়েছে</h4>
-                  <p className="text-[11px] font-mono text-text-secondary leading-relaxed">
-                    আপনার অ্যাকাউন্টটি অস্বাভাবিক কার্যকলাপে জড়িত থাকায় সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাকাউন্ট পুনরায় সক্রিয় করতে কাস্টমার সাপোর্টে যোগাযোগ করুন।
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Provably Fair (collapsible) */}
-            <ProvablyFairWidget />
-
-            {/* Affiliate & Referrals Panel */}
-            <AffiliatePanel />
-
-            {/* Promo Codes & Welcome Bonuses Widget */}
-            <PromoWidget />
+          {/* ── Left column: unified tabbed sidebar ── */}
+          <aside className="lg:w-[340px] xl:w-[380px] shrink-0 flex flex-col gap-3 order-2 lg:order-1 min-h-0">
+            <GameSidebar />
           </aside>
 
-          {/* ── কেন্দ্র কলাম: 3D Arena + হিস্ট্রি + রেজাল্ট ── */}
+          {/* ── Center column: 3D arena + history + result ── */}
           <div className="flex-1 flex flex-col gap-3 order-1 lg:order-2 min-h-0">
 
-            {/* 3D কয়েন Arena */}
+            {/* 3D coin arena */}
             <div
               ref={arenaRef}
               className="glass-card relative flex-1 min-h-[300px] lg:min-h-0 overflow-hidden flex items-center justify-center"
@@ -270,7 +224,7 @@ export default function GamePage() {
                 }}
               />
 
-              {/* স্ট্যাটাস ব্যাজ */}
+              {/* Status badge */}
               <div className="absolute top-4 left-4 z-10">
                 <div className={`
                   flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-mono
@@ -286,17 +240,17 @@ export default function GamePage() {
                   {gameStatus === 'spinning' && <Loader2 size={12} className="animate-spin" />}
                   {gameStatus === 'result' && (lastResult?.won ? <Trophy size={12} /> : <XCircle size={12} />)}
                   {gameStatus === 'idle' && <span className="w-1.5 h-1.5 rounded-full bg-text-muted" />}
-                  {gameStatus === 'idle'     && 'বেট ধরুন'}
-                  {gameStatus === 'spinning' && 'ঘুরছে...'}
-                  {gameStatus === 'result'   && (lastResult?.won ? 'জিতেছেন!' : 'হেরেছেন')}
+                  {gameStatus === 'idle'     && 'Place a bet'}
+                  {gameStatus === 'spinning' && 'Flipping...'}
+                  {gameStatus === 'result'   && (lastResult?.won ? 'You won!' : 'You lost')}
                 </div>
               </div>
 
               <div className="absolute top-4 right-4 z-10 px-2 py-1 rounded border border-border text-text-muted text-xs font-mono">
-                হাউজ এজ: 2%
+                House edge: 2%
               </div>
 
-              {/* হিস্ট্রি ডটস — Arena এর ভিতরে নিচে */}
+              {/* History dots — inside arena at the bottom */}
               {historyDots.length > 0 && (
                 <div className="absolute bottom-4 left-4 right-4 z-10">
                   <div className="flex items-center gap-1.5 flex-wrap justify-center">
@@ -310,35 +264,38 @@ export default function GamePage() {
                           backgroundColor: bet.won ? '#00C566' : '#E8384F',
                           opacity: 1 - i * 0.025,
                         }}
-                        title={`${bet.result === 'heads' ? 'হেডস' : 'টেইলস'} — ${bet.won ? 'জয়' : 'হার'} — $${bet.payout.toFixed(2)}`}
+                        title={`${bet.result === 'heads' ? 'Heads' : 'Tails'} — ${bet.won ? 'Win' : 'Loss'} — $${bet.payout.toFixed(2)}`}
                       />
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* কয়েন */}
+              {/* Coin */}
               <Suspense fallback={
                 <div className="absolute inset-0 flex items-center justify-center">
                   <Coins size={56} className="text-brand-gold animate-spin-slow" strokeWidth={1.5} />
                 </div>
               }>
-                <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} />
+                <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} won={lastResult?.won ?? null} />
               </Suspense>
             </div>
 
-            {/* রেজাল্ট কার্ড (Arena এর নিচে) */}
+            {/* Result card (below arena) */}
             {gameStatus === 'result' && lastResult && (
               <ResultCard result={lastResult} />
             )}
           </div>
 
-          {/* ── ডান কলাম: লাইভ চ্যাট + Big Wins ── */}
+          {/* ── Right column: live chat + big wins ── */}
           <aside className="lg:w-[320px] xl:w-[360px] shrink-0 order-3 overflow-hidden min-h-0 flex flex-col">
             <LiveChat />
           </aside>
         </div>
       </main>
+      {/* Mobile sticky FLIP bar */}
+      <MobileGamePanels />
+      <MobileBetBar />
     </>
   );
 }

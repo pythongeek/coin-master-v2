@@ -12,11 +12,11 @@ export default function SettingsModal() {
         
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-border">
-          <h2 className="text-lg font-display font-bold text-text-primary">সেটিংস</h2>
+          <h2 className="text-lg font-display font-bold text-text-primary">Settings</h2>
           <button 
             onClick={toggleSettings}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-text-muted hover:text-text-primary hover:bg-surface2 transition-all"
-            aria-label="সেটিংস বন্ধ করুন"
+            aria-label="Close settings"
           >
             <X className="w-5 h-5" />
           </button>
@@ -31,8 +31,8 @@ export default function SettingsModal() {
                 <Volume2 className="w-4 h-4 text-text-secondary" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-text-primary">শব্দ (Sound)</p>
-                <p className="text-xs text-text-muted">গেমের শব্দ চালু বা বন্ধ করুন</p>
+                <p className="text-sm font-semibold text-text-primary">Sound</p>
+                <p className="text-xs text-text-muted">Turn game sound on or off</p>
               </div>
             </div>
             <button 
@@ -57,8 +57,8 @@ export default function SettingsModal() {
                 <Gauge className="w-4 h-4 text-text-secondary" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-text-primary">অ্যানিমেশন গতি</p>
-                <p className="text-xs text-text-muted">কয়েন ঘুরার গতি গতিশীল করুন</p>
+                <p className="text-sm font-semibold text-text-primary">Animation speed</p>
+                <p className="text-xs text-text-muted">Make coin spin speed dynamic</p>
               </div>
             </div>
             <div className="flex bg-surface2 rounded-lg p-0.5 border border-border">
@@ -86,7 +86,7 @@ export default function SettingsModal() {
             className="w-full flex items-center justify-center gap-2 py-3 bg-brand-red/10 hover:bg-brand-red/20 border border-brand-red/25 rounded-xl text-sm font-semibold text-brand-red transition-all"
           >
             <RotateCcw className="w-4 h-4" />
-            গেম স্টেট রিসেট করুন
+            গেম স্টেট Reset করুন
           </button>
         </div>
       </div>

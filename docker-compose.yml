@@ -15,7 +15,7 @@ services:
       - "3002:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:4000
-      - NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
+      - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:3003
       # INTERNAL_API_URL is the docker-network hostname the
       # /api/[...path] catch-all proxy uses to reach the backend
       # from inside the frontend container. NEXT_PUBLIC_API_URL
@@ -57,6 +57,18 @@ services:
       # CSRF middleware uses NEXT_PUBLIC_APP_URL as the allowed Origin.
       # Must match the actual frontend URL (host port 3002 on cx23).
       - NEXT_PUBLIC_APP_URL=http://localhost:3002
+      # Tunnel URL used for public browser access during dev testing.
+      # This is added dynamically to the CSRF allowlist by the proxy.
+      - TUNNEL_APP_URL=https://mesa-sur-demonstrate-gates.trycloudflare.com
+      # Allow the external IP / hostnames for dev testing from outside the VM.
+      - EXTRA_ALLOWED_ORIGINS=http://46.62.247.167:3002,http://46.62.247.167:3003
+      # IPs to bypass the geoip jurisdiction block. The operator's
+      # exit IP (e.g. via a proxy/CDN) may geo-locate to a blocked
+      # region (IR, US, etc.) even when the operator is legitimate.
+      - GEOIP_ALLOWLIST=103.152.18.159,46.62.247.167
+      # Dev: allow admin login without 2FA so smoke tests can run end-to-end.
+      # Production should set this to 'true' or remove the override entirely.
+      - ADMIN_2FA_REQUIRED=false
     volumes:
       - ./backend:/app
       - /app/node_modules

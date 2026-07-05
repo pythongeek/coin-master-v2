@@ -108,7 +108,7 @@ export function ResultCard({ result }: { result: BetResult }) {
         <motion.div
           key={result.betId}
           role="status"
-          aria-label={result.won ? 'জিতেছেন' : 'হেরেছেন'}
+          aria-label={result.won ? 'জিতেছেন' : 'You lost'}
           initial={{ opacity: 0, scale: 0.85, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: -10 }}
@@ -149,16 +149,22 @@ export function ResultCard({ result }: { result: BetResult }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15, duration: duration.base, ease: easing.outExpo }}
             className={[
-              'heading-display text-xl mb-1',
+              'heading-display text-2xl mb-1',
               result.won ? 'text-brand-green' : 'text-brand-red',
             ].join(' ')}
           >
-            {result.won ? 'জিতেছেন!' : 'হেরেছেন!'}
+            {result.won ? 'YOU WON!' : 'YOU LOST'}
           </motion.div>
 
-          {/* Coin result */}
-          <div className="text-text-secondary font-mono text-sm mb-3">
-            {result.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'}
+          {/* Coin result with icon + accessibility text */}
+          <div
+            className="flex items-center justify-center gap-2 text-text-secondary font-mono text-sm mb-3"
+            aria-label={`Coin landed on ${result.result === 'heads' ? 'Heads' : 'Tails'}`}
+          >
+            <span className="text-lg" aria-hidden="true">
+              {result.result === 'heads' ? '🪷' : '🐯'}
+            </span>
+            <span>{result.result === 'heads' ? 'HEADS' : 'TAILS'}</span>
           </div>
 
           {/* Big amount — with drop-shadow glow on win per guide §1.7 */}

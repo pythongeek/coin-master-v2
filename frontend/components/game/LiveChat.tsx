@@ -80,7 +80,7 @@ export default function LiveChat() {
         </div>
         <div className="flex items-center gap-1.5 text-text-muted text-xs font-mono">
           <Users size={13} />
-          <span>{onlineCount.toLocaleString()} অনলাইন</span>
+          <span>{onlineCount.toLocaleString()} online</span>
         </div>
       </div>
 
@@ -139,11 +139,11 @@ export default function LiveChat() {
                              disabled:opacity-50 transition-all"
                 >
                   {claiming ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                  ক্লেইম করুন
+                  Claim
                 </button>
               )
             ) : (
-              <span className="text-text-muted text-xs font-mono shrink-0">লগইন করুন</span>
+              <span className="text-text-muted text-xs font-mono shrink-0">Log in</span>
             )}
           </div>
 
@@ -236,7 +236,7 @@ export default function LiveChat() {
         )}
       </div>
 
-      {/* ── চ্যাট বার্তা ইনপুট (শুধুমাত্র চ্যাট ট্যাব সক্রিয় থাকলেই দেখাবে) ── */}
+      {/* ── Chat message ইনপুট (শুধুমাত্র চ্যাট ট্যাব সক্রিয় থাকলেই দেখাবে) ── */}
       {activeTab === 'chat' && (
         <div className="px-3 pb-3 pt-2 border-t border-border bg-surface/50">
           {user ? (
@@ -248,7 +248,7 @@ export default function LiveChat() {
                 onChange={(e) => setMessage(e.target.value.slice(0, 200))}
                 onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
                 maxLength={200}
-                aria-label="চ্যাট বার্তা"
+                aria-label="Chat message"
               />
               <button
                 onClick={sendMessage}
@@ -256,14 +256,14 @@ export default function LiveChat() {
                 className="px-3 py-2 rounded-lg bg-brand-green/15 border border-brand-green/30
                            text-brand-green hover:bg-brand-green/25 transition-all
                            disabled:opacity-40 flex items-center justify-center shrink-0"
-                aria-label="বার্তা পাঠান"
+                aria-label="Send"
               >
                 <Send size={15} />
               </button>
             </div>
           ) : (
             <p className="text-center text-text-muted text-xs font-mono py-1">
-              চ্যাট করতে লগইন করুন
+              Log in to chat
             </p>
           )}
         </div>

@@ -20,15 +20,50 @@ import { io, Socket } from 'socket.io-client';
 // pass through WebSocket upgrades in dev mode) — deferred to a
 // future commit. The current code matches what was on disk before
 // this session.
-const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000';
+// Hardcoded public socket endpoint for cx23 production host.
+// The dev-server env var was unreliable, so we match the actual host.
+const getSocketUrl = (): string => {
+  if (typeof window === 'undefined') return 'http://localhost:4000';
+  const host = window.location.host;
+  if (host.startsWith('localhost:') || host === 'localhost') {
+    return process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000';
+  }
+  // Production VM: always use port 3003 where nginx proxies /socket.io
+  return 'http://46.62.247.167:3003';
+};
+
+const SOCKET_URL = getSocketUrl();
+
+console.log('[socket] SOCKET_URL=', SOCKET_URL, 'host=', typeof window !== 'undefined' ? window.location.host : 'ssr');
 
 // সিঙ্গেলটন সকেট ইন্সট্যান্স — শুধু একটিই থাকবে
 let socket: Socket | null = null;
+let currentToken: string | null = null;
 
+/**
+ * Return the singleton socket. If the socket doesn't exist, is disconnected,
+ * or the requested token differs from the token used to create the current
+ * connection, a new socket is created with the correct auth token.
+ *
+ * This prevents the "logged in but socket still guest" bug that happens
+ * when a guest socket is created before login and then reused after login.
+ */
 export function getSocket(token?: string): Socket {
-  if (!socket || !socket.connected) {
+  const targetToken = token ?? getStoredToken();
+
+  // Force reconnect when the token changes so the server sees the new auth.
+  const tokenChanged = currentToken !== targetToken;
+
+  if (!socket || !socket.connected || tokenChanged) {
+    // Disconnect any stale socket before creating a new one.
+    if (socket) {
+      socket.disconnect();
+      socket = null;
+    }
+
+    currentToken = targetToken;
     socket = io(SOCKET_URL, {
-      auth: { token: token || getStoredToken() },
+      auth: targetToken ? { token: targetToken } : {},
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
@@ -36,12 +71,8 @@ export function getSocket(token?: string): Socket {
     });
 
     socket.on('connect', () => {
-      // Read socket.id through the captured `socket` reference to avoid
-      // the outer-scope race that logged 'undefined' on first connect.
-      // (Arrow functions don't bind `this`, and reassignment of the
-      // module-level `socket` between reconnects made it transient.)
       const id = socket?.id ?? null;
-      console.log('✅ Socket কানেক্টেড:', id);
+      console.log('✅ Socket কানেক্টেড:', id, 'authed:', !!targetToken);
     });
 
     socket.on('disconnect', (reason) => {
@@ -60,19 +91,15 @@ export function disconnectSocket() {
   if (socket) {
     socket.disconnect();
     socket = null;
+    currentToken = null;
   }
 }
 
 /**
  * Reconnect the singleton socket with a specific token.
  * Used after login to upgrade an existing guest socket to an authed one.
- * Safe to call multiple times — disconnects the stale socket first.
  */
 export function reconnectWithToken(token: string) {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
   return getSocket(token);
 }
 

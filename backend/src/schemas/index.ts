@@ -298,4 +298,63 @@ export const adminSettingsSchema = z.object({
     .number()
     .min(0, 'জ্যাকপট পুল নেতিবাচক হতে পারবে না।')
     .optional(),
+
+  // ── বোনাস সেটিং ───────────────────────────────────────
+  bonusWelcomeAmount: z.coerce.number().min(0).max(10000).optional(),
+  bonusWagerMultiplier: z.coerce.number().min(0).max(100).optional(),
+  bonusMaxWithdrawalMultiplier: z.coerce.number().min(0).max(100).optional(),
+  bonusExpiryDays: z.coerce.number().min(1).max(365).optional(),
+  bonusMinDepositToWithdrawPct: z.coerce.number().min(0).max(100).optional(),
+  bonusCooldownHours: z.coerce.number().min(0).max(720).optional(),
+  bonusDepositMatchPct: z.coerce.number().min(0).max(500).optional(),
+  bonusDepositMatchCap: z.coerce.number().min(0).max(100000).optional(),
+  bonusCashbackPct: z.coerce.number().min(0).max(100).optional(),
+  bonusVipMonthlyAmount: z.coerce.number().min(0).max(10000).optional(),
+  bonusFreeSpinCount: z.coerce.number().min(0).max(100).optional(),
+  bonusFreeSpinValue: z.coerce.number().min(0).max(1000).optional(),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  BONUS CAMPAIGN SCHEMA
+// ══════════════════════════════════════════════════════════════
+
+const bonusTypesZ = z.enum([
+  'welcome', 'deposit_match', 'cashback', 'free_spin', 'reload',
+  'vip_tier', 'tournament', 'loss_back', 'manual',
+  'affiliate_reward', 'rain',
+]);
+
+export const adminBonusCampaignSchema = z.object({
+  code: z.string().max(60).optional().nullable(),
+  name: z.string().min(1, 'Campaign name required.').max(120),
+  description: z.string().max(2000).optional().nullable(),
+  bonus_type: bonusTypesZ,
+  amount_coins: z.coerce.number().min(0).max(100000).optional().nullable(),
+  percent: z.coerce.number().min(0).max(500).optional().nullable(),
+  max_amount_coins: z.coerce.number().min(0).max(100000).optional().nullable(),
+  free_spin_count: z.coerce.number().int().min(0).max(1000).optional().nullable(),
+  free_spin_value_coins: z.coerce.number().min(0).max(1000).optional().nullable(),
+  wagering_multiplier: z.coerce.number().min(0).max(100).optional(),
+  max_withdrawal_multiplier: z.coerce.number().min(0).max(100).optional(),
+  max_withdrawal_coins: z.coerce.number().min(0).max(100000).optional().nullable(),
+  min_deposit_to_withdraw_pct: z.coerce.number().min(0).max(100).optional(),
+  target_user_ids: z.array(z.string().uuid()).optional().nullable(),
+  target_vip_tiers: z.array(z.number().int()).optional().nullable(),
+  target_countries: z.array(z.string().length(2)).optional().nullable(),
+  min_total_deposit_coins: z.coerce.number().min(0).optional(),
+  min_total_bets: z.coerce.number().int().min(0).optional(),
+  is_active: z.boolean().optional(),
+  starts_at: z.string().datetime().optional(),
+  ends_at: z.string().datetime().optional().nullable(),
+  claim_window_hours: z.coerce.number().int().min(1).max(8760).optional().nullable(),
+  expires_after_hours: z.coerce.number().int().min(1).max(8760).optional(),
+  max_claims_total: z.coerce.number().int().min(0).optional(),
+  max_claims_per_user: z.coerce.number().int().min(1).max(100).optional(),
+  total_budget_coins: z.coerce.number().min(0).optional().nullable(),
+  requires_opt_in: z.boolean().optional(),
+  auto_grant_on_event: z.enum(['signup', 'deposit', 'rain', 'vip_tier']).optional().nullable(),
+  badge_color: z.string().max(20).optional().nullable(),
+  icon: z.string().max(40).optional().nullable(),
+  sort_order: z.coerce.number().int().optional(),
+  metadata: z.object({}).passthrough().optional(),
 });

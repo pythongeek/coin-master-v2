@@ -94,7 +94,7 @@ export type WithdrawalValidationResult =
  * the top-level query(). Avoids the awkward `txClient?.query ?? query`
  * pattern in every function body.
  */
-type QueryFn = (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>;
+type QueryFn = (text: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount: number }>;
 function q(txClient?: QueryFn): QueryFn {
   if (txClient) return txClient;
   // top-level query from database config returns the same shape but
@@ -182,7 +182,29 @@ export async function grantWelcomeBonus(
     [userId, amount, wageringRequired],
   );
 
-  // Audit
+  // 6. Record a 'bonus' transaction row so the user sees the credit
+  //    in their transaction history. The merged reconciliation engine
+  //    excludes these because they're house-credit (not a deposit),
+  //    but the legacy `transactions` table keeps an audit trail.
+  await q(txClient)(
+    `INSERT INTO transactions
+       (id, user_id, type, amount, currency, direction, status,
+        related_user_id, metadata, completed_at)
+     VALUES ($1, $2, 'bonus', $3, 'USD', 'credit', 'confirmed',
+             $2, $4, NOW())`,
+    [
+      uuidv4(),
+      userId,
+      amount,
+      JSON.stringify({
+        source: 'welcome_bonus',
+        bonus_claim_id: id,
+        wagering_required: wageringRequired,
+      }),
+    ],
+  );
+
+  // 7. Audit
   await q(txClient)(
     `INSERT INTO audit_log (category, action, severity, user_id, details)
      VALUES ('bonus', 'bonus.granted.welcome', 'info', $1, $2)`,
@@ -314,12 +336,13 @@ export async function creditWagering(
 
   let remaining = betAmount;
   let claimsCompleted = 0;
-  for (const c of activeClaims.rows) {
+  for (const c of activeClaims.rows as Array<{ wagering_required: string | number }>) {
     if (remaining <= 0) break;
-    const need = parseFloat(c.wagering_required) - parseFloat(c.wagering_required); // already at 0; use claim-wagering tracking instead
+    const need = parseFloat(String(c.wagering_required)) - parseFloat(String(c.wagering_required)); // already at 0; use claim-wagering tracking instead
     // We're at 0 progress per-claim (we don't track per-claim wagering in this schema),
     // so we just mark as completed if user-level wagering >= user-level wagering_required.
     // Simpler model: track at user level, claims complete when user-level threshold reached.
+    void need;
   }
 
   // Simpler model: if user wagering_completed >= user wagering_required, complete oldest claim(s)
@@ -328,8 +351,9 @@ export async function creditWagering(
      FROM users WHERE id = $1`,
     [userId],
   );
-  const reqd = parseFloat(userRow.rows[0]?.wagering_required_coins ?? 0);
-  const done = parseFloat(userRow.rows[0]?.wagering_completed_coins ?? 0);
+  const userRow0 = (userRow.rows as Array<{ wagering_required_coins?: string | number; wagering_completed_coins?: string | number }>)[0];
+  const reqd = parseFloat(String(userRow0?.wagering_required_coins ?? 0));
+  const done = parseFloat(String(userRow0?.wagering_completed_coins ?? 0));
 
   if (reqd > 0 && done >= reqd) {
     // Mark all active claims completed, reset user counters
@@ -383,9 +407,10 @@ export async function determineBalanceSource(
     [userId],
   );
   if (!row.rows.length) return 'withdrawable';
-  const bonus = parseFloat(row.rowCount > 0 ? row.rows[0].bonus_balance_coins : 0);
-  const reqd = parseFloat(row.rows[0].wagering_required_coins);
-  const wdr  = parseFloat(row.rows[0].withdrawable_balance_coins);
+  const r0 = row.rows[0] as { bonus_balance_coins: string | number; withdrawable_balance_coins: string | number; wagering_required_coins: string | number };
+  const bonus = parseFloat(String(r0.bonus_balance_coins || 0));
+  const reqd = parseFloat(String(r0.wagering_required_coins || 0));
+  const wdr  = parseFloat(String(r0.withdrawable_balance_coins || 0));
 
   // If user has active wagering requirement AND bonus covers the bet, use bonus
   if (reqd > 0 && bonus >= amount) return 'bonus';
@@ -413,7 +438,8 @@ export async function debitBalanceForBet(
     // Insufficient funds in this source — caller should retry with other source
     throw new Error(`insufficient_${source}_balance`);
   }
-  return { success: true, newBalance: parseFloat(upd.rows[0].new_balance), source };
+  const upd0 = upd.rows[0] as { new_balance: string | number };
+  return { success: true, newBalance: parseFloat(String(upd0.new_balance)), source };
 }
 
 export async function creditPayout(
@@ -456,29 +482,46 @@ export async function getBonusStatus(
     [userId],
   );
 
-  const u = user.rows[0] ?? {};
-  const bonusBal = parseFloat(u.bonus_balance_coins ?? 0);
-  const wdrBal   = parseFloat(u.withdrawable_balance_coins ?? 0);
-  const reqd    = parseFloat(u.wagering_required_coins ?? 0);
-  const done    = parseFloat(u.wagering_completed_coins ?? 0);
-  const totalDep = parseFloat(u.total_deposited_coins ?? 0);
-  const totalBns = parseFloat(u.total_bonus_claimed_coins ?? 0);
-  const hrsSince = parseFloat(u.hours_since_bonus ?? 9999);
+  const u = (user.rows[0] ?? {}) as {
+    bonus_balance_coins?: string | number;
+    withdrawable_balance_coins?: string | number;
+    wagering_required_coins?: string | number;
+    wagering_completed_coins?: string | number;
+    total_bonus_claimed_coins?: string | number;
+    total_deposited_coins?: string | number;
+    hours_since_bonus?: string | number;
+  };
+  const bonusBal = parseFloat(String(u.bonus_balance_coins ?? 0));
+  const wdrBal   = parseFloat(String(u.withdrawable_balance_coins ?? 0));
+  const reqd    = parseFloat(String(u.wagering_required_coins ?? 0));
+  const done    = parseFloat(String(u.wagering_completed_coins ?? 0));
+  const totalDep = parseFloat(String(u.total_deposited_coins ?? 0));
+  const totalBns = parseFloat(String(u.total_bonus_claimed_coins ?? 0));
+  const hrsSince = parseFloat(String(u.hours_since_bonus ?? '9999'));
 
   const counts = { active: 0, completed: 0, expired: 0, forfeited: 0 };
   let minDepRequired = 0;
   const activeClaims: BonusStatusSummary['activeClaims'] = [];
 
-  for (const r of claims.rows) {
+  for (const r of claims.rows as Array<{
+    id: string;
+    bonus_type: string;
+    amount_coins: string | number;
+    wagering_required: string | number;
+    expires_at: Date | string;
+    status: string;
+    days_remaining: string | number;
+    metadata?: unknown;
+  }>) {
     const s = r.status as BonusStatus;
     if (s in counts) (counts as Record<string, number>)[s]++;
     if (s === 'active') {
-      const days = Math.max(0, parseFloat(r.days_remaining));
+      const days = Math.max(0, parseFloat(String(r.days_remaining)));
       activeClaims.push({
         id: r.id,
         bonusType: r.bonus_type as BonusType,
-        amountCoins: parseFloat(r.amount_coins),
-        wageringRequired: parseFloat(r.wagering_required),
+        amountCoins: parseFloat(String(r.amount_coins)),
+        wageringRequired: parseFloat(String(r.wagering_required)),
         wageringCompleted: 0, // tracked at user-level only
         expiresAt: new Date(r.expires_at),
         daysRemaining: Math.floor(days),
@@ -486,7 +529,7 @@ export async function getBonusStatus(
       });
       // Min deposit rule: user must deposit X% of active bonus total
       const pct = await getBonusCfgNumber('bonusMinDepositToWithdrawPct', 50);
-      minDepRequired = Math.max(minDepRequired, (parseFloat(r.amount_coins) * pct) / 100);
+      minDepRequired = Math.max(minDepRequired, (parseFloat(String(r.amount_coins)) * pct) / 100);
     }
   }
 
@@ -503,7 +546,7 @@ export async function getBonusStatus(
       blockedReasons.push(`cooldown: ${(cooldown - hrsSince).toFixed(1)} hours remaining`);
     }
   }
-  if (claims.rows.some((r: { status: string }) => r.status === 'expired')) {
+  if ((claims.rows as Array<{ status: string }>).some((r) => r.status === 'expired')) {
     blockedReasons.push('expired bonus claim exists — contact support');
   }
 

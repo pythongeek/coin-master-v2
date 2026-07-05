@@ -28,7 +28,10 @@ export default function AffiliatePanel() {
     referralsWagered: 0,
   });
 
-  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  const API =
+    typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+      ? '/api'
+      : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
   const referralLink = stats.referralCode 
     ? `${window.location.origin}/register?ref=${stats.referralCode}` 
     : '';
@@ -38,7 +41,7 @@ export default function AffiliatePanel() {
     if (!token) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/wallet/affiliate`, {
+      const res = await fetch(`${API}/wallet/affiliate`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -79,7 +82,7 @@ export default function AffiliatePanel() {
     if (!token || stats.pendingBalance <= 0 || claiming) return;
     setClaiming(true);
     try {
-      const res = await fetch(`${API}/api/wallet/affiliate/claim`, {
+      const res = await fetch(`${API}/wallet/affiliate/claim`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -111,11 +114,7 @@ export default function AffiliatePanel() {
 
   return (
     <div className="glass-card border border-border overflow-hidden">
-      {/* হেডার */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-      >
+      <div className="p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-brand-gold/10 flex items-center justify-center text-brand-gold">
             <Users size={16} />
@@ -125,13 +124,8 @@ export default function AffiliatePanel() {
             <div className="text-text-muted text-xs font-mono">{t('affiliateSubtitle')}</div>
           </div>
         </div>
-        <span className="text-text-muted">
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border p-4 space-y-4">
+      </div>
+      <div className="p-4 space-y-4">
           {loading && !stats.referralCode ? (
             <div className="flex items-center justify-center py-6">
               <Loader2 className="animate-spin text-brand-gold" size={24} />
@@ -216,7 +210,6 @@ export default function AffiliatePanel() {
             </>
           )}
         </div>
-      )}
     </div>
   );
 }

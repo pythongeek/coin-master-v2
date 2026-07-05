@@ -16,6 +16,17 @@ import { Request, Response, NextFunction } from 'express';
  */
 export function csrfMiddleware(req: Request, res: Response, next: NextFunction) {
   const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const allowedOrigins = [allowedOrigin];
+  if (process.env.TUNNEL_APP_URL) allowedOrigins.push(process.env.TUNNEL_APP_URL);
+  // Allow extra origins (comma-separated). Used for dev / external IP access.
+  if (process.env.EXTRA_ALLOWED_ORIGINS) {
+    for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
+      const t = o.trim();
+      if (t) allowedOrigins.push(t);
+    }
+  }
+  // If we're on the same host (different port) allow it. Browsers always
+  // send Origin on cross-origin fetches, so this is a controlled allowlist.
   const method = req.method;
 
   // Bypass checks for safe HTTP methods
@@ -33,7 +44,7 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
   const referer = req.headers.referer;
 
   // 1. Verify Origin if present
-  if (origin && origin !== allowedOrigin) {
+  if (origin && !allowedOrigins.includes(origin)) {
     return res.status(403).json({
       success: false,
       error: 'CSRF ভ্যালিডেশন ব্যর্থ হয়েছে। অবৈধ উৎস থেকে অনুরোধ।',
@@ -44,8 +55,8 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
   if (!origin && referer) {
     try {
       const refererUrl = new URL(referer);
-      const allowedUrl = new URL(allowedOrigin);
-      if (refererUrl.origin !== allowedUrl.origin) {
+      const allowedHostnames = allowedOrigins.map((o) => new URL(o).hostname);
+      if (!allowedHostnames.includes(refererUrl.hostname)) {
         return res.status(403).json({
           success: false,
           error: 'CSRF ভ্যালিডেশন ব্যর্থ হয়েছে। অবৈধ উৎস থেকে অনুরোধ।',
@@ -89,7 +100,14 @@ export const helmetConfig = {
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https://*.sumsub.com", "https://*.google.com"],
       // Allow WebSocket connections and Sumsub APIs
-      connectSrc: ["'self'", "ws://localhost:*", "wss://localhost:*", "http://localhost:*", "https://*.sumsub.com"],
+      connectSrc: [
+        "'self'",
+        "ws://localhost:*",
+        "wss://localhost:*",
+        "http://localhost:*",
+        "https://*.sumsub.com",
+        "https://mesa-sur-demonstrate-gates.trycloudflare.com",
+      ],
       frameSrc: ["'self'", "https://*.sumsub.com"],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],

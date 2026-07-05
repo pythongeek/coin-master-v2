@@ -25,6 +25,10 @@ export function useSocketEvents() {
     addNotification,
   } = useGameStore();
 
+  // In a tab or cross-page navigation the token may be in localStorage
+  // but the active socket may still be a stale guest. Normalize by
+  // always creating the socket with the latest token whenever the
+  // token value changes (or on first mount).
   useEffect(() => {
     const socket = getSocket(token || undefined);
 

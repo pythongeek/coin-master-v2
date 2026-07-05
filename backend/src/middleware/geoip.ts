@@ -56,6 +56,28 @@ export function geoipMiddleware(req: Request, res: Response, next: NextFunction)
     return next();
   }
 
+  // 3b. Bypass geo check for IPs in the developer allowlist
+  // (CSV env var). Use this to grant specific IPs access despite
+  // their apparent jurisdiction. Useful for testing from a proxy
+  // whose exit IP geo-locates to a restricted region even though
+  // the operator is legitimate.
+  const allowlist = (process.env.GEOIP_ALLOWLIST || '')
+    .split(',')
+    .map((s) => s.trim())
+    // Normalize IPv6-mapped IPv4 addresses so the allowlist entry
+    // '46.62.247.167' matches '::ffff:46.62.247.167' that Node.js
+    // sockets report when behind a dual-stack listener.
+    .map((s) => s.replace(/^::ffff:/, ''))
+    .filter(Boolean);
+  const normalizedIp = ip.replace(/^::ffff:/, '');
+  if (allowlist.includes(normalizedIp)) {
+    (req as any).countryCode = 'ALLOWLIST';
+    return next();
+  }
+  // Update ip to the normalized form so geoip-lite resolves it
+  // correctly (otherwise `::ffff:1.2.3.4` returns null).
+  ip = normalizedIp;
+
   // 4. Resolve country code from IP
   const lookup = geoip.lookup(ip);
   if (lookup && lookup.country) {

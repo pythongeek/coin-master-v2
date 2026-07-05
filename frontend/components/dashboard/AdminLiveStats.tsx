@@ -1,7 +1,7 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  ADMIN LIVE STATS — প্ল্যাটফর্মের সামগ্রিক লাইভ পরিসংখ্যান
+ *  ADMIN LIVE STATS — প্ল্যাটফর্মের সামগ্রিক Live Stats
  * ═══════════════════════════════════════════════════════════════
  *
  *  প্রতি ১০ সেকেন্ডে অটো-রিফ্রেশ হয়।
@@ -12,7 +12,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Banknote, Landmark, Dices, CloudRain, type LucideIcon } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 interface LiveStats {
   users:       { total: number; today: number };
@@ -29,7 +32,7 @@ export default function AdminLiveStats() {
   const fetchStats = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
     try {
-      const res = await fetch(`${API}/api/dashboard/admin/live`, {
+      const res = await fetch(`${API}/dashboard/admin/live`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -38,13 +41,8 @@ export default function AdminLiveStats() {
         setLastUpdate(new Date());
       }
     } catch {
-      // ব্যাকএন্ড কানেক্ট না থাকলে ডেমো ডেটা
-      setStats({
-        users:       { total: 1284, today: 47 },
-        bets:        { total: 18430, totalVolume: 94320.50, today: 612, todayVolume: 3840.25 },
-        houseProfit: 1886.41,
-        activeRains: 0,
-      });
+      // Silent fail
+      if (!stats) setStats(null);
     }
     setLoading(false);
   }, []);
@@ -67,26 +65,30 @@ export default function AdminLiveStats() {
 
   if (!stats) return null;
 
-  const cards: { label: string; Icon: LucideIcon; color: string; value: string; sub: string }[] = [
+  const cards: { label: string; Icon: LucideIcon; color: string; value: string; sub: string; trend?: number }[] = [
     {
-      label: 'মোট ইউজার', Icon: Users, color: 'blue',
+      label: 'Total Users', Icon: Users, color: 'blue',
       value: stats.users.total.toLocaleString(),
       sub: `+${stats.users.today} আজ`,
+      trend: stats.users.today,
     },
     {
-      label: 'মোট বেট ভলিউম', Icon: Banknote, color: 'green',
+      label: 'Total Bet Volume', Icon: Banknote, color: 'green',
       value: `$${stats.bets.totalVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
       sub: `আজ: $${stats.bets.todayVolume.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+      trend: stats.bets.todayVolume,
     },
     {
-      label: 'হাউজ প্রফিট', Icon: Landmark, color: 'gold',
+      label: 'House Profit', Icon: Landmark, color: 'gold',
       value: `$${stats.houseProfit.toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
       sub: 'সর্বমোট নেট আয়',
+      trend: stats.houseProfit,
     },
     {
-      label: 'আজকের বেট', Icon: Dices, color: 'purple',
+      label: "Today's Bets", Icon: Dices, color: 'purple',
       value: stats.bets.today.toLocaleString(),
       sub: `সর্বমোট: ${stats.bets.total.toLocaleString()}`,
+      trend: stats.bets.today,
     },
   ];
 
@@ -100,7 +102,7 @@ export default function AdminLiveStats() {
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="heading-display text-sm text-text-primary">লাইভ পরিসংখ্যান</h3>
+        <h3 className="heading-display text-sm text-text-primary">Live Stats</h3>
         <div className="flex items-center gap-2 text-text-muted text-xs font-mono">
           <span className="w-1.5 h-1.5 rounded-full bg-brand-green animate-pulse" />
           আপডেট: {lastUpdate.toLocaleTimeString('bn-BD')}
@@ -118,6 +120,9 @@ export default function AdminLiveStats() {
               {c.value}
             </div>
             <div className="text-text-muted text-xs font-mono mt-1">{c.sub}</div>
+            {c.trend !== undefined && c.trend !== 0 && (
+              <div className="text-[10px] text-text-muted mt-1">Trend: {c.trend > 0 ? '+' : ''}{c.trend.toLocaleString()}</div>
+            )}
           </div>
         ))}
       </div>

@@ -96,13 +96,13 @@ export default function ProfitChart({ data, loading }: Props) {
 
   if (loading) {
     return <div className="glass-card p-4 h-64 flex items-center justify-center animate-pulse">
-      <span className="text-text-muted text-sm font-mono">চার্ট লোড হচ্ছে...</span>
+      <span className="text-text-muted text-sm font-mono">Loading chart...</span>
     </div>;
   }
 
   if (!data.length) {
     return <div className="glass-card p-4 h-40 flex items-center justify-center">
-      <span className="text-text-muted text-sm font-mono">এখনো কোনো বেট নেই। খেলা শুরু করুন!</span>
+      <span className="text-text-muted text-sm font-mono">No bets yet. Start playing!</span>
     </div>;
   }
 
@@ -111,8 +111,8 @@ export default function ProfitChart({ data, loading }: Props) {
       {/* হেডার */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="heading-display text-sm text-text-primary">লাভ / লোকসান চার্ট</h3>
-          <p className="text-text-muted text-xs font-mono">শেষ ৩০ দিন</p>
+          <h3 className="heading-display text-sm text-text-primary">Profit / Loss Chart</h3>
+          <p className="text-text-muted text-xs font-mono">Last 30 days</p>
         </div>
         <div className="flex gap-1">
           {(['cumulative', 'daily'] as const).map((v) => (
@@ -210,9 +210,9 @@ export default function ProfitChart({ data, loading }: Props) {
       {/* সারসংক্ষেপ */}
       <div className="flex gap-4 mt-2 pt-2 border-t border-border">
         {[
-          { label: 'শুরু', val: data[0]?.cumulativePnl ?? 0 },
-          { label: 'শেষ', val: data[data.length - 1]?.cumulativePnl ?? 0 },
-          { label: 'মোট বেট', val: null, count: data.reduce((s, d) => s + d.bets, 0) },
+          { label: 'Start', val: data[0]?.cumulativePnl ?? 0 },
+          { label: 'End', val: data[data.length - 1]?.cumulativePnl ?? 0 },
+          { label: 'Total Bets', val: null, count: data.reduce((s, d) => s + d.bets, 0) },
         ].map((item) => (
           <div key={item.label} className="text-center">
             <div className="text-text-muted text-xs font-mono">{item.label}</div>

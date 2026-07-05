@@ -24,7 +24,10 @@ import {
 } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 interface AIVerifyResponse {
   success: boolean;
@@ -69,7 +72,7 @@ export default function KYCPage() {
   async function fetchKYCStatus() {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/kyc/status`, {
+      const res = await fetch(`${API}/kyc/status`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -203,7 +206,7 @@ export default function KYCPage() {
     }, 1500);
 
     try {
-      const res = await fetch(`${API}/api/kyc/verify-ai`, {
+      const res = await fetch(`${API}/kyc/verify-ai`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,

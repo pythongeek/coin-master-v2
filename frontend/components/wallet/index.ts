@@ -1,4 +1,4 @@
-export { WalletModal, default } from './WalletModal';
+export { default as WalletModal } from './WalletModal';
 export { WalletButton } from './WalletButton';
-export type { WalletModalProps } from './WalletModal';
 export type { WalletButtonProps } from './WalletButton';
+export type { default as WalletModalProps } from './WalletModal';

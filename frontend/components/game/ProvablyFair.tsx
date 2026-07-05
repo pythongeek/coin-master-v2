@@ -29,7 +29,7 @@ interface VerifyResult {
 
 // ── ক্লায়েন্ট-সাইড ভেরিফিকেশন (API ছাড়াই) ──────────────────
 function verifyLocally(input: VerifyInput): VerifyResult {
-  // সার্ভার সিডের হ্যাশ মিলছে কিনা
+  // Server seedের Hash মিলছে কিনা
   const computedHash = createHash('sha256').update(input.serverSeed).digest('hex');
   const hashMatches = computedHash === input.serverSeedHash;
 
@@ -40,8 +40,8 @@ function verifyLocally(input: VerifyInput): VerifyResult {
   const result: 'heads' | 'tails' = rawValue % 2 === 0 ? 'heads' : 'tails';
 
   const explanation = hashMatches
-    ? `সার্ভার সিড হ্যাশ মিলেছে। রেজাল্ট: ${result === 'heads' ? 'হেডস 🪷' : 'টেইলস 🐯'}`
-    : `হ্যাশ মিলছে না! সম্ভাব্য কারচুপি সনাক্ত হয়েছে!`;
+    ? `Server seed Hash মিলেছে। Result: ${result === 'heads' ? 'হেডস 🪷' : 'টেইলস 🐯'}`
+    : `Hash মিলছে না! সম্ভাব্য কারচুপি সনাক্ত হয়েছে!`;
 
   return { isValid: hashMatches, result, rawHash, hashMatches, explanation };
 }
@@ -66,31 +66,22 @@ export default function ProvablyFairWidget() {
 
   return (
     <div className="glass-card border border-border overflow-hidden">
-      {/* হেডার */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between p-4 hover:bg-white/5 transition-colors"
-      >
+      <div className="p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-brand-green/10 flex items-center justify-center text-brand-green">
             <ShieldCheck size={16} />
           </div>
           <div className="text-left">
             <div className="heading-display text-sm text-brand-green">PROVABLY FAIR</div>
-            <div className="text-text-muted text-xs font-mono">আপনার গেম যাচাই করুন</div>
+            <div className="text-text-muted text-xs font-mono">Verify your game</div>
           </div>
         </div>
-        <span className="text-text-muted">
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border p-4 space-y-4">
+      </div>
+      <div className="p-4 space-y-4">
           {/* ব্যাখ্যা */}
           <div className="bg-void rounded-lg p-3 border border-brand-green/20">
             <p className="text-text-secondary text-xs font-mono leading-relaxed">
-              গেম শেষে আপনাকে <span className="text-brand-green">Server Seed</span> দেওয়া হবে।
+              After the game you will receive the <span className="text-brand-green">Server Seed</span> .
               নিচে সব তথ্য পেস্ট করুন — সিস্টেম নিজেই প্রমাণ করবে রেজাল্ট আগে থেকে নির্ধারিত ছিল
               এবং কোনো কারচুপি হয়নি।
             </p>
@@ -100,7 +91,7 @@ export default function ProvablyFairWidget() {
           <div className="space-y-3">
             <div>
               <label className="text-text-secondary text-xs font-mono block mb-1">
-                সার্ভার সিড হ্যাশ <span className="text-brand-info">(গেমের আগে পাওয়া)</span>
+                Server seed Hash <span className="text-brand-info">((received before the game))</span>
               </label>
               <input
                 className="input-cyber text-xs"
@@ -111,7 +102,7 @@ export default function ProvablyFairWidget() {
             </div>
             <div>
               <label className="text-text-secondary text-xs font-mono block mb-1">
-                সার্ভার সিড <span className="text-brand-green">(গেমের পরে প্রকাশিত)</span>
+                Server seed <span className="text-brand-green">((revealed after the game))</span>
               </label>
               <input
                 className="input-cyber text-xs"
@@ -122,7 +113,7 @@ export default function ProvablyFairWidget() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-text-secondary text-xs font-mono block mb-1">ক্লায়েন্ট সিড</label>
+                <label className="text-text-secondary text-xs font-mono block mb-1">Client seed</label>
                 <input
                   className="input-cyber text-xs"
                   placeholder="আপনার সিড"
@@ -131,7 +122,7 @@ export default function ProvablyFairWidget() {
                 />
               </div>
               <div>
-                <label className="text-text-secondary text-xs font-mono block mb-1">নন্স (গেম নম্বর)</label>
+                <label className="text-text-secondary text-xs font-mono block mb-1">Nonce (game number)</label>
                 <input
                   className="input-cyber text-xs"
                   type="number"
@@ -164,8 +155,8 @@ export default function ProvablyFairWidget() {
               </p>
               {result.isValid && (
                 <div className="space-y-1 text-xs font-mono text-text-muted">
-                  <div>রেজাল্ট: <span className="text-white">{result.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'}</span></div>
-                  <div className="break-all">রিড হ্যাশ: <span className="text-brand-info">{result.rawHash.slice(0, 32)}...</span></div>
+                  <div>Result: <span className="text-white">{result.result === 'heads' ? '🪷 HEADS' : '🐯 TAILS'}</span></div>
+                  <div className="break-all">Raw Hash: <span className="text-brand-info">{result.rawHash.slice(0, 32)}...</span></div>
                 </div>
               )}
             </div>
@@ -178,14 +169,13 @@ export default function ProvablyFairWidget() {
               কীভাবে কাজ করে?
             </summary>
             <div className="mt-2 space-y-1 bg-void p-3 rounded-lg border border-border leading-relaxed">
-              <p>১. গেমের আগে সার্ভার একটি গোপন বীজ তৈরি করে → SHA-256 হ্যাশ আপনাকে দেয়।</p>
-              <p>২. আপনি আপনার ক্লায়েন্ট সিড দেন (বা অটো তৈরি হয়)।</p>
-              <p>৩. রেজাল্ট: HMAC-SHA256(serverSeed, clientSeed:nonce) → প্রথম ৪ বাইট → জোড় = Heads</p>
-              <p>৪. গেমের পরে সার্ভার আসল বীজ প্রকাশ করে — আপনি নিজেই হিসাব মেলাতে পারেন।</p>
+              <p>1. Before the game the server creates a secret seed → SHA-256 hash is given to you.</p>
+              <p>2. You provide your client seed (or it is auto-generated).</p>
+              <p>৩. Result: HMAC-SHA256(serverSeed, clientSeed:nonce) → প্রথম ৪ বাইট → জোড় = Heads</p>
+              <p>4. After the game the server reveals the real seed — you can verify the math yourself.</p>
             </div>
           </details>
         </div>
-      )}
     </div>
   );
 }

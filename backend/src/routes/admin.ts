@@ -21,6 +21,7 @@ import { authMiddleware, AuthPayload, roleMiddleware } from '../middleware/auth'
 import { reconcilePendingPayments } from '../services/reconciliation';
 import { adminSettingsSchema } from '../schemas';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
+import { invalidateCache } from '../services/cache';
 
 const router = Router();
 
@@ -330,15 +331,107 @@ router.post('/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), asy
   }
 });
 
+// Admin banner control
+router.get('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (_req: Request, res: Response) => {
+  try {
+    const result = await query("SELECT value FROM admin_settings WHERE key = 'global_banner'");
+    const banner = result.rows[0]?.value
+      ? JSON.parse(result.rows[0].value)
+      : { enabled: false, type: 'info', message: '', dismissible: true };
+    res.json({ success: true, banner });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+router.patch('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+  try {
+    const banner = req.body;
+    await query(
+      `INSERT INTO admin_settings (key, value, description, updated_at)
+       VALUES ('global_banner', $1, 'Global announcement/maintenance banner', NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(banner)]
+    );
+    res.json({ success: true, banner });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
 export default router;
 
-// Phase B.2: Manual reconciliation trigger (admin-only, for stuck pending orders)
-router.post('/payment/reconcile', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (_req: Request, res: Response) => {
+// ── Admin self-service: password change ────────────────────────
+router.post('/change-password', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support', 'auditor']), async (req: Request, res: Response) => {
   try {
-    const result = await reconcilePendingPayments();
-    res.json({ success: true, result });
+    const self = (req as Request & { user: AuthPayload }).user;
+    const { currentPassword, newPassword } = req.body ?? {};
+
+    if (!currentPassword || !newPassword || typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+      return res.status(400).json({ success: false, error: 'বর্তমান ও নতুন পাসওয়ার্ড দিন।' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, error: 'নতুন পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে।' });
+    }
+
+    const userResult = await query('SELECT password_hash FROM users WHERE id = $1 AND is_active = true', [self.userId]);
+    if (!userResult.rows.length) {
+      return res.status(403).json({ success: false, error: 'অ্যাকাউন্ট পাওয়া যায়নি।' });
+    }
+
+    const passwordOk = await bcrypt.compare(currentPassword, userResult.rows[0].password_hash);
+    if (!passwordOk) {
+      return res.status(401).json({ success: false, error: 'বর্তমান পাসওয়ার্ড ভুল।' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [newHash, self.userId]);
+
+    await query(
+      `INSERT INTO audit_log (user_id, category, action, severity, ip_address, user_agent, details)
+       VALUES ($1, 'admin', 'password.change', 'warn', $2, $3, $4)`,
+      [
+        self.userId,
+        (req.ip ?? req.socket.remoteAddress ?? 'unknown').replace(/^::ffff:/, ''),
+        (req.headers['user-agent'] || '').toString().slice(0, 500),
+        JSON.stringify({ route: '/api/admin/change-password' }),
+      ]
+    );
+
+    await invalidateCache([`auth:${self.userId}`]).catch(() => {});
+
+    res.json({ success: true, message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে।' });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ── Admin self-service: 2FA status ─────────────────────────────
+router.get('/2fa/status', authMiddleware, roleMiddleware(['super_admin', 'finance', 'support', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const result = await query('SELECT two_factor_enabled FROM users WHERE id = $1', [self.userId]);
+    res.json({ success: true, enabled: result.rows[0]?.two_factor_enabled === true });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ── Admin user search (for bonus grants, support) ─────────────
+router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q.length < 2) return res.status(400).json({ success: false, error: 'Query too short.' });
+    const result = await query(
+      `SELECT id, username, email, balance
+       FROM users
+       WHERE LOWER(username) LIKE $1 OR LOWER(email) LIKE $1 OR wallet_address ILIKE $1
+       ORDER BY username ASC
+       LIMIT 20`,
+      [`%${q}%`]
+    );
+    res.json({ success: true, users: result.rows });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
   }
 });

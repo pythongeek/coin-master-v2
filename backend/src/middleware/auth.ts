@@ -18,6 +18,20 @@ export interface AuthPayload {
   role?: string;
 }
 
+/**
+ * JWT secret used across auth services. Failing to set it is a hard production
+ * blocker: every token would be signed with a public default value.
+ */
+const JWT_SECRET = ((): string => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('FATAL: JWT_SECRET environment variable is required and must be at least 32 characters. Refusing to start.');
+  }
+  return secret;
+})();
+
+export { JWT_SECRET };
+
 // JWT টোকেন যাচাই করো
 export function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -27,7 +41,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev_secret') as AuthPayload & { isTemp?: boolean };
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload & { isTemp?: boolean };
     if (decoded.isTemp) {
       return res.status(401).json({ success: false, error: '২এফএ যাচাইকরণ সম্পন্ন করুন।' });
     }
@@ -64,5 +78,5 @@ export function roleMiddleware(allowedRoles: ('super_admin' | 'support' | 'finan
 
 // টোকেন তৈরি করো
 export function createToken(payload: AuthPayload): string {
-  return jwt.sign(payload, process.env.JWT_SECRET || 'dev_secret', { expiresIn: '7d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }

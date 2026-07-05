@@ -72,3 +72,6 @@ nginx/ssl/
 
 # ── Hidden admin URL (rotate with: python3 -c "import secrets; print('sysop-' + secrets.token_urlsafe(12))" > .admin-secret-path) ──
 .admin-secret-path
+
+# ── Admin gateway token (secret) ──
+.admin-gateway-token

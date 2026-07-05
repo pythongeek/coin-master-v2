@@ -1,7 +1,7 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  BET HISTORY TABLE — বেট ইতিহাসের সম্পূর্ণ তালিকা
+ *  BET HISTORY TABLE — Bet Historyের সম্পূর্ণ তালিকা
  * ═══════════════════════════════════════════════════════════════
  */
 import { Check, X, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -43,21 +43,21 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
     <div className="glass-card overflow-hidden">
       {/* হেডার */}
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h3 className="heading-display text-sm">বেট ইতিহাস</h3>
-        <span className="text-text-muted text-xs font-mono">{history.length} রেকর্ড</span>
+        <h3 className="heading-display text-sm">Bet History</h3>
+        <span className="text-text-muted text-xs font-mono">{history.length} records</span>
       </div>
 
       {/* টেবিল */}
       {history.length === 0 ? (
         <div className="p-8 text-center text-text-muted font-mono text-sm">
-          এখনো কোনো বেট নেই।
+          এখনো কোনো Bet নেই।
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs font-mono">
             <thead>
               <tr className="border-b border-border text-text-muted text-left">
-                {['সময়', 'পছন্দ', 'ফলাফল', 'বেট', 'পেআউট', 'হাউজ', 'যাচাই'].map(h => (
+                {['সময়', 'পছন্দ', 'ফলাফল', 'Bet', 'পেআউট', 'হাউজ', 'যাচাই'].map(h => (
                   <th key={h} className="px-4 py-2 font-mono font-normal">{h}</th>
                 ))}
               </tr>
@@ -97,7 +97,7 @@ export default function BetHistory({ history, loading, page, totalPages, onPageC
                     </span>
                   </td>
 
-                  {/* বেট */}
+                  {/* Bet */}
                   <td className="px-4 py-2.5 text-text-secondary">
                     ${parseFloat(String(bet.amount)).toFixed(2)}
                   </td>

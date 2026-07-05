@@ -1,35 +1,41 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  ADMIN CONFIG PANEL — এডমিনের সম্পূর্ণ কন্ট্রোল প্যানেল UI
+ *  ADMIN CONFIG PANEL — এডমিনের সম্পূর্ণ Control Panel UI
  * ═══════════════════════════════════════════════════════════════
  */
 import { useState, useEffect } from 'react';
 import { Wallet, CloudRain, Users, Zap, ShieldCheck, Settings, RotateCcw, Calculator, Check, Loader2, type LucideIcon } from 'lucide-react';
+import { useToast } from '@/components/providers/ToastProvider';
+
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 // ── DEFAULT CONFIG (Backend থেকে না পেলে এটি ব্যবহার হবে) ────────
 const DEFAULTS = {
-  houseEdgePercent:       { value: 2.0,    label: 'হাউজ এজ', unit: '%',      desc: 'প্ল্যাটফর্মের কমিশন। ২% = ১০০ বেটে জয় হলে ১৯৬ পাবে', min: 0.1,  max: 10,    category: 'বেটিং', type: 'number' },
-  minBetAmount:           { value: 0.01,   label: 'সর্বনিম্ন বেট', unit: '$',  desc: 'সর্বনিম্ন বেটের পরিমাণ', min: 0.01, max: 100,   category: 'বেটিং', type: 'number' },
-  maxBetAmount:           { value: 1000,   label: 'সর্বোচ্চ বেট', unit: '$',  desc: 'একটি বেটে সর্বোচ্চ পরিমাণ (রিস্ক কন্ট্রোল)', min: 10,   max: 100000,category: 'বেটিং', type: 'number' },
-  rainTriggerStreak:      { value: 5,      label: 'রেইন স্ট্রিক', unit: 'বার', desc: 'টানা কতবার জিতলে Crypto Rain ট্রিগার হবে', min: 2,    max: 20,    category: 'ক্রিপ্টো রেইন', type: 'number' },
-  rainBudgetDailyUsd:     { value: 50,     label: 'দৈনিক রেইন বাজেট', unit: '$', desc: 'প্রতিদিন মোট রেইন বরাদ্দ', min: 1,    max: 10000, category: 'ক্রিপ্টো রেইন', type: 'number' },
-  rainClaimPerUserUsd:    { value: 0.10,   label: 'প্রতি ক্লেইম', unit: '$',  desc: 'একজন ইউজার একটি রেইনে সর্বোচ্চ কত পাবে', min: 0.01, max: 10,    category: 'ক্রিপ্টো রেইন', type: 'number' },
-  rainDurationSeconds:    { value: 60,     label: 'রেইনের সময়', unit: 'সেকেন্ড', desc: 'রেইন ইভেন্ট কত সেকেন্ড চলবে', min: 10,   max: 300,   category: 'ক্রিপ্টো রেইন', type: 'number' },
-  rainEnabled:            { value: true,   label: 'রেইন চালু', unit: '',      desc: 'Crypto Rain ফিচার বন্ধ/চালু', category: 'ক্রিপ্টো রেইন', type: 'boolean' },
-  maxSquadSize:           { value: 5,      label: 'স্কোয়াড সাইজ', unit: 'জন', desc: 'Squad Flip-এ সর্বোচ্চ কতজন অংশ নিতে পারবে', min: 2,    max: 10,    category: 'স্কোয়াড', type: 'number' },
-  squadEnabled:           { value: true,   label: 'স্কোয়াড চালু', unit: '',   desc: 'Squad Flip ফিচার বন্ধ/চালু', category: 'স্কোয়াড', type: 'boolean' },
-  squadHouseEdgePercent:  { value: 1.0,    label: 'স্কোয়াড হাউজ এজ', unit: '%', desc: 'Squad Flip-এর জন্য আলাদা কমিশন', min: 0.1,  max: 5,     category: 'স্কোয়াড', type: 'number' },
-  coinSpinDurationMs:     { value: 3000,   label: 'কয়েন স্পিন সময়', unit: 'ms', desc: 'কয়েন কতক্ষণ ঘুরবে (টেনশন বিল্ড-আপ)', min: 1000, max: 10000, category: 'গেম স্পিড', type: 'number' },
-  cooldownBetweenGamesMs: { value: 1500,   label: 'গেমের বিরতি', unit: 'ms', desc: 'দুই গেমের মধ্যে বিরতি', min: 500,  max: 10000, category: 'গেম স্পিড', type: 'number' },
-  seedRotationAfterGames: { value: 100,    label: 'সিড রোটেশন', unit: 'গেম', desc: 'কত গেমের পর নতুন সার্ভার সিড তৈরি হবে', min: 10,   max: 1000,  category: 'নিরাপত্তা', type: 'number' },
-  maintenanceMode:        { value: false,  label: 'মেইনটেন্যান্স মোড', unit: '', desc: 'চালু করলে কেউ গেম খেলতে পারবে না', category: 'সিস্টেম', type: 'boolean' },
+  houseEdgePercent:       { value: 2.0,    label: 'House Edge', unit: '%',      desc: 'প্ল্যাটফর্মের কমিশন। ২% = ১০০ Betে জয় হলে ১৯৬ পাবে', min: 0.1,  max: 10,    category: 'Betিং', type: 'number' },
+  minBetAmount:           { value: 0.01,   label: 'Min Bet', unit: '$',  desc: 'Min Betের পরিমাণ', min: 0.01, max: 100,   category: 'Betিং', type: 'number' },
+  maxBetAmount:           { value: 1000,   label: 'Max Bet', unit: '$',  desc: 'একটি Betে সর্বোচ্চ পরিমাণ (রিস্ক কন্ট্রোল)', min: 10,   max: 100000,category: 'Betিং', type: 'number' },
+  rainTriggerStreak:      { value: 5,      label: 'Rain Streak', unit: 'বার', desc: 'টানা কতবার জিতলে Crypto Rain ট্রিগার হবে', min: 2,    max: 20,    category: 'ক্রিপ্টো রেইন', type: 'number' },
+  rainBudgetDailyUsd:     { value: 50,     label: 'Daily Rain Budget', unit: '$', desc: 'প্রতিদিন মোট রেইন বরাদ্দ', min: 1,    max: 10000, category: 'ক্রিপ্টো রেইন', type: 'number' },
+  rainClaimPerUserUsd:    { value: 0.10,   label: 'Per Claim', unit: '$',  desc: 'একজন ইউজার একটি রেইনে সর্বোচ্চ কত পাবে', min: 0.01, max: 10,    category: 'ক্রিপ্টো রেইন', type: 'number' },
+  rainDurationSeconds:    { value: 60,     label: 'Rain Duration', unit: 'সেকেন্ড', desc: 'রেইন ইভেন্ট কত সেকেন্ড চলবে', min: 10,   max: 300,   category: 'ক্রিপ্টো রেইন', type: 'number' },
+  rainEnabled:            { value: true,   label: 'Rain Enabled', unit: '',      desc: 'Crypto Rain ফিচার বন্ধ/চালু', category: 'ক্রিপ্টো রেইন', type: 'boolean' },
+  maxSquadSize:           { value: 5,      label: 'Squad Size', unit: 'জন', desc: 'Squad Flip-এ সর্বোচ্চ কতজন অংশ নিতে পারবে', min: 2,    max: 10,    category: 'স্কোয়াড', type: 'number' },
+  squadEnabled:           { value: true,   label: 'Squad Enabled', unit: '',   desc: 'Squad Flip ফিচার বন্ধ/চালু', category: 'স্কোয়াড', type: 'boolean' },
+  squadHouseEdgePercent:  { value: 1.0,    label: 'স্কোয়াড House Edge', unit: '%', desc: 'Squad Flip-এর জন্য আলাদা কমিশন', min: 0.1,  max: 5,     category: 'স্কোয়াড', type: 'number' },
+  coinSpinDurationMs:     { value: 3000,   label: 'Coin Spin Time', unit: 'ms', desc: 'কয়েন কতক্ষণ ঘুরবে (টেনশন বিল্ড-আপ)', min: 1000, max: 10000, category: 'গেম স্পিড', type: 'number' },
+  cooldownBetweenGamesMs: { value: 1500,   label: 'Game Cooldown', unit: 'ms', desc: 'দুই গেমের মধ্যে বিরতি', min: 500,  max: 10000, category: 'গেম স্পিড', type: 'number' },
+  seedRotationAfterGames: { value: 100,    label: 'Seed Rotation', unit: 'গেম', desc: 'কত গেমের পর নতুন Server seed তৈরি হবে', min: 10,   max: 1000,  category: 'নিরাপত্তা', type: 'number' },
+  maintenanceMode:        { value: false,  label: 'Maintenance Mode', unit: '', desc: 'চালু করলে কেউ গেম খেলতে পারবে না', category: 'সিস্টেম', type: 'boolean' },
 };
 
 type ConfigKey = keyof typeof DEFAULTS;
 
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
-  'বেটিং': Wallet,
+  'Betিং': Wallet,
   'ক্রিপ্টো রেইন': CloudRain,
   'স্কোয়াড': Users,
   'গেম স্পিড': Zap,
@@ -50,7 +56,8 @@ export default function AdminConfigPanel() {
   const [config, setConfig] = useState<Record<string, string | number | boolean>>(INITIAL_CONFIG);
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [activeCategory, setActiveCategory] = useState('বেটিং');
+  const [activeCategory, setActiveCategory] = useState('Betিং');
+  const { addToast } = useToast();
 
   const categories = [...new Set(Object.values(DEFAULTS).map(d => d.category))];
 
@@ -59,15 +66,21 @@ export default function AdminConfigPanel() {
     setSaving(key);
     setConfig(prev => ({ ...prev, [key]: value as any }));
 
-    // API কল (ব্যাকএন্ড কানেক্ট থাকলে)
+    const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
     try {
-      await fetch('/api/admin/config', {
+      const res = await fetch(`${API}/admin/config`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ [key]: value }),
       });
-    } catch {
-      // Demo মোডে ব্যাকএন্ড ছাড়াই চলবে
+      const data = await res.json();
+      if (!data.success) {
+        addToast(data.error || 'Failed to save config', 'error');
+      } else {
+        addToast(`${DEFAULTS[key].label || key} saved`, 'success');
+      }
+    } catch (err) {
+      addToast('Config update failed', 'error');
     }
 
     setTimeout(() => {
@@ -78,7 +91,20 @@ export default function AdminConfigPanel() {
   };
 
   // ── ডিফল্টে ফিরিয়ে দাও ────────────────────────────────────────
-  const handleReset = () => {
+  const handleReset = async () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
+    try {
+      const res = await fetch(`${API}/admin/config/reset`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!data.success) {
+        addToast(data.error || 'Failed to reset config', 'error');
+      }
+    } catch (err) {
+      addToast('Config reset failed', 'error');
+    }
     const defaults = Object.fromEntries(Object.entries(DEFAULTS).map(([k, v]) => [k, v.value]));
     setConfig(defaults);
     setSaved('all');
@@ -88,7 +114,52 @@ export default function AdminConfigPanel() {
   // ── বর্তমান ক্যাটাগরির কনফিগ ───────────────────────────────────
   const currentItems = Object.entries(DEFAULTS).filter(([, v]) => v.category === activeCategory);
 
-  // ── হাউজ এজ থেকে পেআউট ক্যালকুলেট করো ────────────────────────
+  // ── Export current config to JSON ─────────────────────────────
+  const exportConfig = () => {
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cryptoflip-config-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addToast('Config exported', 'success');
+  };
+
+  // ── Import config from JSON file ────────────────────────────────
+  const importConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        const validKeys = Object.keys(DEFAULTS);
+        const filtered = Object.fromEntries(
+          Object.entries(parsed).filter(([k]) => validKeys.includes(k))
+        ) as Record<string, string | number | boolean>;
+        setConfig((prev) => ({ ...prev, ...filtered }));
+        const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
+        const res = await fetch(`${API}/admin/config`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(filtered),
+        });
+        const data = await res.json();
+        if (data.success) {
+          addToast('Config imported and saved', 'success');
+        } else {
+          addToast(data.error || 'Import failed', 'error');
+        }
+      } catch {
+        addToast('Invalid JSON file', 'error');
+      }
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  };
+
+  // ── House Edge থেকে পেআউট ক্যালকুলেট করো ────────────────────────
   const houseEdge = config.houseEdgePercent as number;
   const payoutMultiplier = (2 * (1 - houseEdge / 100)).toFixed(4);
   const examplePayout = (100 * parseFloat(payoutMultiplier)).toFixed(2);
@@ -98,28 +169,40 @@ export default function AdminConfigPanel() {
       {/* ─── হেডার ───────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="heading-display text-xl text-brand-maroon">এডমিন কন্ট্রোল প্যানেল</h2>
-          <p className="text-text-muted text-xs font-mono mt-1">সব পরিবর্তন সাথে সাথে কার্যকর হয়</p>
+          <h2 className="heading-display text-xl text-brand-maroon">Admin Control Panel</h2>
+          <p className="text-text-muted text-xs font-mono mt-1">All changes take effect immediately</p>
         </div>
-        <button
-          onClick={handleReset}
-          className="flex items-center gap-1.5 px-4 py-2 border border-brand-red/40 text-brand-red rounded-lg text-xs font-mono
-                     hover:bg-brand-red/10 transition-all duration-150"
-        >
-          <RotateCcw size={13} />
-          ডিফল্টে ফিরুন
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleReset}
+            className="flex items-center gap-1.5 px-4 py-2 border border-brand-red/40 text-brand-red rounded-lg text-xs font-mono
+                       hover:bg-brand-red/10 transition-all duration-150"
+          >
+            <RotateCcw size={13} />
+            ডিফল্টে ফিরুন
+          </button>
+          <button
+            onClick={exportConfig}
+            className="flex items-center gap-1.5 px-4 py-2 border border-brand-info/40 text-brand-info rounded-lg text-xs font-mono hover:bg-brand-info/10 transition-all"
+          >
+            Export
+          </button>
+          <label className="flex items-center gap-1.5 px-4 py-2 border border-brand-green/40 text-brand-green rounded-lg text-xs font-mono hover:bg-brand-green/10 transition-all cursor-pointer">
+            Import
+            <input type="file" accept=".json" onChange={importConfig} className="hidden" />
+          </label>
+        </div>
       </div>
 
-      {/* ─── হাউজ এজ ক্যালকুলেটর ─────────────────────────────────── */}
+      {/* ─── House Edge ক্যালকুলেটর ─────────────────────────────────── */}
       <div className="glass-card p-4 border border-brand-gold/30 bg-brand-gold/5">
         <div className="flex items-center gap-2 mb-3">
           <Calculator size={16} className="text-brand-gold" />
-          <span className="heading-display text-sm text-brand-gold">পেআউট ক্যালকুলেটর</span>
+          <span className="heading-display text-sm text-brand-gold">Payout Calculator</span>
         </div>
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="bg-void rounded-lg p-3">
-            <div className="text-text-muted text-xs font-mono">হাউজ এজ</div>
+            <div className="text-text-muted text-xs font-mono">House Edge</div>
             <div className="text-brand-gold font-mono font-bold text-lg">{houseEdge}%</div>
           </div>
           <div className="bg-void rounded-lg p-3">
@@ -127,7 +210,7 @@ export default function AdminConfigPanel() {
             <div className="text-brand-green font-mono font-bold text-lg">{payoutMultiplier}×</div>
           </div>
           <div className="bg-void rounded-lg p-3">
-            <div className="text-text-muted text-xs font-mono">$100 বেটে জিতলে</div>
+            <div className="text-text-muted text-xs font-mono">Win on $100 bet</div>
             <div className="text-brand-info font-mono font-bold text-lg">${examplePayout}</div>
           </div>
         </div>
@@ -192,7 +275,7 @@ export default function AdminConfigPanel() {
                   <p className="text-text-muted text-xs font-mono mt-1">{meta.desc}</p>
                   {isModified && (
                     <p className="text-text-muted text-xs font-mono mt-0.5">
-                      ডিফল্ট: <span className="text-brand-info">{String(meta.value)}{meta.unit}</span>
+                      Default: <span className="text-brand-info">{String(meta.value)}{meta.unit}</span>
                     </p>
                   )}
                 </div>

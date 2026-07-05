@@ -18,8 +18,8 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
-import { query } from '../config/database';
-import { createToken, authMiddleware, AuthPayload } from '../middleware/auth';
+import { query, withTransaction } from '../config/database';
+import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { authLimiter } from '../middleware/rate-limiter';
 import {
@@ -36,6 +36,7 @@ import {
   verifyTotp,
   generateTotpSecret,
 } from '../utils/totp';
+import { grantWelcomeBonus } from '../services/bonus';
 
 const router = Router();
 
@@ -105,43 +106,25 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     const passwordHash = await bcrypt.hash(password, 12);
     const userId = uuidv4();
 
-    await query(
-      `INSERT INTO users (id, username, email, password_hash, balance, referred_by, referral_code, fingerprint, registration_ip, is_flagged)
-       VALUES ($1, $2, $3, $4, 10.00, $5, $6, $7, $8, $9)`,  // নতুন ইউজার পাবে $10 বোনাস
-      [userId, username, email || null, passwordHash, referredById, userReferralCode, fingerprint || null, ipAddress, shouldFlag]
-    );
-
-    // Record the $10 welcome bonus as a 'bonus' transaction so the
-    // reconciliation engine has a ledger entry to back the credit.
-    // Without this row, reconcileUser() computes
-    //   expected = (deposits - withdrawals + wins) = 0
-    //   actual   = 10
-    // and flags the brand-new account as compromised
-    // (is_active = false), blocking all subsequent bets.
+    // Grant the welcome bonus through the canonical bonus service.
+    // This:
+    //   - reads the welcome amount from admin_settings (admin-editable)
+    //   - inserts a bonus_claims row with idempotency on (user_id, 'welcome')
+    //   - credits the user's bonus_balance + wagering_required
+    //   - records a 'bonus' transactions row for the ledger
+    //   - writes an audit_log entry
+    //   - keeps users.balance in sync via the existing trigger
     //
-    // The pre-merge transactions schema has these constraints:
-    //   - `direction` is NOT NULL (use 'credit' for money in)
-    //   - `status` is CHECK: pending|confirmed|failed|cancelled
-    //     (the merged code uses 'completed' which is rejected by
-    //     the live schema — we use 'confirmed' here as the
-    //     equivalent "fully settled" state)
-    //   - `chk_related` requires either (related_bet_id/related_rain_id/
-    //     related_user_id) NOT NULL OR type IN ('deposit','withdrawal',
-    //     'adjustment'). For a welcome bonus none of these apply, so
-    //     we set `related_user_id` to the user's own id as a marker
-    //     that the row is account-internal.
-    await query(
-      `INSERT INTO transactions
-         (id, user_id, wallet_id, type, amount, currency, direction, status,
-          related_user_id, metadata, completed_at)
-       VALUES ($1, $2, NULL, 'bonus', 10.00, 'USD', 'credit', 'confirmed',
-               $2, $3::jsonb, NOW())`,
-      [uuidv4(), userId, JSON.stringify({
-        source: 'welcome_bonus',
-        signup_bonus: 10.00,
-        note: 'New user welcome bonus'
-      })]
-    );
+    // The transaction wrapper keeps the bonus + audit atomic with the
+    // users row insert. If the bonus fails the whole signup rolls back.
+    const welcomeClaim = await withTransaction(async (tx) => {
+      await tx(
+        `INSERT INTO users (id, username, email, password_hash, balance, referred_by, referral_code, fingerprint, registration_ip, is_flagged)
+         VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9)`,
+        [userId, username, email || null, passwordHash, referredById, userReferralCode, fingerprint || null, ipAddress, shouldFlag]
+      );
+      return grantWelcomeBonus(userId, tx as unknown as (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>);
+    });
 
     // Record fraud flags
     if (shouldFlag) {
@@ -162,11 +145,12 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
 
     const token = createToken({ userId, username, isAdmin: false, role: 'user' });
 
+    const bonusAmount = welcomeClaim?.amountCoins ?? 10;
     res.status(201).json({
       success: true,
       token,
-      user: { userId, username, email: email || null, balance: 10.00, isFlagged: shouldFlag },
-      message: `স্বাগতম ${username}! আপনার অ্যাকাউন্টে $10.00 ওয়েলকাম বোনাস যোগ করা হয়েছে।`,
+      user: { userId, username, email: email || null, balance: bonusAmount, isFlagged: shouldFlag },
+      message: `Welcome ${username}! $${bonusAmount.toFixed(2)} welcome bonus has been added to your account.`,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -201,7 +185,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
     if (user.two_factor_enabled) {
       const tempToken = jwt.sign(
         { userId: user.id, username: user.username, isAdmin: user.is_admin, role: user.role, isTemp: true },
-        process.env.JWT_SECRET || 'dev_secret',
+        JWT_SECRET,
         { expiresIn: '5m' }
       );
       return res.json({
@@ -209,6 +193,17 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
         require2FA: true,
         tempToken,
         message: '২এফএ যাচাইকরণ প্রয়োজন।',
+      });
+    }
+
+    // Admin accounts MUST have 2FA enabled in production. Tests may opt out
+    // by setting ADMIN_2FA_REQUIRED=false.
+    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED !== 'false';
+    if (enforceAdmin2FA && user.is_admin) {
+      return res.status(403).json({
+        success: false,
+        require2FASetup: true,
+        error: 'Admin access requires two-factor authentication. Set up 2FA before logging in.',
       });
     }
 
@@ -298,11 +293,18 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         }
       }
 
-      await query(
-        `INSERT INTO users (id, username, wallet_address, balance, referral_code, fingerprint, registration_ip, is_flagged)
-         VALUES ($1, $2, $3, 5.00, $4, $5, $6, $7)`,
-        [userId, username, walletAddress.toLowerCase(), userReferralCode, fingerprint || null, ipAddress, shouldFlag]
-      );
+      // Auto-register new wallet users with the same welcome bonus
+      // as the email flow. balance starts at 0; the bonus service
+      // will credit bonus_balance and keep users.balance in sync
+      // via the trigger (bonus_balance_coins + withdrawable_balance_coins).
+      const welcomeClaim = await withTransaction(async (tx) => {
+        await tx(
+          `INSERT INTO users (id, username, wallet_address, balance, referral_code, fingerprint, registration_ip, is_flagged)
+           VALUES ($1, $2, $3, 0, $4, $5, $6, $7)`,
+          [userId, username, walletAddress.toLowerCase(), userReferralCode, fingerprint || null, ipAddress, shouldFlag]
+        );
+        return grantWelcomeBonus(userId, tx as unknown as (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>);
+      });
 
       // Record fraud flags
       if (shouldFlag) {
@@ -322,6 +324,8 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
       }
 
       user = await query('SELECT id, username, balance, is_admin, role, two_factor_enabled, is_flagged FROM users WHERE id = $1', [userId]);
+      // welcomeClaim is intentionally discarded here — wallet-auth treats
+      // the bonus like the email flow (no separate "new wallet" message).
     }
 
     const u = user.rows[0];
@@ -330,7 +334,7 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
     if (u.two_factor_enabled) {
       const tempToken = jwt.sign(
         { userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role, isTemp: true },
-        process.env.JWT_SECRET || 'dev_secret',
+        JWT_SECRET,
         { expiresIn: '5m' }
       );
       return res.json({
@@ -338,6 +342,17 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
         require2FA: true,
         tempToken,
         message: '২এফএ যাচাইকরণ প্রয়োজন।',
+      });
+    }
+
+    // Admin accounts MUST have 2FA enabled in production. Tests may opt out
+    // by setting ADMIN_2FA_REQUIRED=false.
+    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED !== 'false';
+    if (enforceAdmin2FA && u.is_admin) {
+      return res.status(403).json({
+        success: false,
+        require2FASetup: true,
+        error: 'Admin access requires two-factor authentication. Set up 2FA before logging in.',
       });
     }
 
@@ -446,7 +461,7 @@ router.post('/2fa/disable', authMiddleware, validateBody(twoFactorDisableSchema)
     const { token } = req.body;
 
     const userResult = await query(
-      'SELECT two_factor_secret, two_factor_enabled FROM users WHERE id = $1',
+      'SELECT two_factor_secret, two_factor_enabled, is_admin FROM users WHERE id = $1',
       [userId]
     );
 
@@ -454,7 +469,7 @@ router.post('/2fa/disable', authMiddleware, validateBody(twoFactorDisableSchema)
       return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
     }
 
-    const { two_factor_secret: secretEncrypted, two_factor_enabled: enabled } = userResult.rows[0];
+    const { two_factor_secret: secretEncrypted, two_factor_enabled: enabled, is_admin: isAdmin } = userResult.rows[0];
     if (!enabled || !secretEncrypted) {
       return res.status(400).json({ success: false, error: '২এফএ চালু নেই।' });
     }
@@ -464,6 +479,11 @@ router.post('/2fa/disable', authMiddleware, validateBody(twoFactorDisableSchema)
 
     if (!isValid) {
       return res.status(400).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
+    }
+
+    // Admin accounts cannot disable 2FA — production requirement.
+    if (isAdmin) {
+      return res.status(403).json({ success: false, error: 'Admin accounts cannot disable two-factor authentication.' });
     }
 
     await query(
@@ -490,7 +510,7 @@ router.post('/2fa/login', authLimiter, validateBody(twoFactorLoginSchema), async
 
     let decoded: any;
     try {
-      decoded = jwt.verify(tempToken, process.env.JWT_SECRET || 'dev_secret');
+      decoded = jwt.verify(tempToken, JWT_SECRET);
     } catch {
       return res.status(401).json({ success: false, error: 'টেম্পোরারি টোকেন অবৈধ বা মেয়াদোত্তীর্ণ।' });
     }
@@ -551,17 +571,33 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     const { userId } = (req as Request & { user: AuthPayload }).user;
 
     const result = await query(
-      'SELECT id, username, email, wallet_address, balance, is_admin, created_at FROM users WHERE id = $1',
+      'SELECT id, username, email, wallet_address, balance, is_admin, role, two_factor_enabled, created_at FROM users WHERE id = $1',
       [userId]
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
+      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
     }
 
     const u = result.rows[0];
+    // Map role for the admin shell: prefer explicit role column,
+    // fall back to is_admin flag for older DB rows.
+    const role = u.role || (u.is_admin ? 'super_admin' : 'user');
     res.json({
       success: true,
+      data: {
+        userId: u.id,
+        username: u.username,
+        email: u.email,
+        walletAddress: u.wallet_address,
+        balance: parseFloat(u.balance),
+        isAdmin: u.is_admin,
+        role,
+        two_factor_enabled: u.two_factor_enabled,
+        joinedAt: u.created_at,
+      },
+      // Legacy shape — keep backward compat with older frontend code
+      // (LoginModal etc.) that reads `data.user` instead of `data.data`.
       user: {
         userId: u.id,
         username: u.username,

@@ -67,6 +67,7 @@ const nextConfig = {
       'http://localhost:3002',
       'http://localhost:3000',
       'https://occasions-announced-asia-vsnet.trycloudflare.com',
+      'https://mesa-sur-demonstrate-gates.trycloudflare.com',
     ];
     return [
       {

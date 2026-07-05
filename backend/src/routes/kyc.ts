@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authMiddleware, AuthPayload } from '../middleware/auth';
+import { authMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { query } from '../config/database';
 import { kycService } from '../services/kyc';
 import { validateBody } from '../middleware/validation';
@@ -11,6 +11,121 @@ const router = Router();
 export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/kyc/admin/list — Super admin: list KYC submissions
+//
+//  Reads from the kyc_submissions table (joined with users) since
+//  the legacy users.kyc_status column does not exist on this DB.
+// ══════════════════════════════════════════════════════════════
+router.get('/admin/list', authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+  try {
+    const status = (req.query.status as string) || 'pending';
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit as string) || 20);
+    const offset = (page - 1) * limit;
+
+    const validStatuses = ['pending', 'approved', 'rejected', 'expired'];
+    const useStatusFilter = validStatuses.includes(status);
+
+    let result;
+    let countResult: { rows: { total: string }[] };
+    if (useStatusFilter) {
+      result = await query(
+        `SELECT k.id AS submission_id, k.user_id, u.username, u.email,
+                k.status, k.document_type AS provider,
+                k.reviewed_at, k.submitted_at AS created_at
+         FROM kyc_submissions k
+         JOIN users u ON u.id = k.user_id
+         WHERE k.status = $3
+         ORDER BY k.submitted_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset, status]
+      );
+      countResult = await query(
+        `SELECT COUNT(*) AS total FROM kyc_submissions WHERE status = $1`,
+        [status]
+      );
+    } else {
+      result = await query(
+        `SELECT k.id AS submission_id, k.user_id, u.username, u.email,
+                k.status, k.document_type AS provider,
+                k.reviewed_at, k.submitted_at AS created_at
+         FROM kyc_submissions k
+         JOIN users u ON u.id = k.user_id
+         ORDER BY k.submitted_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+      countResult = await query(
+        `SELECT COUNT(*) AS total FROM kyc_submissions`
+      );
+    }
+
+    const total = parseInt(countResult.rows[0].total);
+    res.json({
+      success: true,
+      data: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/kyc/admin/approve/:userId
+//  POST /api/kyc/admin/reject/:userId
+//  Super admin: manual KYC decision. Updates the latest pending
+//  submission for the user.
+// ══════════════════════════════════════════════════════════════
+async function decideKyc(req: Request, res: Response, decision: 'approved' | 'rejected') {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const { userId } = req.params;
+
+    const result = await query(
+      `UPDATE kyc_submissions
+         SET status = $1,
+             reviewed_at = NOW(),
+             reviewer_id = $2,
+             rejection_reason = CASE WHEN $1 = 'rejected' THEN COALESCE(rejection_reason, 'Manually rejected by admin') ELSE rejection_reason END
+       WHERE id = (
+         SELECT id FROM kyc_submissions
+         WHERE user_id = $3 AND status = 'pending'
+         ORDER BY submitted_at DESC LIMIT 1
+       )
+       RETURNING id, status, reviewed_at`,
+      [decision, self.userId, userId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, error: 'No pending submission found for this user.' });
+    }
+
+    // Also stamp the users.kyc_verified_at for fast status checks
+    await query(
+      `UPDATE users
+         SET kyc_verified_at = CASE WHEN $1 = 'approved' THEN NOW() ELSE kyc_verified_at END
+       WHERE id = $2`,
+      [decision, userId]
+    );
+
+    res.json({ success: true, kyc: result.rows[0], message: `KYC ${decision}.` });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
+  }
+}
+
+router.post('/admin/approve/:userId', authMiddleware, roleMiddleware(['super_admin']), (req, res) => decideKyc(req, res, 'approved'));
+router.post('/admin/reject/:userId',  authMiddleware, roleMiddleware(['super_admin']), (req, res) => decideKyc(req, res, 'rejected'));
 
 /**
  * Handler for GET /api/kyc/status

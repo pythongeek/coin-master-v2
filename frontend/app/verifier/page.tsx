@@ -59,7 +59,7 @@ export default function VerifierPage() {
 
   // Fetch current live jackpot settings from backend optionally
   useEffect(() => {
-    fetch('http://localhost:4000/api/game/jackpot')
+    fetch('/api/game/jackpot')
       .then(res => res.json())
       .then(resData => {
         if (resData.success && resData.data) {
@@ -105,7 +105,7 @@ export default function VerifierPage() {
 
       const explanation = hashMatches
         ? `যাচাই সফল! HMAC-SHA256("${input.serverSeed.slice(0, 10)}...", "${flipSignature}") = ${rawHash.slice(0, 8)}... (Roll: ${roll.toFixed(2)}%, Win Limit: < ${winChance.toFixed(2)}%)`
-        : `হ্যাশ মিলছে না! সম্ভাব্য কারচুপি সনাক্ত হয়েছে!`;
+        : `Hash মিলছে না! সম্ভাব্য কারচুপি সনাক্ত হয়েছে!`;
 
       const jackpotExplanation = `HMAC-SHA256("${input.serverSeed.slice(0, 10)}...", "${jackpotSignature}") = ${jackpotHash.slice(0, 8)}... (Roll: ${jackpotRoll}, Win Target: 777)`;
 
@@ -156,7 +156,7 @@ export default function VerifierPage() {
             </div>
           </div>
           <div className="text-right text-xs font-mono text-text-muted">
-            সর্বনিম্ন বেট: <span className="text-white">${jackpotData.jackpotMinBet.toFixed(2)}</span>
+            সর্বনিম্ন Bet: <span className="text-white">${jackpotData.jackpotMinBet.toFixed(2)}</span>
           </div>
         </div>
       )}
@@ -169,7 +169,7 @@ export default function VerifierPage() {
           <div className="space-y-3">
             <div>
               <label className="text-text-secondary text-xs font-mono block mb-1">
-                সার্ভার সিড হ্যাশ <span className="text-brand-info">(গেম খেলার আগের খাম)</span>
+                Server seed Hash <span className="text-brand-info">(গেম খেলার আগের খাম)</span>
               </label>
               <input
                 className="input-cyber text-xs"
@@ -181,7 +181,7 @@ export default function VerifierPage() {
 
             <div>
               <label className="text-text-secondary text-xs font-mono block mb-1">
-                সার্ভার সিড <span className="text-brand-green">(গেম খেলার পরে প্রাপ্ত চাবি)</span>
+                Server seed <span className="text-brand-green">(গেম খেলার পরে প্রাপ্ত চাবি)</span>
               </label>
               <input
                 className="input-cyber text-xs"
@@ -193,7 +193,7 @@ export default function VerifierPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-text-secondary text-xs font-mono block mb-1">ক্লায়েন্ট সিড</label>
+                <label className="text-text-secondary text-xs font-mono block mb-1">Client seed</label>
                 <input
                   className="input-cyber text-xs"
                   placeholder="আপনার সিড"
@@ -202,7 +202,7 @@ export default function VerifierPage() {
                 />
               </div>
               <div>
-                <label className="text-text-secondary text-xs font-mono block mb-1">নন্স (গেম নম্বর)</label>
+                <label className="text-text-secondary text-xs font-mono block mb-1">Nonce (গেম নম্বর)</label>
                 <input
                   className="input-cyber text-xs"
                   type="number"
@@ -273,10 +273,10 @@ export default function VerifierPage() {
               কিভাবে কাজ করে?
             </h2>
             <div className="text-text-muted text-xs font-mono leading-relaxed space-y-2">
-              <p>১. গেম খেলার পূর্বে সার্ভার একটি র্যান্ডম চাবি (<span className="text-white">Server Seed</span>) তৈরি করে এবং তার হ্যাশ প্রকাশ করে।</p>
+              <p>১. গেম খেলার পূর্বে সার্ভার একটি র্যান্ডম চাবি (<span className="text-white">Server Seed</span>) তৈরি করে এবং তার Hash প্রকাশ করে।</p>
               <p>২. আপনি আপনার বীজ বা সিড প্রদান করেন।</p>
               <p>৩. সূত্র: <code className="text-brand-info">HMAC-SHA256(serverSeed, clientSeed:nonce)</code></p>
-              <p>৪. উক্ত হ্যাশের প্রথম ৮ ক্যারেক্টার থেকে প্রাপ্ত মান জোড় হলে Heads, বেজোড় হলে Tails।</p>
+              <p>৪. উক্ত Hashের প্রথম ৮ ক্যারেক্টার থেকে প্রাপ্ত মান জোড় হলে Heads, বেজোড় হলে Tails।</p>
               <p>৫. জ্যাকপট যাচাই: <code className="text-brand-info">HMAC-SHA256(serverSeed, clientSeed:nonce:jackpot)</code>, এর মানকে ১/X দিয়ে মোড করে ৭৭৭ পেলে জ্যাকপট বিজয়ী!</p>
             </div>
           </div>
@@ -284,7 +284,7 @@ export default function VerifierPage() {
           <div className="glass-card p-4 border-border flex items-start gap-2.5">
             <Info size={16} className="text-brand-info shrink-0 mt-0.5" />
             <p className="text-text-muted text-xs font-mono leading-relaxed">
-              সার্ভার সিড ম্যাচ হওয়া মানে খেলা শুরুর পূর্বেই রেজাল্ট নিশ্চিতভাবে নির্ধারিত ছিল এবং কোনো প্রকার পরিবর্তন সম্ভব ছিল না।
+              Server seed ম্যাচ হওয়া মানে খেলা শুরুর পূর্বেই রেজাল্ট নিশ্চিতভাবে নির্ধারিত ছিল এবং কোনো প্রকার পরিবর্তন সম্ভব ছিল না।
             </p>
           </div>
         </div>
@@ -323,9 +323,9 @@ export default function VerifierPage() {
                   <span className="text-white">&lt; {result.winChance.toFixed(4)}%</span>
                 </div>
                 <div className="flex justify-between text-xs font-mono text-text-muted">
-                  <span>প্রেডিকশন স্ট্যাটাস:</span>
+                  <span>প্রেডিকশন Status:</span>
                   <span className={result.wonGame ? 'text-brand-green font-bold' : 'text-text-muted'}>
-                    {result.wonGame ? 'জিতেছেন (Win)' : 'হেরেছেন (Loss)'}
+                    {result.wonGame ? 'জিতেছেন (Win)' : 'You lost (Loss)'}
                   </span>
                 </div>
               </div>
@@ -345,7 +345,7 @@ export default function VerifierPage() {
                   <span className="text-brand-green font-bold">777</span>
                 </div>
                 <div className="flex justify-between text-xs font-mono text-text-muted">
-                  <span>জ্যাকপট স্ট্যাটাস:</span>
+                  <span>জ্যাকপট Status:</span>
                   <span className={result.jackpotWon ? 'text-brand-green font-bold animate-pulse' : 'text-text-muted'}>
                     {result.jackpotWon ? 'জ্যাকপট বিজয়ী! 🏆' : 'জ্যাকপট জিতেনি'}
                   </span>

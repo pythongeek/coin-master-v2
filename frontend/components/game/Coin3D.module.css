@@ -2,7 +2,7 @@
 .coinPerspective {
   perspective: 1400px;
   width: 100%;
-  max-width: 260px;
+  max-width: 280px;
   aspect-ratio: 1 / 1;
   position: relative;
   margin: 0 auto;
@@ -14,7 +14,7 @@
 /* Mobile: keep the coin compact so the FLIP button stays on screen */
 @media (max-width: 640px) {
   .coinPerspective {
-    max-width: 200px;
+    max-width: 220px;
   }
 }
 
@@ -75,6 +75,27 @@
   50% { opacity: 1; transform: scale(1.05); }
 }
 
+/* Win/loss glow states */
+.glowWin {
+  background: radial-gradient(circle, rgba(0, 197, 102, 0.35) 0%, rgba(0, 197, 102, 0.08) 40%, transparent 70%);
+  animation: pulseGlowWin 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes pulseGlowWin {
+  from { opacity: 0.8; transform: scale(1); }
+  to { opacity: 1; transform: scale(1.15); }
+}
+
+.glowLoss {
+  background: radial-gradient(circle, rgba(232, 56, 79, 0.3) 0%, rgba(232, 56, 79, 0.06) 40%, transparent 70%);
+  animation: pulseGlowLoss 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes pulseGlowLoss {
+  from { opacity: 0.7; transform: scale(1); }
+  to { opacity: 1; transform: scale(1.12); }
+}
+
 /* ── Sparkles: small, outside the coin face, never overlapping ────── */
 @keyframes twinkle {
   0%, 100% { transform: scale(0.6) rotate(0deg); opacity: 0.25; }
@@ -127,7 +148,7 @@
     rgba(255, 255, 255, 0.35) 50%,
     rgba(255, 255, 255, 0) 100%
   );
-  animation: sweep 1.2s ease-out forwards;
+  animation: sweep 1.2s ease-out infinite;
 }
 
 /* ── Idle float: gentle, contained, no layout jitter ─────────────── */
@@ -146,26 +167,26 @@
   50% { transform: translateY(-6px) rotateX(4deg); }
 }
 
-/**
-
 /* COIN 3D SPIN ANIMATIONS — local CSS module selectors so they
    match the module-hashed class names that the React component
    uses via `styles.spinning`, `styles.showHeads`, `styles.showTails`.
    The static-positioning rules above (`.coin3d`, `.coinSide`,
    etc.) are unchanged. */
+
+/* Spinning keeps going until the backend result arrives. */
 .spinning {
-  animation: coinFlip5 1.0s ease-in forwards;
+  animation: coinFlipInfinite 1.0s linear infinite;
 }
-@keyframes coinFlip5 {
-  from { transform: rotateY(0deg)   rotateX(0deg); }
-  to   { transform: rotateY(1800deg) rotateX(360deg); }
+@keyframes coinFlipInfinite {
+  from { transform: rotateY(0deg) rotateX(0deg); }
+  to   { transform: rotateY(360deg) rotateX(360deg); }
 }
 
 .showHeads {
   animation: coinLandHeads 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15) forwards;
 }
 @keyframes coinLandHeads {
-  from { transform: rotateY(1800deg) rotateX(360deg); }
+  from { transform: rotateY(360deg) rotateX(360deg); }
   to   { transform: rotateY(1800deg) rotateX(0deg); }
 }
 
@@ -173,6 +194,86 @@
   animation: coinLandTails 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15) forwards;
 }
 @keyframes coinLandTails {
-  from { transform: rotateY(1800deg) rotateX(360deg); }
+  from { transform: rotateY(360deg) rotateX(360deg); }
   to   { transform: rotateY(1980deg) rotateX(0deg); }
+}
+
+/* Win/loss result pulse after landing */
+.resultPulse {
+  animation: resultPulse 0.6s ease-out forwards;
+}
+@keyframes resultPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+/* Decorative orbital ring behind the coin */
+.orbitalRing {
+  position: absolute;
+  inset: -28%;
+  border-radius: 50%;
+  border: 1px solid rgba(232, 169, 61, 0.15);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(232, 169, 61, 0.08) 60deg,
+    transparent 120deg,
+    rgba(0, 197, 102, 0.06) 180deg,
+    transparent 240deg,
+    rgba(232, 169, 61, 0.08) 300deg,
+    transparent 360deg
+  );
+  animation: ringRotate 20s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+@keyframes ringRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Floor shadow under the coin */
+.floorShadow {
+  position: absolute;
+  width: 70%;
+  height: 12%;
+  bottom: -8%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0.45) 0%, transparent 70%);
+  filter: blur(6px);
+  pointer-events: none;
+  z-index: 0;
+  animation: shadowPulse 3.5s ease-in-out infinite;
+}
+
+@keyframes shadowPulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.08); opacity: 0.85; }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .spinning {
+    animation: none;
+  }
+  .showHeads,
+  .showTails {
+    animation: none;
+    transition: transform 0.3s ease-out;
+  }
+  .floatWrapper.float,
+  .glow,
+  .glowWin,
+  .glowLoss,
+  .sparkle,
+  .resultPulse,
+  .orbitalRing,
+  .floorShadow {
+    animation: none;
+  }
+  .coin3d {
+    transition: transform 0.3s ease-out;
+  }
 }

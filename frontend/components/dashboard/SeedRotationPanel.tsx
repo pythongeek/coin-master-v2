@@ -1,12 +1,12 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  SEED ROTATION PANEL — নিরাপত্তার জন্য সার্ভার সিড রোটেশন
+ *  SEED ROTATION PANEL — নিরাপত্তার জন্য Server seed রোটেশন
  * ═══════════════════════════════════════════════════════════════
  *
  *  Provably Fair সিস্টেমের গোপন সিড নিয়মিত পরিবর্তন করা
  *  নিরাপত্তার জন্য গুরুত্বপূর্ণ। এডমিন এখান থেকে ম্যানুয়ালি
- *  রোটেট করতে পারবে অথবা স্বয়ংক্রিয় রোটেশন দেখতে পারবে।
+ *  রোটেট করতে পারবে অথবা Auto Rotation দেখতে পারবে।
  *
  *  H4 FIX (frontend): rotating the seed invalidates every existing
  *  Provably Fair verification in flight. That's the highest-impact
@@ -21,7 +21,10 @@
 import { useState, useEffect } from 'react';
 import { KeyRound, RotateCw, CheckCircle2, Lock, X, AlertTriangle } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 export default function SeedRotationPanel() {
   const [rotating, setRotating]       = useState(false);
@@ -56,7 +59,7 @@ export default function SeedRotationPanel() {
     setRotating(true);
     setPwError(null);
     try {
-      const res = await fetch(`${API}/api/admin/seed/rotate`, {
+      const res = await fetch(`${API}/admin/seed/rotate`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -95,16 +98,16 @@ export default function SeedRotationPanel() {
     <div className="glass-card p-5 border-brand-red/20">
       <div className="flex items-center gap-2 mb-2">
         <KeyRound size={17} className="text-brand-red" />
-        <h3 className="heading-display text-sm text-brand-red">সিকিউরিটি — সিড রোটেশন</h3>
+        <h3 className="heading-display text-sm text-brand-red">Security — Seed Rotation</h3>
       </div>
 
       <p className="text-text-secondary text-xs font-mono leading-relaxed mb-4">
-        সার্ভার সিড নিয়মিত পরিবর্তন করলে সিস্টেম আরো নিরাপদ থাকে।
-        ডিফল্টে প্রতি <span className="text-brand-gold">১০০ গেমের</span> পর স্বয়ংক্রিয় রোটেশন হয়।
+        Server seed নিয়মিত পরিবর্তন করলে সিস্টেম আরো নিরাপদ থাকে।
+        ডিফল্টে প্রতি <span className="text-brand-gold">১০০ games</span> auto-rotation occurs.
         জরুরি প্রয়োজনে এখনই ম্যানুয়ালি রোটেট করতে পারেন।
         <br />
         <span className="text-text-muted text-[11px]">
-          ⚠️ রোটেশনের পরে সব চলমান Provably Fair ভেরিফিকেশন বাতিল হবে — সিড ঘোষণার আগে চলমান বেটগুলো সম্পন্ন হবে।
+          ⚠️ রোটেশনের পরে সব চলমান Provably Fair ভেরিফিকেশন বাতিল হবে — সিড ঘোষণার আগে চলমান Betগুলো সম্পন্ন হবে।
         </span>
       </p>
 
@@ -116,28 +119,28 @@ export default function SeedRotationPanel() {
                    disabled:opacity-50"
       >
         <RotateCw size={15} className={rotating ? 'animate-spin' : ''} />
-        {rotating ? 'রোটেট হচ্ছে...' : 'এখনই সিড রোটেট করুন'}
+        {rotating ? 'রোটেট হচ্ছে...' : 'এখনই সিড Rotate'}
       </button>
 
       {lastResult && (
         <div className="mt-4 p-3 rounded-lg bg-void border border-brand-green/20">
           <p className="flex items-center gap-1.5 text-brand-green text-xs font-mono font-medium mb-1">
-            <CheckCircle2 size={13} /> নতুন সিড তৈরি হয়েছে
+            <CheckCircle2 size={13} /> New seed তৈরি হয়েছে
           </p>
-          <p className="text-text-muted text-xs font-mono mb-1">সময়: {lastResult.time}</p>
+          <p className="text-text-muted text-xs font-mono mb-1">Time: {lastResult.time}</p>
           <p className="text-text-muted text-xs font-mono break-all">
-            হ্যাশ: <span className="text-brand-info">{lastResult.hash.slice(0, 40)}...</span>
+            Hash: <span className="text-brand-info">{lastResult.hash.slice(0, 40)}...</span>
           </p>
         </div>
       )}
 
       {/* অটো রোটেশন সেটিং রিমাইন্ডার */}
       <div className="mt-4 pt-4 border-t border-border flex items-center justify-between text-xs font-mono">
-        <span className="text-text-muted">স্বয়ংক্রিয় রোটেশন</span>
-        <span className="text-brand-info">প্রতি ১০০ গেম</span>
+        <span className="text-text-muted">Auto Rotation</span>
+        <span className="text-brand-info">Every 100 games</span>
       </div>
       <p className="text-text-muted text-[10px] font-mono mt-1">
-        এই মান কন্ট্রোল প্যানেলের "নিরাপত্তা" ট্যাব থেকে পরিবর্তন করুন।
+        এই মান Control Panelের "নিরাপত্তা" ট্যাব থেকে পরিবর্তন করুন।
       </p>
 
       {/* ── H4: password confirmation modal (step-up auth) ───────── */}
@@ -162,7 +165,7 @@ export default function SeedRotationPanel() {
               <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-brand-red/10 text-brand-red mb-3">
                 <Lock size={22} />
               </div>
-              <h2 className="heading-display text-base text-brand">সিড রোটেশন নিশ্চিত করুন</h2>
+              <h2 className="heading-display text-base text-brand">Confirm Seed Rotation</h2>
               <p className="text-text-muted text-xs font-mono mt-1">
                 আপনার এডমিন পাসওয়ার্ড দিয়ে নিশ্চিত করুন
               </p>

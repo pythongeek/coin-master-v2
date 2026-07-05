@@ -1,20 +1,20 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  COIN 3D — CSS-3D কয়েন (Water Lily + Family)
+ *  COIN 3D — CSS-3D Coin (Water Lily + Family)
  * ═══════════════════════════════════════════════════════════════
  *
- *  শুধু CSS transform দিয়ে তৈরি 3D কয়েন — React Three Fiber
- *  ছাড়া। HEADS-এ জলপদ্ম (Bangladesh-এর জাতীয় ফুল) এবং
- *  TAILS-এ পরিবারের সিলুয়েট ও "BANGLADESH" আর্ক টেক্সট।
+ *  শুধু CSS transform দিয়ে তৈরি 3D Coin — React Three Fiber
+ *  . HEADS shows water lily (Bangladesh's national flower) and
+ *  TAILS shows a family silhouette and "BANGLADESH" arc text.
  *
- *  ডিজাইন রেফারেন্স: /tmp/coin-design-reference.html
- *  (আই-স্টুডিও দিয়ে তৈরি 3D কয়েন ডেমো)
+ *  Design reference: /tmp/coin-design-reference.html
+ *  (আই-স্টুডিও দিয়ে তৈরি 3D Coin ডেমো)
  *
- *  অ্যানিমেশন স্টেট মেশিন:
- *  ① IDLE     → কয়েন ধীরে ভাসছে (CSS keyframe)
- *  ② SPINNING → 3D rotateY ঘুরছে (5 বা 5.5 বার)
- *  ③ RESULT   → সঠিক ফেসে ল্যান্ড
+ *  Animation state machine:
+ *  ① IDLE     → Coin ধীরে ভাসছে (CSS keyframe)
+ *  ② SPINNING → 3D rotateY spinning (5 or 5.5 times)
+ *  ③ RESULT   → lands on the correct face
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -27,11 +27,12 @@ export type CoinSide = 'heads' | 'tails';
 interface CoinProps {
   gameStatus: GameStatus;
   result: CoinSide | null;
+  won?: boolean | null;
 }
 
 // ─── SVG Face Components (no PNG textures needed) ──────────────
 
-/** HEADS face: Water Lily (শাপলা) over waves with grain-stalk wreath */
+/** HEADS face: Water Lily over waves with grain-stalk wreath */
 function HeadsFace() {
   return (
     <svg viewBox="0 0 500 500" className="w-full h-full select-none">
@@ -146,7 +147,7 @@ function TailsFace() {
       {/* Bottom arc — Bengali slogan */}
       <path id="curve-bottom" d="M 105,250 A 145,145 0 0,0 395,250" fill="none" />
       <text fontFamily="system-ui, sans-serif" fontWeight="900" fontSize="16.5" fill="#451A03" textAnchor="middle" letterSpacing="0.4">
-        <textPath href="#curve-bottom" startOffset="50%">পরিকল্পিত পরিবার - সবার জন্য খাদ্য</textPath>
+        <textPath href="#curve-bottom" startOffset="50%">Planned Family — Food for All</textPath>
       </text>
 
       {/* Metallic highlight sweep (mirrored) */}
@@ -173,53 +174,62 @@ function Sparkles() {
 }
 
 // ─── 3D Coin Component (CSS transforms only) ─────────────────
-export default function Coin3D({ gameStatus, result }: CoinProps) {
+export default function Coin3D({ gameStatus, result, won }: CoinProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const coinRef = useRef<HTMLDivElement>(null);
-  const [lastFlipTime, setLastFlipTime] = useState(0);
 
-  // Reset animation classes when result changes
+  // Reset animation classes when idling
   useEffect(() => {
     if (!coinRef.current) return;
     if (gameStatus === 'idle') {
-      // Remove spin/result classes (raw class names are a no-op with CSS modules,
-      // but keep them here for safety in case global styles are added later)
       coinRef.current.classList.remove('show-heads', 'show-tails', 'spinning');
     }
-  }, [gameStatus, lastFlipTime]);
+  }, [gameStatus]);
 
-  const containerClass = `${styles.coinPerspective} ${
-    gameStatus === 'idle' ? styles.float : ''
-  }`;
+  const containerClass = [
+    styles.coinPerspective,
+    gameStatus === 'idle' ? styles.float : '',
+  ].filter(Boolean).join(' ');
 
-  // The animation triggers (.spinning, .show-heads, .show-tails) are
-  // defined in Coin3D.module.css but using CSS module-hashed class
-  // names so the rule can target the coin element. We compose them
-  // as `styles.coin3d` (always present) + module-mapped flags.
+  const glowClass = [
+    styles.glow,
+    gameStatus === 'result' && won === true ? styles.glowWin : '',
+    gameStatus === 'result' && won === false ? styles.glowLoss : '',
+  ].filter(Boolean).join(' ');
+
   const coinClass = [
     styles.coin3d,
     gameStatus === 'spinning' ? styles.spinning : '',
     gameStatus === 'result' && result === 'heads' ? styles.showHeads : '',
     gameStatus === 'result' && result === 'tails' ? styles.showTails : '',
+    gameStatus === 'result' ? styles.resultPulse : '',
   ]
     .filter(Boolean)
     .join(' ');
+
+  const ariaLabel =
+    gameStatus === 'spinning'
+      ? 'Coin is flipping, waiting for result'
+      : gameStatus === 'result'
+      ? `Result: ${result === 'heads' ? 'Heads' : 'Tails'}. You ${won ? 'won' : 'lost'}.`
+      : 'Coin — choose Heads or Tails and place a bet';
 
   return (
     <div
       ref={containerRef}
       className={containerClass}
       role="img"
-      aria-label={
-        gameStatus === 'spinning'
-          ? 'কয়েন ঘুরছে...'
-          : gameStatus === 'result'
-          ? `ফলাফল: ${result === 'heads' ? 'হেডস (Heads)' : 'টেইলস (Tails)'}`
-          : 'কয়েন — বেট ধরুন'
-      }
+      aria-label={ariaLabel}
+      aria-live={gameStatus === 'result' ? 'polite' : 'off'}
     >
-      <div className={styles.glow} />
+      {/* Decorative background ring */}
+      <div className={styles.orbitalRing} aria-hidden="true" />
+
+      <div className={glowClass} />
       <Sparkles />
+
+      {/* Floor shadow for depth */}
+      <div className={styles.floorShadow} aria-hidden="true" />
 
       <div ref={coinRef} className={coinClass}>
         {/* 9 stacked Z-translated slices for the 3D edge (visual thickness) */}

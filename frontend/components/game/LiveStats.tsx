@@ -106,7 +106,7 @@ export default function LiveStats() {
       <div className="px-4 py-3 border-b border-border flex items-center justify-between">
         <h3 className="text-text-primary font-display font-semibold text-sm flex items-center gap-2">
           <History size={14} className="text-brand-info" />
-          লাইভ স্ট্যাটস
+          Live Stats
         </h3>
         <span className="text-text-muted text-[10px] font-mono uppercase tracking-wide">
           মোট {betHistory.length}
@@ -123,7 +123,7 @@ export default function LiveStats() {
         ].join(' ')}
       >
         <div className="flex justify-between items-center mb-2">
-          <span className="text-text-muted text-xs font-mono">বর্তমান স্ট্রিক</span>
+          <span className="text-text-muted text-xs font-mono">Current Streak</span>
 
           {/* Streak counter — animated when hot */}
           {streak.type ? (
@@ -142,7 +142,7 @@ export default function LiveStats() {
                   size={isHotStreak ? 14 : 12}
                   className={isHotStreak ? 'animate-pulse-soft text-brand-gold' : 'text-text-muted'}
                 />
-                <span>{streak.count}× {streak.type === 'heads' ? 'হেডস' : 'টেইলস'}</span>
+                <span>{streak.count}× {streak.type === 'heads' ? 'Heads' : 'Tails'}</span>
               </motion.div>
             </AnimatePresence>
           ) : (
@@ -173,7 +173,7 @@ export default function LiveStats() {
         {/* Streak dots — most recent on the right */}
         <div className="flex gap-1 flex-wrap">
           {streakDots.length === 0 ? (
-            <span className="text-text-muted text-[10px] font-mono">কোনো বেট নেই</span>
+            <span className="text-text-muted text-[10px] font-mono">No bets yet</span>
           ) : (
             streakDots.map((bet, i) => (
               <div
@@ -231,7 +231,7 @@ export default function LiveStats() {
         <div className="flex-1 min-h-0 overflow-y-auto">
           {pageRows.length === 0 ? (
             <div className="px-4 py-8 text-center text-text-muted text-xs font-mono">
-              {filter === 'all' && 'কোনো বেট ইতিহাস নেই'}
+              {filter === 'all' && 'কোনো Bet ইতিহাস নেই'}
               {filter === 'wins' && 'এখনো কোনো জয় নেই'}
               {filter === 'losses' && 'কোনো পরাজয় নেই (চালিয়ে যান!)'}
             </div>
@@ -239,10 +239,10 @@ export default function LiveStats() {
             <table className="w-full text-xs">
               <thead className="text-text-muted text-[10px] uppercase tracking-wide sticky top-0 bg-surface">
                 <tr className="border-b border-border">
-                  <th className="text-left p-2 font-medium">প্লেয়ার</th>
-                  <th className="text-right p-2 font-medium">বেট</th>
-                  <th className="text-right p-2 font-medium">ফলাফল</th>
-                  <th className="text-right p-2 font-medium">লাভ/ক্ষতি</th>
+                  <th className="text-left p-2 font-medium">Player</th>
+                  <th className="text-right p-2 font-medium">Bet</th>
+                  <th className="text-right p-2 font-medium">Result</th>
+                  <th className="text-right p-2 font-medium">P/L</th>
                 </tr>
               </thead>
               <tbody>
@@ -259,7 +259,7 @@ export default function LiveStats() {
                     >
                       <td className="p-2 text-text-secondary font-mono truncate max-w-[80px]">
                         {isOwnBet ? (
-                          <span className="text-brand-info">👤 তুমি</span>
+                          <span className="text-brand-info">👤 You</span>
                         ) : bet.choice === bet.result ? (
                           <span>🎯</span>
                         ) : (
@@ -329,7 +329,7 @@ export default function LiveStats() {
 
       {/* ── Footer note ──────────────────────────────────────── */}
       <div className="px-3 py-2 border-t border-border text-[10px] text-text-muted text-center font-mono">
-        শেষ ৫০টি বেট · {filter === 'all' ? 'সব' : filter === 'wins' ? 'শুধু জয়' : 'শুধু পরাজয়'} · রিয়েল-টাইম
+        শেষ ৫০টি Bet · {filter === 'all' ? 'সব' : filter === 'wins' ? 'শুধু জয়' : 'শুধু পরাজয়'} · রিয়েল-টাইম
       </div>
     </div>
   );

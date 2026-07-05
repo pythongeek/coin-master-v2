@@ -200,7 +200,10 @@ export class WalletApiError extends Error {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const BASE =
+  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+    ? '/api'
+    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 async function call<T>(path: string, init: RequestInit = {}, token?: string | null): Promise<T> {
   const headers: Record<string, string> = {
@@ -239,7 +242,7 @@ async function call<T>(path: string, init: RequestInit = {}, token?: string | nu
  * currency.
  */
 export async function getWalletBalance(token: string): Promise<WalletBalanceResponse> {
-  const data = await call<MergedWalletsResponse>('/api/wallet/balances', {}, token);
+  const data = await call<MergedWalletsResponse>('/wallet/balances', {}, token);
 
   // Aggregate USDT rows by default. Real currencies (USDT, USDC) are
   // treated 1:1 with coins. If the user has a preferred currency,
@@ -291,7 +294,7 @@ export async function getWalletHistory(
   limit = 20
 ): Promise<{ success: true; history: WalletHistoryEntry[] }> {
   const data = await call<MergedTransactionsResponse>(
-    `/api/wallet/transactions?limit=${Math.min(limit, 100)}`,
+    `/wallet/transactions?limit=${Math.min(limit, 100)}`,
     {},
     token
   );
@@ -379,7 +382,7 @@ export async function createPaymentOrder(
 ): Promise<CreatePaymentResponse> {
   // The merged payment.create body expects { gateway, amountUsdt }.
   // We translate the legacy { currency, amount } shape.
-  return call<CreatePaymentResponse>('/api/payment/create', {
+  return call<CreatePaymentResponse>('/payment/create', {
     method: 'POST',
     body: JSON.stringify({
       gateway: req.gateway,
@@ -397,7 +400,7 @@ export async function listPaymentOrders(
   limit = 20
 ): Promise<ListPaymentOrdersResponse> {
   return call<ListPaymentOrdersResponse>(
-    `/api/payment/orders?limit=${Math.min(limit, 100)}`,
+    `/payment/orders?limit=${Math.min(limit, 100)}`,
     {},
     token
   );
@@ -407,5 +410,5 @@ export async function listPaymentOrders(
  * GET /api/payment/health — moved from /api/wallet/payment/health.
  */
 export async function getPaymentHealth(token: string): Promise<PaymentHealthResponse> {
-  return call<PaymentHealthResponse>('/api/payment/health', {}, token);
+  return call<PaymentHealthResponse>('/payment/health', {}, token);
 }

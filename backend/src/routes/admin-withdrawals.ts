@@ -73,7 +73,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/:id/approve', async (req: Request, res: Response) => {
   try {
     const admin = (req as Request & { user: AuthPayload }).user;
-    const id = req.params.id;
+    const id = String(req.params.id);
     const result = await approveWithdrawal(id, admin.userId);
     if (!result.ok) {
       return res.status(400).json({ success: false, error: 'withdrawal not found or already processed' });
@@ -90,7 +90,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
 router.post('/:id/reject', async (req: Request, res: Response) => {
   try {
     const admin = (req as Request & { user: AuthPayload }).user;
-    const id = req.params.id;
+    const id = String(req.params.id);
     const reason = (req.body?.reason ?? '').toString().trim();
     if (!reason) {
       return res.status(400).json({ success: false, error: 'rejection reason required' });

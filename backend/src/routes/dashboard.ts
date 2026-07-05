@@ -9,14 +9,13 @@
  *  GET /api/dashboard/admin/live      → লাইভ প্ল্যাটফর্ম স্ট্যাটস
  *  GET /api/dashboard/admin/users     → সব ইউজারের তালিকা
  *  PATCH /api/dashboard/admin/users/:id → ইউজার ফ্রিজ/আনফ্রিজ
- *  POST /api/dashboard/admin/seed/rotate → সার্ভার সিড রোটেট করো
+ *  (Seed rotation moved to /api/admin/seed/rotate in admin.ts)
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { Router, Request, Response } from 'express';
 import { query } from '../config/database';
-import { authMiddleware, adminMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
-import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
+import { authMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { getOrSet } from '../services/cache';
 
 const router = Router();
@@ -391,33 +390,9 @@ router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin'])
   }
 });
 
-// ══════════════════════════════════════════════════════════════
-//  POST /api/dashboard/admin/seed/rotate — সার্ভার সিড রোটেট
-//  নিরাপত্তার জন্য এডমিন যেকোনো সময় নতুন সিড তৈরি করতে পারবে
-// ══════════════════════════════════════════════════════════════
-router.post('/admin/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
-  try {
-    const newSeed     = generateServerSeed();
-    const newSeedHash = hashServerSeed(newSeed);
-
-    // সিড লগে রাখো (ভবিষ্যতে অডিটের জন্য)
-    await query(`
-      INSERT INTO admin_settings (key, value, description, updated_at)
-      VALUES ('last_seed_rotation', NOW()::text, 'সর্বশেষ সিড রোটেশনের সময়', NOW())
-      ON CONFLICT (key) DO UPDATE SET value = NOW()::text, updated_at = NOW()
-    `);
-
-    res.json({
-      success: true,
-      data: {
-        newSeedHash,
-        rotatedAt: new Date().toISOString(),
-        message: 'নতুন সার্ভার সিড তৈরি হয়েছে। পুরানো সিড অপরিবর্তিত থেকেছে।',
-      },
-    });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
-  }
-});
+// Seed rotation has been moved to /api/admin/seed/rotate (see
+// admin.ts) — the canonical route with step-up password auth.
+// The duplicate /api/dashboard/admin/seed/rotate is removed to
+// prevent divergent behavior between the two routes.
 
 export default router;

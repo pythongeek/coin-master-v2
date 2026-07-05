@@ -1,6 +1,10 @@
 import { execSync } from 'child_process';
 import path from 'path';
 
+const JWT_SECRET = process.env.JWT_SECRET || 'test_secret_that_is_at_least_32_characters_long';
+
+process.env.ADMIN_2FA_REQUIRED = process.env.ADMIN_2FA_REQUIRED || 'false';
+
 const testFiles = [
   'provably-fair.test.ts',
   'validation.test.ts',
@@ -34,7 +38,14 @@ for (const file of testFiles) {
   console.log(`🧪 Running test: ${file}`);
   console.log(`========================================`);
   try {
-    execSync(`npx ts-node "${filePath}"`, { stdio: 'inherit' });
+    execSync(`npx ts-node "${filePath}"`, {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        JWT_SECRET: JWT_SECRET,
+        ADMIN_2FA_REQUIRED: 'false',
+      },
+    });
     console.log(`✅ Passed: ${file}`);
   } catch (error) {
     console.error(`❌ Failed: ${file}`);

@@ -820,6 +820,15 @@ export default function BetControls() {
         disabled={
           (!isAutoPlayRunning && (!canBet || betAmount <= 0 || (user ? betAmount > user.balance : false)))
         }
+        aria-label={
+          isAutoPlayRunning
+            ? 'Stop autoplay'
+            : isSpinning
+            ? 'Coin is spinning'
+            : activeTab === 'auto'
+            ? 'Start autoplay'
+            : `Flip coin for $${betAmount.toFixed(2)} on ${currentChoice}`
+        }
         className={`
           w-full py-4 rounded-xl font-display font-semibold text-lg tracking-wide
           transition-all duration-150 relative overflow-hidden flex items-center justify-center gap-2

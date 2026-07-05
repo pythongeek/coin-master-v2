@@ -1,0 +1,1 @@
+console.log("ADMIN_2FA_REQUIRED=" + process.env.ADMIN_2FA_REQUIRED);
