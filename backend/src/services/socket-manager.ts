@@ -626,6 +626,24 @@ export function setupSocketHandlers(io: SocketIOServer) {
     });
 
     // ══════════════════════════════════════════════════════════
+    //  Streak Ladder: Bank at-risk bonus
+    // ══════════════════════════════════════════════════════════
+    socket.on('streak:bank', async (payload, callback) => {
+      try {
+        if (!socket.data.userId) {
+          return callback?.({ ok: false, message: 'আগে লগইন করুন।' });
+        }
+        const { bankStreakBonus } = await import('./game-engine');
+        const result = await bankStreakBonus(socket.data.userId);
+        socket.emit('balance:update', { balance: result.newBalance });
+        callback?.({ ok: true, ...result });
+      } catch (err: any) {
+        console.error('streak:bank error:', err);
+        callback?.({ ok: false, message: err.message || 'ব্যাংক ব্যর্থ হয়েছে।' });
+      }
+    });
+
+    // ══════════════════════════════════════════════════════════
     //  ডিসকানেক্ট
     // ══════════════════════════════════════════════════════════
     socket.on('disconnect', () => {

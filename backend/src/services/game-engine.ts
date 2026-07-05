@@ -32,7 +32,9 @@ import {
 import { db, query } from '../config/database';
 import {
   lockBet, unlockBet, incrementWinStreak,
-  resetWinStreak, getWinStreak
+  resetWinStreak, getWinStreak,
+  getStreakBonusAtRisk, addStreakBonusAtRisk, resetStreakBonusAtRisk,
+  getStreakBudgetSpent, incrementStreakBudgetSpent
 } from '../config/redis';
 import { reconcileUser } from './reconciliation-engine';
 import { invalidateCache } from './cache';
@@ -82,6 +84,14 @@ export interface BetResponse {
     nonce?: number;
     scatterHash?: string;
   };
+  streak?: {
+    currentStreak: number;
+    rungMultiplier: number;
+    ladderBonus: number;
+    atRisk: number;
+    banked?: number;
+    lost?: number;
+  };
   // Provably Fair ডেটা (ইউজার ভেরিফাই করতে পারবে)
   verification: {
     serverSeedHash: string;   // খেলার আগে দেওয়া হয়েছিল
@@ -97,6 +107,31 @@ export interface BetResponse {
     jackpotHitChance?: number;
   };
   message: string;  // বাংলায় ফলাফলের বার্তা
+}
+
+// ── Streak Ladder Helpers ───────────────────────────────────────
+interface StreakRung {
+  wins: number;
+  multiplier: number;
+}
+
+function getStreakRungs(config: GameConfig): StreakRung[] {
+  return [
+    { wins: config.streakRung1Wins, multiplier: config.streakRung1Multiplier },
+    { wins: config.streakRung2Wins, multiplier: config.streakRung2Multiplier },
+    { wins: config.streakRung3Wins, multiplier: config.streakRung3Multiplier },
+    { wins: config.streakRung4Wins, multiplier: config.streakRung4Multiplier },
+    { wins: config.streakRung5Wins, multiplier: config.streakRung5Multiplier },
+  ].filter(r => r.wins > 0 && r.multiplier > 1).sort((a, b) => a.wins - b.wins);
+}
+
+function getCurrentRung(streak: number, rungs: StreakRung[]): StreakRung | null {
+  let current: StreakRung | null = null;
+  for (const rung of rungs) {
+    if (streak >= rung.wins) current = rung;
+    else break;
+  }
+  return current;
 }
 
 /**
@@ -234,6 +269,57 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       }
     }
 
+    // ── Streak Ladder Bonus (budget funded push-your-luck) ─────────────
+    let streak: BetResponse['streak'] = undefined;
+    let streakBankedAmount = 0;
+    let streakLostAmount = 0;
+    if (config.streakEnabled) {
+      const rungs = getStreakRungs(config);
+      const streakBefore = await getWinStreak(req.userId);
+      const atRiskBefore = await getStreakBonusAtRisk(req.userId);
+
+      if (won) {
+        const streakAfter = streakBefore + 1;
+        const rung = getCurrentRung(streakAfter, rungs);
+        if (rung) {
+          // Top-up = (rungMultiplier - 1) * betAmount. Funded from the daily streak budget.
+          const topUp = (rung.multiplier - 1) * req.amount;
+          const today = new Date().toISOString().slice(0, 10);
+          const budgetSpent = await getStreakBudgetSpent(today);
+          const budgetRemaining = Math.max(0, config.streakBudgetDailyUsd - budgetSpent);
+          const cappedTopUp = Math.min(topUp, budgetRemaining);
+          if (cappedTopUp > 0) {
+            await addStreakBonusAtRisk(req.userId, cappedTopUp);
+            await incrementStreakBudgetSpent(today, cappedTopUp);
+          }
+          streak = {
+            currentStreak: streakAfter,
+            rungMultiplier: rung.multiplier,
+            ladderBonus: cappedTopUp,
+            atRisk: atRiskBefore + cappedTopUp,
+          };
+        } else {
+          streak = {
+            currentStreak: streakAfter,
+            rungMultiplier: 1,
+            ladderBonus: 0,
+            atRisk: atRiskBefore,
+          };
+        }
+      } else {
+        // On loss, the entire at-risk bonus is lost and streak resets.
+        streakLostAmount = atRiskBefore;
+        await resetStreakBonusAtRisk(req.userId);
+        streak = {
+          currentStreak: 0,
+          rungMultiplier: 1,
+          ladderBonus: 0,
+          atRisk: 0,
+          lost: streakLostAmount,
+        };
+      }
+    }
+
     // ── шаг ৭: ব্যালেন্স ও ওয়াগার/রেকব্যাক আপডেট করো ─────────────────────────────
     // Credit payout back to the same source. The DB trigger sync_user_balance
     // keeps users.balance = bonus_balance_coins + withdrawable_balance_coins.
@@ -322,15 +408,23 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       `INSERT INTO bets
         (id, user_id, choice, amount, result, won, payout, house_edge, 
          target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at,
-         scatter_hash, scatter_multiplier, scatter_payout, scatter_picked)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW(),$13,$14,$15,$16)`,
+         scatter_hash, scatter_multiplier, scatter_payout, scatter_picked,
+         streak_before, streak_after, streak_rung_multiplier, streak_ladder_bonus, streak_at_risk, streak_banked, streak_lost)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW(),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
       [betId, req.userId, req.choice, req.amount,
        outcome.result, won, outcome.payout, config.houseEdgePercent,
        targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash,
        config.scatterEnabled ? scatterHash : null,
        config.scatterEnabled && scatterTriggered ? scatterMultiplier : null,
        config.scatterEnabled && scatterTriggered ? scatterPayout : null,
-       false]
+       false,
+       streak?.currentStreak ?? null,
+       won ? (streak?.currentStreak ?? null) : 0,
+       streak?.rungMultiplier ?? null,
+       streak?.ladderBonus ?? null,
+       streak?.atRisk ?? null,
+       streakBankedAmount || null,
+       streakLostAmount || null]
     );
 
     // Run reconciliation check AFTER creditWagering so bonus/wager counters are committed
@@ -380,8 +474,14 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     if (jackpotWon) {
       message += ` 👑 আপনি $${jackpotAmount.toFixed(2)} মূল্যের জ্যাকপট জিতেছেন!`;
     }
+    if (streak && streak.ladderBonus > 0) {
+      message += ` 🔥 স্ট্রিক বোনাস +$${streak.ladderBonus.toFixed(2)} (x${streak.rungMultiplier.toFixed(2)}) — Bank করুন বা আরও জিতে রিস্ক নিন!`;
+    }
+    if (streak && streak.lost && streak.lost > 0) {
+      message += ` ❌ স্ট্রিক ভেঙে গেছে। $${streak.lost.toFixed(2)} ladder bonus হারিয়ে গেছে।`;
+    }
 
-    const resultResponse = {
+    const resultResponse: BetResponse = {
       betId,
       result: outcome.result,
       choice: req.choice,
@@ -409,6 +509,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
         clientSeed,
         nonce,
       } : undefined,
+      streak,
       verification: {
         serverSeedHash,
         serverSeed,  // এখন প্রকাশ করা হলো
@@ -466,4 +567,52 @@ export async function getBetHistory(userId: string, limit: number = 20) {
     [userId, limit]
   );
   return result.rows;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  BANK CURRENT STREAK LADDER BONUS
+//  User can bank their at-risk bonus anytime, credited immediately.
+// ═══════════════════════════════════════════════════════════════
+export async function bankStreakBonus(userId: string): Promise<{ banked: number; newBalance: number; message: string }> {
+  const atRisk = await getStreakBonusAtRisk(userId);
+  if (atRisk <= 0) {
+    return { banked: 0, newBalance: 0, message: 'Bank করার জন্য কোনো সক্রিয় স্ট্রিক বোনাস নেই।' };
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    await creditPayout(userId, atRisk, 'withdrawable', client.query.bind(client) as any);
+
+    // Record a streak-bonus transaction
+    await client.query(
+      `INSERT INTO transactions (id, user_id, wallet_id, type, amount, status, metadata, completed_at)
+       VALUES ($1, $2, NULL, 'streak_bonus', $3, 'completed', '{}', NOW())`,
+      [uuidv4(), userId, atRisk]
+    );
+
+    await client.query(
+      'UPDATE users SET updated_at = NOW() WHERE id = $1',
+      [userId]
+    );
+
+    await client.query('COMMIT');
+
+    await resetStreakBonusAtRisk(userId);
+
+    const balanceResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
+    const newBalance = parseFloat(balanceResult.rows[0]?.balance ?? '0');
+
+    return {
+      banked: atRisk,
+      newBalance,
+      message: `✅ $${atRisk.toFixed(2)} স্ট্রিক বোনাস ব্যাংক হয়েছে!`,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }

@@ -135,6 +135,79 @@ router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
 });
 
 // ══════════════════════════════════════════════════════════════
+//  GET /api/admin/streak-stats
+//  স্ট্রিক ল্যাডার বোনাসের লাইভ স্ট্যাটিস্টিক্স ও নিয়ন্ত্রণ
+// ══════════════════════════════════════════════════════════════
+router.get('/streak-stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    const config = await getConfig();
+    const today = new Date().toISOString().slice(0, 10);
+
+    const { getStreakBudgetSpent } = await import('../config/redis');
+    const budgetSpent = await getStreakBudgetSpent(today);
+    const budgetRemaining = Math.max(0, config.streakBudgetDailyUsd - budgetSpent);
+
+    const ladderStats = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE streak_after > 0) as active_streaks,
+        SUM(streak_ladder_bonus) as total_topups,
+        SUM(streak_banked) as total_banked,
+        SUM(streak_lost) as total_lost
+      FROM bets
+      WHERE created_at > NOW() - INTERVAL '24 hours'
+    `);
+
+    const highestStreaks = await query(`
+      SELECT u.username, MAX(streak_after) as max_streak
+      FROM bets b
+      JOIN users u ON b.user_id = u.id
+      WHERE b.created_at > NOW() - INTERVAL '24 hours'
+      GROUP BY u.username
+      ORDER BY max_streak DESC
+      LIMIT 10
+    `);
+
+    res.json({
+      success: true,
+      streak: {
+        enabled: config.streakEnabled,
+        budgetDaily: config.streakBudgetDailyUsd,
+        budgetSpent,
+        budgetRemaining,
+        activeStreaks: parseInt(ladderStats.rows[0].active_streaks || '0'),
+        totalTopups: parseFloat(ladderStats.rows[0].total_topups || '0'),
+        totalBanked: parseFloat(ladderStats.rows[0].total_banked || '0'),
+        totalLost: parseFloat(ladderStats.rows[0].total_lost || '0'),
+        highestStreaks: highestStreaks.rows,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/admin/streak-reset/:userId
+//  একটি নির্দিষ্ট ইউজারের স্ট্রিক ল্যাডার বোনাস রিসেট করো
+// ══════════════════════════════════════════════════════════════
+router.post('/streak-reset/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId as string;
+    const { resetWinStreak, resetStreakBonusAtRisk } = await import('../config/redis');
+    await resetWinStreak(userId);
+    await resetStreakBonusAtRisk(userId);
+
+    res.json({
+      success: true,
+      message: 'ইউজারের স্ট্রিক ল্যাডার রিসেট হয়েছে।',
+      userId,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
 //  GET /api/admin/audit-logs — সাম্প্রতিক অডিট লগগুলো দেখাও
 // ══════════════════════════════════════════════════════════════
 router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {

@@ -39,6 +39,7 @@ import MobileGamePanels from '@/components/game/MobileGamePanels';
 import { useTranslation } from '@/hooks/useTranslation';
 import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay';
 import { ScatterBonus } from '@/components/game/ScatterBonus';
+import { StreakLadder } from '@/components/game/StreakLadder';
 import { shortenAddress } from '@/lib/wallet';
 
 const Coin3D = lazy(() => import('@/components/game/Coin3D'));
@@ -289,8 +290,9 @@ export default function GamePage() {
             )}
           </div>
 
-          {/* ── Right column: live chat + big wins ── */}
-          <aside className="lg:w-[320px] xl:w-[360px] shrink-0 order-3 overflow-hidden min-h-0 flex flex-col">
+          {/* ── Right column: live chat + big wins + streak ladder ── */}
+          <aside className="lg:w-[320px] xl:w-[360px] shrink-0 order-3 overflow-hidden min-h-0 flex flex-col gap-3">
+            <StreakLadder />
             <LiveChat />
           </aside>
         </div>

@@ -37,9 +37,14 @@ export interface BetResult {
     multiplier?: number;
     payout?: number;
     scatterHash?: string;
-    serverSeed?: string;
-    clientSeed?: string;
-    nonce?: number;
+  };
+  streak?: {
+    currentStreak: number;
+    rungMultiplier: number;
+    ladderBonus: number;
+    atRisk: number;
+    banked?: number;
+    lost?: number;
   };
   verification: {
     serverSeedHash: string;

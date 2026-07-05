@@ -53,3 +53,35 @@ export async function getWinStreak(userId: string): Promise<number> {
   const count = await redis.get(`win_streak:${userId}`);
   return parseInt(count || '0');
 }
+
+// ── Streak Ladder Bonus Helpers ───────────────────────────────────
+const STREAK_BONUS_AT_RISK_KEY = (userId: string) => `streak_at_risk:${userId}`;
+const STREAK_BUDGET_SPENT_KEY = (date: string) => `streak_budget_spent:${date}`;
+
+export async function getStreakBonusAtRisk(userId: string): Promise<number> {
+  const value = await redis.get(STREAK_BONUS_AT_RISK_KEY(userId));
+  return parseFloat(value || '0');
+}
+
+export async function addStreakBonusAtRisk(userId: string, amount: number): Promise<number> {
+  const key = STREAK_BONUS_AT_RISK_KEY(userId);
+  const newValue = await redis.incrbyfloat(key, amount);
+  await redis.expire(key, 86400); // 24 hours TTL
+  return parseFloat(newValue);
+}
+
+export async function resetStreakBonusAtRisk(userId: string): Promise<void> {
+  await redis.del(STREAK_BONUS_AT_RISK_KEY(userId));
+}
+
+export async function getStreakBudgetSpent(date: string): Promise<number> {
+  const value = await redis.get(STREAK_BUDGET_SPENT_KEY(date));
+  return parseFloat(value || '0');
+}
+
+export async function incrementStreakBudgetSpent(date: string, amount: number): Promise<number> {
+  const key = STREAK_BUDGET_SPENT_KEY(date);
+  const newValue = await redis.incrbyfloat(key, amount);
+  await redis.expire(key, 86400 * 2); // 2 days TTL to cover timezone edge cases
+  return parseFloat(newValue);
+}

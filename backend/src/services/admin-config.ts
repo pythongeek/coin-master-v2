@@ -120,6 +120,32 @@ export interface GameConfig {
   /** স্ক্যাটার বোনাসের স্থির বেট মান */
   scatterStakeUsd: number;
 
+  // ── স্ট্রিক ল্যাডার বোনাস সেটিং ─────────────────────────────
+  /** স্ট্রিক ল্যাডার বোনাস ফিচার চালু আছে কিনা */
+  streakEnabled: boolean;
+  /** স্ট্রিক বোনাসের দৈনিক বাজেট */
+  streakBudgetDailyUsd: number;
+  /** রাঙ ১-এ জয়ের সংখ্যা */
+  streakRung1Wins: number;
+  /** রাঙ ১-এ মাল্টিপ্লায়ার */
+  streakRung1Multiplier: number;
+  /** রাঙ ২-এ জয়ের সংখ্যা */
+  streakRung2Wins: number;
+  /** রাঙ ২-এ মাল্টিপ্লায়ার */
+  streakRung2Multiplier: number;
+  /** রাঙ ৩-এ জয়ের সংখ্যা */
+  streakRung3Wins: number;
+  /** রাঙ ৩-এ মাল্টিপ্লায়ার */
+  streakRung3Multiplier: number;
+  /** রাঙ ৪-এ জয়ের সংখ্যা */
+  streakRung4Wins: number;
+  /** রাঙ ৪-এ মাল্টিপ্লায়ার */
+  streakRung4Multiplier: number;
+  /** রাঙ ৫-এ জয়ের সংখ্যা */
+  streakRung5Wins: number;
+  /** রাঙ ৫-এ মাল্টিপ্লায়ার */
+  streakRung5Multiplier: number;
+
   /** Min withdrawal amount (coins) */
   withdrawalMinCoins: number;
   /** Max withdrawal amount per request (coins) */
@@ -196,6 +222,20 @@ export const DEFAULT_CONFIG: GameConfig = {
   scatterMaxMultiplier: 20,
   scatterStakeUsd: 1.0,
 
+  // স্ট্রিক ল্যাডার বোনাস
+  streakEnabled: false,
+  streakBudgetDailyUsd: 100.0,
+  streakRung1Wins: 1,
+  streakRung1Multiplier: 1.2,
+  streakRung2Wins: 2,
+  streakRung2Multiplier: 1.5,
+  streakRung3Wins: 3,
+  streakRung3Multiplier: 2.0,
+  streakRung4Wins: 4,
+  streakRung4Multiplier: 3.0,
+  streakRung5Wins: 5,
+  streakRung5Multiplier: 5.0,
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -247,6 +287,19 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   scatterMinMultiplier:          { label: 'সর্বনিম্ন মাল্টিপ্লায়ার', description: 'স্ক্যাটার বোনাসের সর্বনিম্ন মাল্টিপ্লায়ার।', unit: '×', min: 0.1, max: 100, type: 'number', category: 'স্ক্যাটার বোনাস' },
   scatterMaxMultiplier:          { label: 'সর্বোচ্চ মাল্টিপ্লায়ার', description: 'স্ক্যাটার বোনাসের সর্বোচ্চ মাল্টিপ্লায়ার।', unit: '×', min: 0.1, max: 1000, type: 'number', category: 'স্ক্যাটার বোনাস' },
   scatterStakeUsd:               { label: 'স্ক্যাটার বোনাস স্টেক', description: 'স্ক্যাটার বোনাসের জন্য ব্যবহৃত স্থির বেট মান।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'স্ক্যাটার বোনাস' },
+
+  streakEnabled:            { label: 'স্ট্রিক ল্যাডার চালু', description: 'স্ট্রিক ল্যাডার বোনাস ফিচার সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'স্ট্রিক ল্যাডার' },
+  streakBudgetDailyUsd:     { label: 'দৈনিক স্ট্রিক বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার স্ট্রিক ল্যাডার বোনাস হিসেবে দেওয়া হবে।', unit: '$', min: 0, max: 10000, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung1Wins:          { label: 'রাঙ ১ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ১ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung1Multiplier:    { label: 'রাঙ ১ মাল্টিপ্লায়ার', description: 'রাঙ ১-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung2Wins:          { label: 'রাঙ ২ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ২ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung2Multiplier:    { label: 'রাঙ ২ মাল্টিপ্লায়ার', description: 'রাঙ ২-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung3Wins:          { label: 'রাঙ ৩ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৩ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung3Multiplier:    { label: 'রাঙ ৩ মাল্টিপ্লায়ার', description: 'রাঙ ৩-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung4Wins:          { label: 'রাঙ ৪ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৪ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung4Multiplier:    { label: 'রাঙ ৪ মাল্টিপ্লায়ার', description: 'রাঙ ৪-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung5Wins:          { label: 'রাঙ ৫ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৫ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
+  streakRung5Multiplier:    { label: 'রাঙ ৫ মাল্টিপ্লায়ার', description: 'রাঙ ৫-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
 
   withdrawalMinCoins:             { label: 'Min withdrawal', description: 'সর্বনিম্ন উইথড্র পরিমাণ।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'উইথড্র' },
   withdrawalMaxCoins:             { label: 'Max withdrawal', description: 'প্রতি অনুরোধে সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 1, max: 1000000, type: 'number', category: 'উইথড্র' },
