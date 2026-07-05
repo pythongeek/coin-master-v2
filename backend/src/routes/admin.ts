@@ -26,6 +26,7 @@ import { getAchievementStats } from '../services/achievements';
 import { getWheelStatus, spinDailyWheel, getWheelStats } from '../services/daily-wheel';
 import { getLeaderboard, getLeaderboardPosition, distributeLeaderboardPrizes, getLeaderboardStats } from '../services/leaderboard';
 import { getRakebackStatus, claimRakeback, getRakebackStats } from '../services/rakeback';
+import { getUserChallengeProgress, claimChallengeReward, getChallengeStats, getChallengeDefinitions } from '../services/challenges';
 
 const router = Router();
 
@@ -277,6 +278,19 @@ router.get('/rakeback', adminLimiter, authMiddleware, roleMiddleware(['super_adm
   try {
     const stats = await getRakebackStats();
     res.json({ success: true, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/challenges — চ্যালেঞ্জ ডেফিনিশন ও স্ট্যাটস
+// ══════════════════════════════════════════════════════════════
+router.get('/challenges', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const definitions = await getChallengeDefinitions();
+    const stats = await getChallengeStats();
+    res.json({ success: true, definitions, stats });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });
   }

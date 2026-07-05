@@ -15,6 +15,7 @@ import { AchievementsGrid } from '@/components/dashboard/AchievementsGrid';
 import { DailyWheelCard } from '@/components/dashboard/DailyWheelCard';
 import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard';
 import { RakebackCard } from '@/components/dashboard/RakebackCard';
+import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
@@ -168,6 +169,9 @@ export default function DashboardPage() {
 
         {/* Rakeback */}
         <RakebackCard token={token} onClaim={loadStats} />
+
+        {/* Daily Challenges */}
+        <ChallengesCard token={token} onClaim={loadStats} />
 
         {/* Leaderboard */}
         <LeaderboardCard token={token} />

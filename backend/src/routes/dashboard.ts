@@ -22,6 +22,7 @@ import { checkAndUnlockAchievements, getUserAchievements } from '../services/ach
 import { getWheelStatus, spinDailyWheel } from '../services/daily-wheel';
 import { getLeaderboard, getLeaderboardPosition } from '../services/leaderboard';
 import { getRakebackStatus, claimRakeback } from '../services/rakeback';
+import { getUserChallengeProgress, claimChallengeReward } from '../services/challenges';
 
 const router = Router();
 
@@ -471,6 +472,33 @@ router.post('/rakeback/claim', authMiddleware, async (req: Request, res: Respons
     const self = (req as Request & { user: AuthPayload }).user;
     const status = await claimRakeback(self.userId);
     res.json({ success: true, data: status });
+  } catch (err: unknown) {
+    res.status(400).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/dashboard/challenges — ইউজারের চ্যালেঞ্জ প্রোগ্রেস
+// ══════════════════════════════════════════════════════════════
+router.get('/challenges', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const progress = await getUserChallengeProgress(self.userId);
+    res.json({ success: true, data: progress });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/dashboard/challenges/:id/claim — চ্যালেঞ্জ রিওয়ার্ড ক্লেইম
+// ══════════════════════════════════════════════════════════════
+router.post('/challenges/:id/claim', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const challengeId = req.params.id as string;
+    const progress = await claimChallengeReward(self.userId, challengeId);
+    res.json({ success: true, data: progress });
   } catch (err: unknown) {
     res.status(400).json({ success: false, error: String(err) });
   }

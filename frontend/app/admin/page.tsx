@@ -10,7 +10,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, Trophy, type LucideIcon } from 'lucide-react';
+import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, Trophy, Target, type LucideIcon } from 'lucide-react';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
 import AdminUserTable from '@/components/dashboard/AdminUserTable';
@@ -23,6 +23,7 @@ import AdminBannerControl from '@/components/dashboard/AdminBannerControl';
 import SeedRotationPanel from '@/components/dashboard/SeedRotationPanel';
 import AdminKycReviewPanel from '@/components/dashboard/AdminKycReviewPanel';
 import AdminLeaderboardPanel from '@/components/dashboard/AdminLeaderboardPanel';
+import AdminChallengesPanel from '@/components/dashboard/AdminChallengesPanel';
 import { useToast } from '@/components/providers/ToastProvider';
 
 const API =
@@ -30,13 +31,14 @@ const API =
     ? '/api'
     : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
-const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'bonuses' | 'leaderboard' | 'audit' | 'health' | 'security' | 'kyc' | 'account'; label: string; Icon: LucideIcon }[] = [
+const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'health' | 'security' | 'kyc' | 'account'; label: string; Icon: LucideIcon }[] = [
   { id: 'live',     label: 'Live Stats', Icon: BarChart3 },
   { id: 'config',   label: 'Game Config', Icon: Settings },
   { id: 'users',    label: 'Users',      Icon: Users },
   { id: 'withdrawals', label: 'Withdrawals', Icon: Wallet },
   { id: 'bonuses',  label: 'Bonuses',    Icon: Gift },
   { id: 'leaderboard', label: 'Leaderboard', Icon: Trophy },
+  { id: 'challenges', label: 'Challenges', Icon: Target },
   { id: 'kyc',      label: 'KYC Review', Icon: ShieldCheck },
   { id: 'audit',    label: 'Audit Logs', Icon: FileText },
   { id: 'health',   label: 'Health',     Icon: Activity },
@@ -241,6 +243,7 @@ export default function AdminPage() {
         {activeTab === 'withdrawals' && <AdminWithdrawalQueue />}
         {activeTab === 'bonuses'  && <AdminBonusPanel />}
         {activeTab === 'leaderboard' && <AdminLeaderboardPanel />}
+        {activeTab === 'challenges' && <AdminChallengesPanel />}
         {activeTab === 'kyc'      && isSuperAdmin && <AdminKycReviewPanel />}
         {activeTab === 'audit'    && <AdminAuditLogViewer />}
         {activeTab === 'health'   && <AdminHealthDashboard />}

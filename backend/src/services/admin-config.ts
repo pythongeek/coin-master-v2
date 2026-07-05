@@ -179,6 +179,10 @@ export interface GameConfig {
   rakebackPercent: number;           // percentage of total wager returned
   rakebackMinClaimCoins: number;    // min claimable amount
   rakebackVipMultiplier: number;    // VIP multiplier on base rakeback
+
+  // চ্যালেঞ্জ / মিশন
+  challengesEnabled: boolean;
+  dailyChallenges: { id: string; label: string; target: number; reward: number; metric: 'wager' | 'wins' | 'bets' | 'streak' }[];
 }
 
 
@@ -307,6 +311,15 @@ export const DEFAULT_CONFIG: GameConfig = {
   rakebackMinClaimCoins: 1.0,
   rakebackVipMultiplier: 1.5,
 
+  // চ্যালেঞ্জ / মিশন
+  challengesEnabled: true,
+  dailyChallenges: [
+    { id: 'wager_50', label: 'Wager $50', target: 50, reward: 5, metric: 'wager' },
+    { id: 'win_5', label: 'Win 5 flips', target: 5, reward: 3, metric: 'wins' },
+    { id: 'bet_20', label: 'Place 20 bets', target: 20, reward: 2, metric: 'bets' },
+    { id: 'streak_3', label: '3-win streak', target: 3, reward: 5, metric: 'streak' },
+  ],
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -402,6 +415,10 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   rakebackPercent:                 { label: 'রেকব্যাক %', description: 'মোট বেটের শতকরা কত ভাগ রেকব্যাক হিসেবে ফেরত পাবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'রেকব্যাক' },
   rakebackMinClaimCoins:           { label: 'ন্যূনতম ক্লেইম', description: 'কত কয়েন জমা হলে ক্লেইম করা যাবে।', unit: 'কয়েন', min: 0.01, max: 1000, type: 'number', category: 'রেকব্যাক' },
   rakebackVipMultiplier:           { label: 'VIP মাল্টিপ্লায়ার', description: 'VIP র‌্যাঙ্ক অনুযায়ী রেকব্যাক মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 10, type: 'number', category: 'রেকব্যাক' },
+
+  // চ্যালেঞ্জ / মিশন
+  challengesEnabled:               { label: 'চ্যালেঞ্জ চালু', description: 'দৈনিক চ্যালেঞ্জ / মিশন ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'চ্যালেঞ্জ' },
+  dailyChallenges:                 { label: 'দৈনিক চ্যালেঞ্জ', description: 'JSON array: {id,label,target,reward,metric}।', type: 'string', category: 'চ্যালেঞ্জ' },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -443,6 +460,12 @@ export async function getConfig(): Promise<GameConfig> {
             (config as any)[camelKey] = JSON.parse(row.value);
           } catch {
             (config as any)[camelKey] = DEFAULT_CONFIG.leaderboardPrizes;
+          }
+        } else if (camelKey === 'dailyChallenges') {
+          try {
+            (config as any)[camelKey] = JSON.parse(row.value);
+          } catch {
+            (config as any)[camelKey] = DEFAULT_CONFIG.dailyChallenges;
           }
         } else {
           (config as any)[camelKey] = row.value;
