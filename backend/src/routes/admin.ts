@@ -22,6 +22,7 @@ import { reconcilePendingPayments } from '../services/reconciliation';
 import { adminSettingsSchema } from '../schemas';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
 import { invalidateCache } from '../services/cache';
+import { getAchievementStats } from '../services/achievements';
 
 const router = Router();
 
@@ -210,6 +211,18 @@ router.post('/streak-reset/:userId', adminLimiter, authMiddleware, roleMiddlewar
       message: 'ইউজারের স্ট্রিক ল্যাডার রিসেট হয়েছে।',
       userId,
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/achievements — অ্যাচিভমেন্ট প্ল্যাটফর্ম স্ট্যাটস
+// ══════════════════════════════════════════════════════════════
+router.get('/achievements', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    const stats = await getAchievementStats();
+    res.json({ success: true, stats });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });
   }

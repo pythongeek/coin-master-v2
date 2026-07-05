@@ -18,6 +18,7 @@ import { query } from '../config/database';
 import { authMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { getOrSet } from '../services/cache';
 import { getVipProgress } from '../services/vip';
+import { checkAndUnlockAchievements, getUserAchievements } from '../services/achievements';
 
 const router = Router();
 
@@ -27,14 +28,14 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { userId } = req.params;
+    const userIdParam = req.params.userId as string;
     const self = (req as Request & { user: AuthPayload }).user;
-    if (self.userId !== userId && !self.isAdmin) {
+    if (self.userId !== userIdParam && !self.isAdmin) {
       return res.status(403).json({ success: false, error: 'অন্যের পরিসংখ্যান দেখার অনুমতি নেই।' });
     }
-    const cacheKey = `cache:stats:${userId}`;
+    const cacheKey = `cache:stats:${userIdParam}`;
 
-    const data = await getOrSet(cacheKey, 10, async () => {
+    let data: any = await getOrSet(cacheKey, 10, async () => {
       // মোট বেট, জয়, হার, মোট বাজি, নেট P&L
       const statsResult = await query(`
         SELECT
@@ -49,7 +50,7 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
           COALESCE(MAX(payout), 0)                         AS biggest_win
         FROM bets
         WHERE user_id = $1 AND status = 'resolved'
-      `, [userId]);
+      `, [userIdParam]);
 
       const s = statsResult.rows[0];
       const totalBets  = parseInt(s.total_bets);
@@ -57,7 +58,7 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
       const winRate    = totalBets > 0 ? ((totalWins / totalBets) * 100).toFixed(1) : '0.0';
 
       // ব্যালেন্স
-      const balResult = await query('SELECT balance FROM users WHERE id = $1', [userId]);
+      const balResult = await query('SELECT balance FROM users WHERE id = $1', [userIdParam]);
       const balance = parseFloat(balResult.rows[0]?.balance || '0');
 
       // শেষ ১০০টি বেট হিস্ট্রি এবং স্ট্রিক্স ক্যালকুলেশন
@@ -67,7 +68,7 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
         WHERE user_id = $1 AND status = 'resolved'
         ORDER BY created_at DESC
         LIMIT 100
-      `, [userId]);
+      `, [userIdParam]);
 
       const rows = historyResult.rows;
 
@@ -139,6 +140,10 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
         vip: getVipProgress(parseFloat(s.total_wagered)),
       };
     });
+
+    // Refresh achievements after computing stats
+    await checkAndUnlockAchievements(userIdParam);
+    data.achievements = await getUserAchievements(userIdParam);
 
     res.json({
       success: true,

@@ -11,6 +11,7 @@ import StatsCards from '@/components/dashboard/StatsCards';
 import ProfitChart from '@/components/dashboard/ProfitChart';
 import BetHistory from '@/components/dashboard/BetHistory';
 import { VipProgressCard } from '@/components/dashboard/VipProgressCard';
+import { AchievementsGrid } from '@/components/dashboard/AchievementsGrid';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
@@ -150,6 +151,9 @@ export default function DashboardPage() {
       <div className="space-y-5">
         {/* VIP progress */}
         <VipProgressCard vip={stats?.vip} totalWagered={stats?.totalWagered || 0} />
+
+        {/* Achievements */}
+        <AchievementsGrid achievements={stats?.achievements} />
 
         {/* Stats cards */}
         <StatsCards stats={stats} loading={loading} />
