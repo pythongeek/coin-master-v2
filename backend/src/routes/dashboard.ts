@@ -17,6 +17,7 @@ import { Router, Request, Response } from 'express';
 import { query } from '../config/database';
 import { authMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { getOrSet } from '../services/cache';
+import { getVipProgress } from '../services/vip';
 
 const router = Router();
 
@@ -135,6 +136,7 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
           payout: parseFloat(r.payout),
           createdAt: r.created_at,
         })),
+        vip: getVipProgress(parseFloat(s.total_wagered)),
       };
     });
 

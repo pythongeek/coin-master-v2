@@ -45,6 +45,7 @@ import {
   creditPayout,
   creditWagering,
 } from './bonus';
+import { getVipRakebackPercent } from './vip';
 
 // ── ইনপুট ও আউটপুটের ধরন ───────────────────────────────────────
 export interface BetRequest {
@@ -171,7 +172,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     await client.query('BEGIN');
 
     // ── 🔍 VIP Rakeback Helper ──
-    const getVipRakebackPercent = (wagered: number): number => {
+    const getVipRakebackPercentInline = (wagered: number): number => {
       if (wagered <= 1000) return 0.05;
       if (wagered <= 10000) return 0.10;
       if (wagered <= 50000) return 0.15;
@@ -376,7 +377,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     }
 
     const newTotalWagered = totalWagered + req.amount;
-    const rakebackRate = getVipRakebackPercent(newTotalWagered);
+    const rakebackRate = getVipRakebackPercentInline(newTotalWagered);
     const rakebackAmount = req.amount * (config.houseEdgePercent / 100) * rakebackRate;
     const newPendingRakeback = parseFloat((pendingRakeback + rakebackAmount).toFixed(8));
 

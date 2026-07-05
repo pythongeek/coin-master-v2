@@ -10,6 +10,7 @@ import { BarChart3, Gamepad2, ShieldCheck, AlertTriangle, Loader2 } from 'lucide
 import StatsCards from '@/components/dashboard/StatsCards';
 import ProfitChart from '@/components/dashboard/ProfitChart';
 import BetHistory from '@/components/dashboard/BetHistory';
+import { VipProgressCard } from '@/components/dashboard/VipProgressCard';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
@@ -19,7 +20,7 @@ const API =
 
 export default function DashboardPage() {
   const { t } = useTranslation();
-  const [stats,   setStats]   = useState(null);
+  const [stats,   setStats]   = useState<any>(null);
   const [chart,   setChart]   = useState([]);
   const [history, setHistory] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1 });
@@ -147,6 +148,9 @@ export default function DashboardPage() {
       )}
 
       <div className="space-y-5">
+        {/* VIP progress */}
+        <VipProgressCard vip={stats?.vip} totalWagered={stats?.totalWagered || 0} />
+
         {/* Stats cards */}
         <StatsCards stats={stats} loading={loading} />
 
