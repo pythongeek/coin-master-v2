@@ -12,6 +12,7 @@ import ProfitChart from '@/components/dashboard/ProfitChart';
 import BetHistory from '@/components/dashboard/BetHistory';
 import { VipProgressCard } from '@/components/dashboard/VipProgressCard';
 import { AchievementsGrid } from '@/components/dashboard/AchievementsGrid';
+import { DailyWheelCard } from '@/components/dashboard/DailyWheelCard';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
@@ -42,21 +43,27 @@ export default function DashboardPage() {
   async function loadAll(page = 1) {
     setLoading(true);
     try {
-      const [statsRes, chartRes, histRes, kycRes] = await Promise.all([
+      const [statsRes, chartRes, histRes, kycRes, wheelRes] = await Promise.all([
         fetch(`${API}/dashboard/stats/${userId}`,    { headers }),
         fetch(`${API}/dashboard/chart/${userId}?days=30`, { headers }),
         fetch(`${API}/dashboard/history/${userId}?page=${page}&limit=15`, { headers }),
         fetch(`${API}/kyc/status`, { headers }),
+        fetch(`${API}/dashboard/wheel`, { headers }),
       ]);
 
-      const [s, c, h, k] = await Promise.all([
+      const [s, c, h, k, w] = await Promise.all([
         statsRes.json(),
         chartRes.json(),
         histRes.json(),
-        kycRes.json()
+        kycRes.json(),
+        wheelRes.json()
       ]);
 
-      if (s.success) setStats(s.data);
+      if (s.success) {
+        const data = s.data;
+        if (w.success) data.wheel = w.data;
+        setStats(data);
+      }
       if (c.success) setChart(c.data);
       if (h.success) {
         setHistory(h.data);
@@ -72,6 +79,8 @@ export default function DashboardPage() {
   }
 
   useEffect(() => { loadAll(); }, []);
+
+  const loadStats = () => loadAll(pagination.page);
 
   return (
     <main className="min-h-screen p-4 md:p-6 max-w-5xl mx-auto">
@@ -151,6 +160,9 @@ export default function DashboardPage() {
       <div className="space-y-5">
         {/* VIP progress */}
         <VipProgressCard vip={stats?.vip} totalWagered={stats?.totalWagered || 0} />
+
+        {/* Daily wheel */}
+        <DailyWheelCard wheel={stats?.wheel} token={token} onSpin={loadStats} />
 
         {/* Achievements */}
         <AchievementsGrid achievements={stats?.achievements} />

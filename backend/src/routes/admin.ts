@@ -23,6 +23,7 @@ import { adminSettingsSchema } from '../schemas';
 import { generateServerSeed, hashServerSeed } from '../services/provably-fair';
 import { invalidateCache } from '../services/cache';
 import { getAchievementStats } from '../services/achievements';
+import { getWheelStatus, spinDailyWheel, getWheelStats } from '../services/daily-wheel';
 
 const router = Router();
 
@@ -222,6 +223,18 @@ router.post('/streak-reset/:userId', adminLimiter, authMiddleware, roleMiddlewar
 router.get('/achievements', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
     const stats = await getAchievementStats();
+    res.json({ success: true, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/admin/wheel-stats — দৈনিক হুইল প্ল্যাটফর্ম স্ট্যাটস
+// ══════════════════════════════════════════════════════════════
+router.get('/wheel-stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    const stats = await getWheelStats();
     res.json({ success: true, stats });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });

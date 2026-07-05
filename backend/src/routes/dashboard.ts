@@ -19,6 +19,7 @@ import { authMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth'
 import { getOrSet } from '../services/cache';
 import { getVipProgress } from '../services/vip';
 import { checkAndUnlockAchievements, getUserAchievements } from '../services/achievements';
+import { getWheelStatus, spinDailyWheel } from '../services/daily-wheel';
 
 const router = Router();
 
@@ -401,5 +402,35 @@ router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin'])
 // admin.ts) — the canonical route with step-up password auth.
 // The duplicate /api/dashboard/admin/seed/rotate is removed to
 // prevent divergent behavior between the two routes.
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/dashboard/wheel — দৈনিক হুইল স্ট্যাটাস
+// ══════════════════════════════════════════════════════════════
+router.get('/wheel', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const status = await getWheelStatus(self.userId);
+    res.json({ success: true, data: status });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/dashboard/wheel/spin — দৈনিক হুইল স্পিন করো
+// ══════════════════════════════════════════════════════════════
+router.post('/wheel/spin', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const { clientSeed } = req.body as { clientSeed?: string };
+    if (!clientSeed || typeof clientSeed !== 'string') {
+      return res.status(400).json({ success: false, error: 'clientSeed is required.' });
+    }
+    const result = await spinDailyWheel(self.userId, clientSeed);
+    res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    res.status(400).json({ success: false, error: String(err) });
+  }
+});
 
 export default router;

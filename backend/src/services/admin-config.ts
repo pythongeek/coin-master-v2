@@ -162,6 +162,11 @@ export interface GameConfig {
   lightningMaxMultiplier: number;
   lightningDurationSeconds: number;
   lightningBudgetDailyUsd: number;
+
+  // দৈনিক লগইন হুইল
+  dailyWheelEnabled: boolean;
+  dailyWheelPrizes: { label: string; value: number; type: 'coins'; weight: number }[];
+  dailyWheelCooldownHours: number;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -252,6 +257,20 @@ export const DEFAULT_CONFIG: GameConfig = {
   lightningDurationSeconds: 5.0,
   lightningBudgetDailyUsd: 100.0,
 
+  // দৈনিক লগইন হুইল
+  dailyWheelEnabled: true,
+  dailyWheelPrizes: [
+    { label: '0.5 Coins', value: 0.5, type: 'coins', weight: 35 },
+    { label: '1 Coin', value: 1, type: 'coins', weight: 25 },
+    { label: '2 Coins', value: 2, type: 'coins', weight: 15 },
+    { label: '3 Coins', value: 3, type: 'coins', weight: 10 },
+    { label: '5 Coins', value: 5, type: 'coins', weight: 8 },
+    { label: '10 Coins', value: 10, type: 'coins', weight: 5 },
+    { label: '25 Coins', value: 25, type: 'coins', weight: 1.5 },
+    { label: '50 Coins', value: 50, type: 'coins', weight: 0.5 },
+  ],
+  dailyWheelCooldownHours: 24,
+
   withdrawalMinCoins: 1.0,
   withdrawalMaxCoins: 10000.0,
   withdrawalAutoApproveThreshold: 0.0,
@@ -330,6 +349,11 @@ export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; descriptio
   withdrawalMaxCoins:              { label: 'সর্বোচ্চ উত্তোলন', description: 'একক উত্তোলনের সর্বোচ্চ পরিমাণ (কয়েন)।', unit: 'coin', min: 1, max: 1000000, type: 'number', category: 'তহবিল / উত্তোলন' },
   withdrawalAutoApproveThreshold:  { label: 'Auto-approve threshold', description: 'এই পরিমাণের কম হলে অটো-অনুমোদন (0 = সবসময় ম্যানুয়াল)।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'উইথড্র' },
   dailyWithdrawalLimitCoins:       { label: 'Daily withdrawal limit', description: 'প্রতিদিন প্রতি ইউজার সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 0, max: 1000000, type: 'number', category: 'উইথড্র' },
+
+  // দৈনিক লগইন হুইল
+  dailyWheelEnabled:               { label: 'ডেইলি হুইল চালু', description: 'দৈনিক ফ্রি স্পিন হুইল ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'ডেইলি হুইল' },
+  dailyWheelCooldownHours:         { label: 'হুইল কুলডাউন (ঘণ্টা)', description: 'প্রতি স্পিনের মধ্যে কত ঘণ্টা অপেক্ষা করতে হবে।', unit: 'h', min: 1, max: 168, type: 'number', category: 'ডেইলি হুইল' },
+  dailyWheelPrizes:                { label: 'হুইল পুরস্কার', description: 'JSON array: {label,value,type,weight}।', type: 'string', category: 'ডেইলি হুইল' },
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -360,6 +384,12 @@ export async function getConfig(): Promise<GameConfig> {
           (config as any)[camelKey] = row.value === 'true';
         } else if (meta.type === 'number') {
           (config as any)[camelKey] = parseFloat(row.value);
+        } else if (camelKey === 'dailyWheelPrizes') {
+          try {
+            (config as any)[camelKey] = JSON.parse(row.value);
+          } catch {
+            (config as any)[camelKey] = DEFAULT_CONFIG.dailyWheelPrizes;
+          }
         } else {
           (config as any)[camelKey] = row.value;
         }
