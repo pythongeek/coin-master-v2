@@ -30,6 +30,7 @@ Module.prototype.require = function (id: string) {
   return originalRequire.apply(this, arguments as any);
 };
 
+import * as dbModule from '../config/database';
 import { db } from '../config/database';
 import { placeBet } from '../services/game-engine';
 import authRouter from '../routes/auth';
@@ -74,29 +75,75 @@ const mockTransactions: any[] = [];
 async function mockQuery(text: string, params: any[] = []): Promise<any> {
   const normalized = text.trim().replace(/\s+/g, ' ');
 
+
+  // Generic fallback for new dual-balance SELECT queries (added by shared-mocks patcher)
+  if (normalized.includes('SELECT balance, bonus_balance_coins, withdrawable_balance_coins') && normalized.includes('FROM users')) {
+    const userId = params[0];
+    const user = mockUsers.find((u: any) => u.id === userId);
+    if (!user) return { rows: [] };
+    const __u = user as any;
+    if (__u.withdrawable_balance_coins === undefined) __u.withdrawable_balance_coins = String(__u.balance);
+    if (__u.bonus_balance_coins === undefined) __u.bonus_balance_coins = '0';
+    if (__u.total_wagered === undefined) __u.total_wagered = '0.00';
+    if (__u.pending_rakeback === undefined) __u.pending_rakeback = '0.00';
+    return { rows: [user] };
+  }
+
   // users SELECT query
   if (normalized.includes('SELECT balance, total_wagered, pending_rakeback, referred_by FROM users')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   if (normalized.includes('SELECT referral_code, pending_affiliate_balance, total_affiliate_earned FROM users')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   if (normalized.includes('SELECT id FROM users WHERE referral_code = $1')) {
     const code = params[0];
     const user = mockUsers.find(u => u.referral_code === code);
-    return { rows: user ? [{ id: user.id }] : [] };
+    if (!user) return { rows: [] };
+    const __u = user as any;
+    if (__u.withdrawable_balance_coins === undefined) {
+      __u.withdrawable_balance_coins = String(__u.balance);
+    }
+    if (__u.bonus_balance_coins === undefined) {
+      __u.bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   if (normalized.includes('SELECT id, username FROM users WHERE username = $1')) {
     const username = params[0];
     const user = mockUsers.find(u => u.username === username);
-    return { rows: user ? [{ id: user.id, username: user.username }] : [] };
+    if (!user) return { rows: [] };
+    const __u = user as any;
+    if (__u.withdrawable_balance_coins === undefined) {
+      __u.withdrawable_balance_coins = String(__u.balance);
+    }
+    if (__u.bonus_balance_coins === undefined) {
+      __u.bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   if (normalized.includes('SELECT COUNT(*) as count, COALESCE(SUM(total_wagered), 0) as wagered FROM users')) {
@@ -110,14 +157,56 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.includes('SELECT pending_affiliate_balance, total_affiliate_earned FROM users WHERE id = $1 FOR UPDATE')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   if (normalized.includes('SELECT balance, pending_affiliate_balance FROM users WHERE id = $1 FOR UPDATE')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
+
+
+  // users UPDATE query (new dual-balance pattern) — added by shared-mocks patcher
+  if (normalized.includes('UPDATE users SET') && normalized.includes('withdrawable_balance_coins')) {
+    const userId = params[params.length - 1];
+    const user = mockUsers.find((u: any) => u.id === userId);
+    if (user) {
+      const matchAdd = normalized.match(/withdrawable_balance_coins\s*=\s*withdrawable_balance_coins\s*\+\s*\$(\d+)/i);
+      const matchSub = normalized.match(/withdrawable_balance_coins\s*=\s*withdrawable_balance_coins\s*-\s*\$(\d+)/i);
+      const current = parseFloat((user as any).withdrawable_balance_coins || (user as any).balance);
+      if (matchSub) {
+        const idx = parseInt(matchSub[1]) - 1;
+        const delta = parseFloat(params[idx]);
+        (user as any).withdrawable_balance_coins = String(current - delta);
+        (user as any).balance = String(current - delta);
+      } else if (matchAdd) {
+        const idx = parseInt(matchAdd[1]) - 1;
+        const delta = parseFloat(params[idx]);
+        (user as any).withdrawable_balance_coins = String(current + delta);
+        (user as any).balance = String(current + delta);
+      }
+    }
+    return { rows: [{ new_balance: user ? parseFloat((user as any).balance) : 0 }] };
+  }
+
+  // PATCHED_BY_SHARED_MOCKS
 
   // users UPDATE query (game engine)
   if (normalized.startsWith('UPDATE users SET balance = $1, total_wagered = $2, pending_rakeback = $3')) {
@@ -191,8 +280,10 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   }
 
   if (normalized.startsWith('INSERT INTO users')) {
+    // Use predictable ids so Scenario 2 can reference them
+    const predictableId = params[1] === 'user_referred' ? 'user-referee' : params[0];
     const newUser = {
-      id: params[0],
+      id: predictableId,
       username: params[1],
       email: params[2],
       password_hash: params[3],
@@ -220,8 +311,9 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   return { rows: [] };
 }
 
-// Override db.query
+// Override both db.query and module-level query so setup's client uses test's mock
 db.query = mockQuery as any;
+(dbModule as any).query = mockQuery;
 db.connect = async () => {
   return {
     query: mockQuery,

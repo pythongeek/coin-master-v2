@@ -64,10 +64,43 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.includes('FROM users') && normalized.includes('balance')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill withdrawable_balance_coins if not set, for tests using the
+    // single-balance model. Mirrors the DB trigger that keeps
+    // users.balance = bonus_balance_coins + withdrawable_balance_coins.
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
-  // users UPDATE query
+  // users UPDATE query (new dual-balance pattern)
+  if (normalized.includes('UPDATE users SET') && normalized.includes('withdrawable_balance_coins')) {
+    const userId = params[params.length - 1];
+    const user = mockUsers.find(u => u.id === userId);
+    if (user) {
+      const matchAdd = normalized.match(/withdrawable_balance_coins\s*=\s*withdrawable_balance_coins\s*\+\s*\$(\d+)/i);
+      const matchSub = normalized.match(/withdrawable_balance_coins\s*=\s*withdrawable_balance_coins\s*-\s*\$(\d+)/i);
+      const current = parseFloat((user as any).withdrawable_balance_coins || (user as any).balance);
+      if (matchSub) {
+        const idx = parseInt(matchSub[1]) - 1;
+        const delta = parseFloat(params[idx]);
+        (user as any).withdrawable_balance_coins = String(current - delta);
+        (user as any).balance = String(current - delta);
+      } else if (matchAdd) {
+        const idx = parseInt(matchAdd[1]) - 1;
+        const delta = parseFloat(params[idx]);
+        (user as any).withdrawable_balance_coins = String(current + delta);
+        (user as any).balance = String(current + delta);
+      }
+    }
+    return { rows: [{ new_balance: user ? parseFloat((user as any).balance) : 0 }] };
+  }
+
+  // users UPDATE query (legacy single-balance pattern)
   if (normalized.startsWith('UPDATE users SET balance = $1, total_wagered = $2, pending_rakeback = $3')) {
     const balance = params[0];
     const totalWagered = params[1];

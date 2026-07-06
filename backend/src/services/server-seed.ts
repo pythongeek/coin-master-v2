@@ -189,7 +189,7 @@ function generateSeed(): string {
 }
 
 function hashSeed(seed: string): string {
-  return crypto.createHash('sha256').update(seed).digest('hex');
+  return crypto.createHash('sha256').update(Buffer.from(seed, 'hex')).digest('hex');
 }
 
 function mapRow(row: any): ActiveSeed {

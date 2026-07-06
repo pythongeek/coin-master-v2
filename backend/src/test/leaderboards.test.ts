@@ -52,7 +52,15 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.includes('FROM users') && normalized.includes('balance')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   // 1b. count bets query
@@ -141,6 +149,7 @@ const mockDb = {
 };
 (dbModule as any).db = mockDb;
 (dbModule as any).query = mockQuery;
+  (global as any).__TEST_MOCK_QUERY__ = mockQuery;
 
 // Mock admin-config helper
 import * as adminConfigModule from '../services/admin-config';

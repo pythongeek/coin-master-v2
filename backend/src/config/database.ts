@@ -310,7 +310,7 @@ export async function connectDB(): Promise<void> {
     `);
 
     // Ensure daily_wheel_spins table exists
-    // (Migration 2.3 — Daily Login Wheel)
+    // (Migration 2.3 — Daily Login Wheel, extended for provably-fair global seed)
     await client.query(`
       CREATE TABLE IF NOT EXISTS daily_wheel_spins (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -319,6 +319,8 @@ export async function connectDB(): Promise<void> {
         last_prize_label VARCHAR(120),
         last_prize_value DECIMAL(18, 8) NOT NULL DEFAULT 0,
         server_seed_hash VARCHAR(128),
+        seed_id UUID REFERENCES server_seeds(id) ON DELETE SET NULL,
+        nonce INTEGER,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE(user_id)
       );

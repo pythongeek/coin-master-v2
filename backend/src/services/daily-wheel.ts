@@ -1,12 +1,8 @@
-/**
- * Daily login wheel service
- * One free weighted spin per cooldown period.
- */
-
+import crypto from 'crypto';
 import { query, withTransaction } from '../config/database';
 import { getConfig } from './admin-config';
 import { creditPayout } from './bonus';
-import { generateServerSeed, hashServerSeed } from './provably-fair';
+import { reserveNonce, getSeedSecretById } from './server-seed';
 
 export interface DailyWheelPrize {
   label: string;
@@ -18,6 +14,8 @@ export interface DailyWheelPrize {
 export interface WheelSpinResult {
   prize: DailyWheelPrize;
   nextSpinAt: Date;
+  serverSeedHash: string;
+  nonce: number;
 }
 
 export async function getWheelStatus(userId: string) {
@@ -40,7 +38,10 @@ export async function getWheelStatus(userId: string) {
   return { enabled: true, canSpin, nextSpinAt };
 }
 
-export async function spinDailyWheel(userId: string, clientSeed: string): Promise<WheelSpinResult> {
+export async function spinDailyWheel(
+  userId: string,
+  clientSeed: string
+): Promise<WheelSpinResult> {
   const config = await getConfig();
   if (!config.dailyWheelEnabled) {
     throw new Error('Daily wheel is disabled.');
@@ -54,12 +55,25 @@ export async function spinDailyWheel(userId: string, clientSeed: string): Promis
   const prizes = config.dailyWheelPrizes || [];
   if (!prizes.length) throw new Error('Wheel prizes not configured.');
 
+  // ── Provably Fair: reserve a nonce on the global active seed ──────
+  const seedReservation = await reserveNonce();
+  if (!seedReservation) {
+    throw new Error('কোনো সক্রিয় সার্ভার সিড পাওয়া যায়নি। পরে আবার চেষ্টা করুন।');
+  }
+  const { seedId, serverSeedHash, nonce } = seedReservation;
+
+  const secret = await getSeedSecretById(seedId);
+  if (!secret) {
+    throw new Error('সার্ভার সিড লোড করতে ব্যর্থ হয়েছে।');
+  }
+  const serverSeed = secret.serverSeed;
+  if (secret.serverSeedHash !== serverSeedHash) {
+    throw new Error('সার্ভার সিড হ্যাশ মিলছে না।');
+  }
+
   const totalWeight = prizes.reduce((sum, p) => sum + p.weight, 0);
-  const serverSeed = generateServerSeed();
-  const serverSeedHash = hashServerSeed(serverSeed);
   const hmacInput = `${serverSeedHash}:${clientSeed}:dailywheel:${Date.now()}`;
 
-  const crypto = await import('crypto');
   const hmac = crypto.createHmac('sha256', serverSeed);
   hmac.update(hmacInput);
   const rollHex = hmac.digest('hex');
@@ -77,11 +91,17 @@ export async function spinDailyWheel(userId: string, clientSeed: string): Promis
   await withTransaction(async (txQ) => {
     const txQuery = txQ as any;
     await txQuery(
-      `INSERT INTO daily_wheel_spins (user_id, last_spin_at, last_prize_label, last_prize_value, server_seed_hash)
-       VALUES ($1, NOW(), $2, $3, $4)
+      `INSERT INTO daily_wheel_spins
+         (user_id, last_spin_at, last_prize_label, last_prize_value, server_seed_hash, seed_id, nonce)
+       VALUES ($1, NOW(), $2, $3, $4, $5, $6)
        ON CONFLICT (user_id) DO UPDATE
-       SET last_spin_at = NOW(), last_prize_label = $2, last_prize_value = $3, server_seed_hash = $4`,
-      [userId, prize.label, prize.value, serverSeedHash]
+       SET last_spin_at = NOW(),
+           last_prize_label = $2,
+           last_prize_value = $3,
+           server_seed_hash = $4,
+           seed_id = $5,
+           nonce = $6`,
+      [userId, prize.label, prize.value, serverSeedHash, seedId, nonce]
     );
 
     if (prize.value > 0) {
@@ -89,7 +109,7 @@ export async function spinDailyWheel(userId: string, clientSeed: string): Promis
     }
   });
 
-  return { prize, nextSpinAt };
+  return { prize, nextSpinAt, serverSeedHash, nonce };
 }
 
 export async function getWheelStats() {

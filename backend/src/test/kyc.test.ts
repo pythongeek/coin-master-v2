@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import * as dbModule from '../config/database';
 import { db } from '../config/database';
 import { kycService } from '../services/kyc';
 import { getStatus, postToken, postWebhook, postSimulateSuccess, postVerifyAI, AuthRequest } from '../routes/kyc';
@@ -83,6 +84,7 @@ let mockKycApplicantId: string | null = null;
     release: () => {},
   };
 };
+(global as any).__TEST_MOCK_QUERY__ = db.query as any;
 
 // Mock Express req, res generators
 function createMockRequest(userId?: string, body: any = {}, headers: Record<string, string> = {}): AuthRequest {

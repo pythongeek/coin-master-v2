@@ -156,7 +156,15 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.includes('SELECT balance FROM users WHERE id = $1')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   if (normalized.includes('SELECT balance FROM wallets WHERE id = $1')) {
@@ -272,6 +280,7 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
 
 // Override DB connection
 db.query = mockQuery as any;
+(global as any).__TEST_MOCK_QUERY__ = mockQuery;
 db.connect = async () => {
   return {
     query: mockQuery,

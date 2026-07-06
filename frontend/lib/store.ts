@@ -284,7 +284,32 @@ export const useGameStore = create<GameStore>()(
         locale: state.locale,
       }),
       skipHydration: false,
-      version: 1,
+      version: 2,
+      onRehydrateStorage: (state) => {
+        // Some login flows (legacy + manual token injection) only write
+        // cf_token / cf_user. Make sure the Zustand store picks them up.
+        if (typeof window === 'undefined') return;
+        if (state?.user && state?.token) return;
+        try {
+          const token = localStorage.getItem('cf_token');
+          const userJson = localStorage.getItem('cf_user');
+          if (token && userJson) {
+            const user = JSON.parse(userJson);
+            const parsedUser: User = {
+              userId: user.userId,
+              username: user.username,
+              email: user.email,
+              balance: user.balance,
+              isAdmin: user.isAdmin || false,
+              walletAddress: user.walletAddress,
+              isFlagged: user.isFlagged,
+            };
+            useGameStore.setState({ user: parsedUser, token });
+          }
+        } catch (e) {
+          console.warn('[store] rehydrate from cf_token/cf_user failed', e);
+        }
+      },
       migrate: (persistedState, version) => {
         if (version < 1 && typeof window !== 'undefined') {
           try {

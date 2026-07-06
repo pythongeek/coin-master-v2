@@ -421,7 +421,7 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
        RETURNING id`,
       [req.userId, serverSeed, serverSeedHash, clientSeed, nonce]
     );
-    const seedRecordId = seedRecord.rows[0].id;
+    const seedRecordId = seedRecord.rows[0]?.id;
 
     // Save final jackpot pool value to admin_settings table
     if (config.jackpotEnabled && req.amount >= config.jackpotMinBet) {

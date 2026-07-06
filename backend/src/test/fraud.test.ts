@@ -89,7 +89,15 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.includes('SELECT id FROM users WHERE username = $1')) {
     const username = params[0];
     const user = mockUsers.find(u => u.username === username);
-    return { rows: user ? [{ id: user.id }] : [] };
+    if (!user) return { rows: [] };
+    const __u = user as any;
+    if (__u.withdrawable_balance_coins === undefined) {
+      __u.withdrawable_balance_coins = String(__u.balance);
+    }
+    if (__u.bonus_balance_coins === undefined) {
+      __u.bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   // 2b. SELECT duplicate fingerprint check
@@ -113,7 +121,15 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   if (normalized.includes('SELECT is_flagged FROM users WHERE id = $1')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
-    return { rows: user ? [{ is_flagged: user.is_flagged }] : [] };
+    if (!user) return { rows: [] };
+    const __u = user as any;
+    if (__u.withdrawable_balance_coins === undefined) {
+      __u.withdrawable_balance_coins = String(__u.balance);
+    }
+    if (__u.bonus_balance_coins === undefined) {
+      __u.bonus_balance_coins = '0';
+    }
+    return { rows: [user] };
   }
 
   // 2e. INSERT new user
@@ -187,6 +203,7 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
 
 // Override database queries
 db.query = mockQuery as any;
+(global as any).__TEST_MOCK_QUERY__ = mockQuery;
 db.connect = async () => {
   return {
     query: mockQuery,

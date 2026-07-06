@@ -38,7 +38,7 @@ for (const file of testFiles) {
   console.log(`🧪 Running test: ${file}`);
   console.log(`========================================`);
   try {
-    execSync(`npx ts-node "${filePath}"`, {
+    execSync(`npx ts-node --require "${path.join(__dirname, 'setup.ts')}" "${filePath}"`, {
       stdio: 'inherit',
       env: {
         ...process.env,

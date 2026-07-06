@@ -90,11 +90,12 @@ export function generateServerSeed(): string {
  * সার্ভার সিডের SHA-256 হ্যাশ তৈরি করো
  * এটি খেলার আগে ইউজারকে দেওয়া হয় — প্রতিশ্রুতির মতো।
  * পরে সার্ভার সিড প্রকাশ করলে ইউজার নিজেই যাচাই করতে পারবে।
+ * সিডটি হেক্স এনকোডেড ৩২ বাইট, তাই হ্যাশ করার আগে বাইট বাফারে রূপান্তর করি।
  */
 export function hashServerSeed(serverSeed: string): string {
   return crypto
     .createHash('sha256')
-    .update(serverSeed)
+    .update(Buffer.from(serverSeed, 'hex'))
     .digest('hex');
 }
 

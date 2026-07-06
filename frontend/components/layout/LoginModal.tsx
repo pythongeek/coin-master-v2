@@ -22,10 +22,7 @@ import { getBrowserFingerprint } from '@/utils/fingerprint';
 import { trackEvent, identifyUser } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
 
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API = '/api';
 
 interface Props {
   onClose: () => void;

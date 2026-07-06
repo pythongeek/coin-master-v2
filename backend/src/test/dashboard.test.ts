@@ -44,6 +44,7 @@ const mockBets = [
 
 async function mockQuery(text: string, params: any[] = []): Promise<any> {
   const normalized = text.trim().replace(/\s+/g, ' ');
+  if (process.env.DEBUG_TEST === '1') console.error('MQ:' + normalized.slice(0,80));
 
   if (normalized.includes('SELECT COUNT(*) AS total_bets, COUNT(*) FILTER (WHERE won = true) AS total_wins, COUNT(*) FILTER (WHERE won = false) AS total_losses')) {
     return {
@@ -61,11 +62,41 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
   }
 
   if (normalized.includes('SELECT balance FROM users WHERE id = $1')) {
-    return { rows: [{ balance: '50.00' }] };
+    return { rows: [{ balance: '50.00', bonus_balance_coins: '0', withdrawable_balance_coins: '50.00' }] };
   }
 
   if (normalized.includes('SELECT won, choice, result, amount, payout, created_at FROM bets WHERE user_id = $1 AND status = \'resolved\'')) {
     return { rows: mockBets };
+  }
+
+  // Stats query from dashboard route — returns aggregate counts
+  if (normalized.includes('COUNT(*)') && normalized.includes('FROM bets') && normalized.includes('user_id')) {
+    const totalBets = mockBets.length;
+    const totalWins = mockBets.filter(b => b.won).length;
+    const totalLosses = totalBets - totalWins;
+    const totalWagered = mockBets.reduce((sum, b) => sum + parseFloat(b.amount), 0);
+    const totalPayout = mockBets.reduce((sum, b) => sum + parseFloat(b.payout), 0);
+    return { rows: [{
+      total_bets: String(totalBets),
+      total_wins: String(totalWins),
+      total_losses: String(totalLosses),
+      total_wagered: String(totalWagered),
+      net_pnl: String(totalPayout - totalWagered),
+      total_payout: String(totalPayout),
+      last_bet_at: mockBets[0]?.created_at || null,
+      biggest_win: String(Math.max(...mockBets.map(b => parseFloat(b.payout)), 0)),
+    }] };
+  }
+
+  // Daily chart query
+  if (normalized.includes('FROM bets') && normalized.includes('DATE(')) {
+    return { rows: mockBets.map(b => ({
+      day: b.created_at.toISOString().split('T')[0],
+      bets: 1,
+      wagered: b.amount,
+      payout: b.payout,
+      pnl: String(parseFloat(b.payout) - parseFloat(b.amount)),
+    })) };
   }
 
   return { rows: [] };
@@ -81,6 +112,7 @@ const mockDb = {
 };
 (dbModule as any).db = mockDb;
 (dbModule as any).query = mockQuery;
+  (global as any).__TEST_MOCK_QUERY__ = mockQuery;
 
 // ============================================================================
 // 2. Real Imports & Handlers Lookup

@@ -50,7 +50,40 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
       await acquireRowLock();
     }
     
-    return { rows: user ? [user] : [] };
+    if (!user) return { rows: [] };
+    // Auto-fill balance columns for tests using single-balance mock users
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+      return { rows: [user] };
+  }
+
+  // users UPDATE query (new dual-balance pattern) — added by shared-mocks patcher
+  if (normalized.includes('UPDATE users SET') && normalized.includes('withdrawable_balance_coins')) {
+      // Extract user ID from WHERE id = $N clause
+    const idMatch = normalized.match(/where\s+id\s*=\s*\$(\d+)/i);
+    const userId = idMatch ? params[parseInt(idMatch[1]) - 1] : params[0];
+    const user = mockUsers.find((u: any) => u.id === userId);
+    if (user) {
+      const matchAdd = normalized.match(/withdrawable_balance_coins\s*=\s*withdrawable_balance_coins\s*\+\s*\$(\d+)/i);
+      const matchSub = normalized.match(/withdrawable_balance_coins\s*=\s*withdrawable_balance_coins\s*-\s*\$(\d+)/i);
+      const current = parseFloat((user as any).withdrawable_balance_coins || (user as any).balance);
+      if (matchSub) {
+        const idx = parseInt(matchSub[1]) - 1;
+        const delta = parseFloat(params[idx]);
+              (user as any).withdrawable_balance_coins = String(current - delta);
+        (user as any).balance = String(current - delta);
+            } else if (matchAdd) {
+        const idx = parseInt(matchAdd[1]) - 1;
+        const delta = parseFloat(params[idx]);
+        (user as any).withdrawable_balance_coins = String(current + delta);
+        (user as any).balance = String(current + delta);
+      }
+    }
+    return { rows: [{ new_balance: user ? parseFloat((user as any).balance) : 0 }] };
   }
 
   if (normalized.startsWith('UPDATE users SET balance = $1, total_wagered = $2, pending_rakeback = $3')) {
@@ -234,7 +267,10 @@ async function runTests() {
     // ============================================================================
     console.log('\nScenario 2: Testing PostgreSQL FOR UPDATE row locking (Redis lock bypassed)...');
     useRedisLock = false; // Bypass Redis lock
+    (global as any).__DISABLE_BET_LOCK__ = true; // Also disable the shared mock's lock
+    (global as any).__SET_MOCK_OUTCOME__('tails'); // Force all bets to lose so balance decreases
     mockUsers[0].balance = '10.00000000'; // Reset balance to $10.00
+    (mockUsers[0] as any).withdrawable_balance_coins = '10.00000000'; // Reset withdrawable too
     delete redisKeys[`bet_lock:${userId}`]; // Clear lock
 
     // We fire 4 concurrent bets of $3.00 each (total cost $12.00, which exceeds $10.00 balance)
