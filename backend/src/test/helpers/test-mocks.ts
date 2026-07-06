@@ -483,7 +483,113 @@ async function mockQuery(text: string, params: any[] = []): Promise<any> {
 // Track active bet locks per user to simulate Redis SET NX semantics.
 const _activeBetLocks = new Set<string>();
 
+// In-memory Redis store used by the ioredis mock instance.
+const _redisStore = new Map<string, { value: string; expiresAt: number | null }>();
+
+function _redisGet(key: string): string | null {
+  const entry = _redisStore.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt !== null && entry.expiresAt < Date.now()) {
+    _redisStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function _redisSet(key: string, value: string, ...args: any[]) {
+  let expiresAt: number | null = null;
+  // Support EX <seconds>, PX <milliseconds>, NX/XX flags are ignored for tests.
+  for (let i = 0; i < args.length; i++) {
+    const arg = String(args[i]).toUpperCase();
+    if (arg === 'EX' && args[i + 1] !== undefined) {
+      expiresAt = Date.now() + Number(args[i + 1]) * 1000;
+      i++;
+    } else if (arg === 'PX' && args[i + 1] !== undefined) {
+      expiresAt = Date.now() + Number(args[i + 1]);
+      i++;
+    }
+  }
+  _redisStore.set(key, { value, expiresAt });
+  return 'OK';
+}
+
+// Mock Redis class returned when ioredis is imported. This is used by
+// cache.ts, redis.ts helpers, and any other module that calls redis.get/set.
+class MockRedisClass {
+  on() { return this; }
+  async get(key: string) { return _redisGet(key); }
+  async set(key: string, value: string, ...args: any[]) { return _redisSet(key, value, ...args); }
+  async del(...keys: string[]) {
+    let removed = 0;
+    for (const k of keys) {
+      if (_redisStore.has(k)) {
+        _redisStore.delete(k);
+        removed++;
+      }
+    }
+    return removed;
+  }
+  async expire(_key: string, _ttl: number) { return 1; }
+  async incr(key: string) {
+    const current = parseInt(_redisGet(key) || '0', 10);
+    const next = current + 1;
+    _redisSet(key, String(next));
+    return next;
+  }
+  async decr(key: string) {
+    const current = parseInt(_redisGet(key) || '0', 10);
+    const next = current - 1;
+    _redisSet(key, String(next));
+    return next;
+  }
+  async info() { return 'redis_version:mock'; }
+  async flushdb() { _redisStore.clear(); return 'OK'; }
+  async flushall() { _redisStore.clear(); return 'OK'; }
+  async quit() { return 'OK'; }
+  async ping() { return 'PONG'; }
+  pipeline() { return this; }
+  multi() { return this; }
+  exec() { return []; }
+}
+
+// Function-based redis mock used for named exports in redis.ts (lockBet,
+// unlockBet, etc.). The redis instance itself is replaced by an instance of
+// MockRedisClass so cache.ts (redis.get/set) works.
 const mockRedis = {
+  // Instance-like methods used when Object.assign is called on the module
+  // (kept for safety, although the instance is replaced by MockRedisClass).
+  on() { return this; },
+  async get(key: string) { return _redisGet(key); },
+  async set(key: string, value: string, ...args: any[]) { return _redisSet(key, value, ...args); },
+  async del(...keys: string[]) {
+    let removed = 0;
+    for (const k of keys) {
+      if (_redisStore.has(k)) {
+        _redisStore.delete(k);
+        removed++;
+      }
+    }
+    return removed;
+  },
+  async expire(_key: string, _ttl: number) { return 1; },
+  async incr(key: string) {
+    const current = parseInt(_redisGet(key) || '0', 10);
+    const next = current + 1;
+    _redisSet(key, String(next));
+    return next;
+  },
+  async decr(key: string) {
+    const current = parseInt(_redisGet(key) || '0', 10);
+    const next = current - 1;
+    _redisSet(key, String(next));
+    return next;
+  },
+  async info() { return 'redis_version:mock'; },
+  async flushdb() { _redisStore.clear(); return 'OK'; },
+  async flushall() { _redisStore.clear(); return 'OK'; },
+  async quit() { return 'OK'; },
+  async ping() { return 'PONG'; },
+
   lockBet: async (userId: string, _amount: number) => {
     // Allow tests to disable locking via global flag (e.g. concurrency tests
     // that want to verify the DB row-lock fallback).
@@ -551,6 +657,10 @@ export function installCommonMocks(options?: {
   const isAlreadyWrapped = previousRequire && previousRequire !== originalRequire;
 
   Module.prototype.require = function (id: string) {
+    if (id === 'ioredis') {
+      return MockRedisClass;
+    }
+
     if (id === 'bullmq') {
       return {
         Queue: class MockQueue {
@@ -565,11 +675,15 @@ export function installCommonMocks(options?: {
     }
 
     if (id === './provably-fair' || id === '../services/provably-fair') {
+      if ((global as any).__TEST_USE_REAL_PROVABLY_FAIR__) {
+        return originalRequire.apply(this, arguments as any);
+      }
       return {
         ...originalProvablyFair,
-        resolveFlip: (seeds: any, choice: any, betAmount: any, houseEdge: any) => {
+        resolveFlip: (seeds: any, choice: any, betAmount: any, houseEdge: any, targetMultiplier: any) => {
           const won = choice === mockOutcomeResult;
-          const payout = won ? betAmount * (2 - (houseEdge / 100) * 2) : 0;
+          const tm = targetMultiplier || 2;
+          const payout = won ? parseFloat((betAmount * tm * (1 - houseEdge / 100)).toFixed(8)) : 0;
           return {
             result: mockOutcomeResult,
             rawHash: 'mock-hash',
@@ -577,6 +691,9 @@ export function installCommonMocks(options?: {
             serverSeedHash: seeds.serverSeedHash,
             payout,
             houseEdge,
+            winChance: (100 - houseEdge) / tm,
+            targetMultiplier: tm,
+            actualMultiplier: tm,
             won,
           };
         },
@@ -607,17 +724,19 @@ export function installCommonMocks(options?: {
         getRevealedSeeds: async () => [],
       };
     }
-
+    // ── Reconciliation engine (returned real engine if requested) ──
     if (id === './reconciliation-engine' || id === '../services/reconciliation-engine') {
+      if ((global as any).__TEST_USE_REAL_RECONCILIATION__) {
+        return originalRequire.apply(this, arguments as any);
+      }
       return {
-        reconcileUser: async (userId: string, _client?: any) => ({
-          userId,
+        reconcileUser: async (_userId: string, _client?: any) => ({
+          userId: _userId,
           isValid: true,
           userBalance: { expected: 0, actual: 0, mismatch: 0 },
           walletBalances: [],
-          frozen: false,
-        }),
-        reconcileAll: async () => ({ valid: 0, invalid: 0 }),
+          frozen: false
+        })
       };
     }
 
@@ -687,10 +806,14 @@ export function installCommonMocks(options?: {
     }
   };
 
-  // Install redis mock
+  // Install redis mock — replace the exported redis instance so cache.ts
+  // helpers (getOrSet, setCache, etc.) use the in-memory store.
   const redisModule = tryRequire(require.resolve('../../config/redis'))
     || tryRequire('../../config/redis')
     || tryRequire('../config/redis');
+  // Replace the `redis` instance with our own MockRedisClass instance and
+  // overlay the named helper functions (lockBet, unlockBet, etc.).
+  redisModule.redis = new MockRedisClass();
   Object.assign(redisModule, mockRedis);
 }
 

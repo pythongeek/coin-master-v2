@@ -1,3 +1,4 @@
+import './helpers/enable-real-provably-fair';
 import { resolveFlip, verifyFlip, hashServerSeed, generateServerSeed } from '../services/provably-fair';
 
 async function runTests() {

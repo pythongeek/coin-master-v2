@@ -48,19 +48,137 @@ const mockTransactions: any[] = [];
 async function mockQuery(text: string, params: any[] = []): Promise<any> {
   const normalized = text.trim().replace(/\s+/g, ' ');
 
-  // 1. users SELECT query
+  // 1. users SELECT query (used by both dashboard and game-engine bonus flow)
   if (normalized.includes('FROM users') && normalized.includes('balance')) {
     const userId = params[0];
     const user = mockUsers.find(u => u.id === userId);
     if (!user) return { rows: [] };
-    // Auto-fill balance columns for tests using single-balance mock users
+    // Auto-fill balance columns for tests using single-balance mock users.
+    // The game engine now reads withdrawable_balance_coins for placing bets.
     if ((user as any).withdrawable_balance_coins === undefined) {
       (user as any).withdrawable_balance_coins = String((user as any).balance);
     }
     if ((user as any).bonus_balance_coins === undefined) {
       (user as any).bonus_balance_coins = '0';
     }
+    if ((user as any).wagering_required_coins === undefined) {
+      (user as any).wagering_required_coins = '0';
+    }
+    if ((user as any).wagering_completed_coins === undefined) {
+      (user as any).wagering_completed_coins = '0';
+    }
     return { rows: [user] };
+  }
+
+  // 1a. users SELECT with bonus/wagering (used by determineBalanceSource)
+  if (normalized.includes('SELECT bonus_balance_coins, withdrawable_balance_coins, wagering_required_coins') && normalized.includes('FROM users')) {
+    const userId = params[0];
+    const user = mockUsers.find(u => u.id === userId);
+    if (!user) return { rows: [] };
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    if ((user as any).wagering_required_coins === undefined) {
+      (user as any).wagering_required_coins = '0';
+    }
+    return { rows: [{
+      bonus_balance_coins: (user as any).bonus_balance_coins,
+      withdrawable_balance_coins: (user as any).withdrawable_balance_coins,
+      wagering_required_coins: (user as any).wagering_required_coins
+    }] };
+  }
+
+  // 1b. debitBalanceForBet UPDATE (withdrawable_balance_coins)
+  if (normalized.includes('UPDATE users') && normalized.includes('SET withdrawable_balance_coins = withdrawable_balance_coins - $2')) {
+    const userId = params[0];
+    const amount = parseFloat(params[1] as any);
+    const user = mockUsers.find(u => u.id === userId);
+    if (!user) return { rows: [] };
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    const currentWdr = parseFloat((user as any).withdrawable_balance_coins);
+    if (currentWdr < amount) return { rows: [] };
+    (user as any).withdrawable_balance_coins = (currentWdr - amount).toFixed(8);
+    return { rows: [{ new_balance: (user as any).withdrawable_balance_coins }] };
+  }
+
+  // 1c. debitBalanceForBet UPDATE (bonus_balance_coins)
+  if (normalized.includes('UPDATE users') && normalized.includes('SET bonus_balance_coins = bonus_balance_coins - $2')) {
+    const userId = params[0];
+    const amount = parseFloat(params[1] as any);
+    const user = mockUsers.find(u => u.id === userId);
+    if (!user) return { rows: [] };
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    const currentBonus = parseFloat((user as any).bonus_balance_coins);
+    if (currentBonus < amount) return { rows: [] };
+    (user as any).bonus_balance_coins = (currentBonus - amount).toFixed(8);
+    return { rows: [{ new_balance: (user as any).bonus_balance_coins }] };
+  }
+
+  // 1d. creditPayout UPDATE (withdrawable_balance_coins)
+  if (normalized.includes('UPDATE users') && normalized.includes('SET withdrawable_balance_coins = withdrawable_balance_coins + $2')) {
+    const userId = params[0];
+    const amount = parseFloat(params[1] as any);
+    const user = mockUsers.find(u => u.id === userId);
+    if (!user) return { rows: [] };
+    if ((user as any).withdrawable_balance_coins === undefined) {
+      (user as any).withdrawable_balance_coins = String((user as any).balance);
+    }
+    (user as any).withdrawable_balance_coins = (parseFloat((user as any).withdrawable_balance_coins) + amount).toFixed(8);
+    return { rows: [] };
+  }
+
+  // 1e. creditPayout UPDATE (bonus_balance_coins)
+  if (normalized.includes('UPDATE users') && normalized.includes('SET bonus_balance_coins = bonus_balance_coins + $2')) {
+    const userId = params[0];
+    const amount = parseFloat(params[1] as any);
+    const user = mockUsers.find(u => u.id === userId);
+    if (!user) return { rows: [] };
+    if ((user as any).bonus_balance_coins === undefined) {
+      (user as any).bonus_balance_coins = '0';
+    }
+    (user as any).bonus_balance_coins = (parseFloat((user as any).bonus_balance_coins) + amount).toFixed(8);
+    return { rows: [] };
+  }
+
+  // 1f. UPDATE users total_wagered / pending_rakeback (placeBet)
+  // The engine sets absolute new values: "UPDATE users SET total_wagered = $1, pending_rakeback = $2, updated_at = NOW() WHERE id = $3"
+  if (normalized.includes('UPDATE users') && normalized.includes('SET total_wagered = $1, pending_rakeback = $2')) {
+    const userId = params[2];
+    const wagered = parseFloat(params[0] as any);
+    const rakeback = parseFloat(params[1] as any);
+    const user = mockUsers.find(u => u.id === userId);
+    if (user) {
+      user.total_wagered = wagered.toFixed(8);
+      user.pending_rakeback = rakeback.toFixed(8);
+    }
+    return { rows: [] };
+  }
+
+  // 1g. INSERT bets
+  if (normalized.startsWith('INSERT INTO bets')) {
+    return { rows: [{ id: 'bet-' + Math.random().toString(36).slice(2) }] };
+  }
+
+  // 1h. server_seeds lookup (used by reserveNonce / getSeedSecretById)
+  if (normalized.includes('SELECT * FROM server_seeds') && normalized.includes('WHERE id = $1')) {
+    return { rows: [{ id: params[0], server_seed: 'mock-server-seed', server_seed_hash: 'mock-server-seed-hash', is_active: true }] };
+  }
+
+  // 1i. reserveNonce UPDATE
+  if (normalized.includes('UPDATE server_seeds SET nonce = nonce + 1') && normalized.includes('RETURNING nonce')) {
+    return { rows: [{ nonce: 1, server_seed_hash: 'mock-server-seed-hash', server_seed: 'mock-server-seed' }] };
+  }
+
+  // 1j. Active seed SELECT (used by reserveNonce)
+  if (normalized.includes('SELECT id, server_seed_hash, nonce') && normalized.includes('FROM server_seeds') && normalized.includes('is_active = true')) {
+    return { rows: [{ id: 'seed-1', server_seed_hash: 'mock-server-seed-hash', nonce: 0 }] };
   }
 
   // 1b. count bets query

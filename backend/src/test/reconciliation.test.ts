@@ -166,6 +166,7 @@ const mockDb = {
 (dbModule as any).query = mockQuery;
 
 // Import reconciliation service
+(global as any).__TEST_USE_REAL_RECONCILIATION__ = true;
 import { reconcileUser } from '../services/reconciliation-engine';
 
 async function runTests() {
