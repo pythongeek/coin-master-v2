@@ -76,7 +76,7 @@ function isAdminPath(pathname: string): boolean {
 function isAllowedAdminHost(req: NextRequest): boolean {
   const host = req.headers.get('host') || '';
   const forwardedFor = req.headers.get('x-forwarded-for') || '';
-  const remoteIp = forwardedFor.split(',')[0].trim() || req.ip || '';
+  const remoteIp = forwardedFor.split(',')[0].trim() || (req as any).ip || '';
   const clientIp = remoteIp.toLowerCase();
   const hostLower = host.toLowerCase();
 

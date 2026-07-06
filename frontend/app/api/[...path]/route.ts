@@ -50,13 +50,10 @@ function isLocalPath(path: string): boolean {
   return path === 'health' || path === 'admin-secret';
 }
 
-async function proxy(req: NextRequest, params: { path?: string[] }): Promise<NextResponse> {
+async function proxy(req: NextRequest, context: { params: Promise<{ path?: string[] }> }): Promise<NextResponse> {
   // The App Router passes the path components as `params.path` for a
-  // [...path] catch-all. In some Next.js 14 dev-mode builds the
-  // params come through empty (the dev server's on-demand
-  // compilation races with the request). Falling back to parsing
-  // `req.nextUrl.pathname` directly is reliable in both dev and
-  // production.
+  // [...path] catch-all. In Next.js 15+, params is a Promise.
+  const params = await context.params;
   let path = params.path?.join('/') ?? '';
   if (!path) {
     const raw = req.nextUrl.pathname.replace(/^\/api\/?/, '');
