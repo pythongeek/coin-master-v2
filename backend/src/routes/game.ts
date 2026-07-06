@@ -26,9 +26,10 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 //  POST /api/game/bet — বেট ধরো
 // ══════════════════════════════════════════════════════════════
-router.post('/bet', gameLimiter, validateBody(betSchema), fraudGuard, async (req: Request, res: Response) => {
+router.post('/bet', gameLimiter, authMiddleware, validateBody(betSchema), fraudGuard, async (req: Request, res: Response) => {
   try {
-    const { userId, choice, amount, clientSeed, targetMultiplier } = req.body;
+    const { choice, amount, clientSeed, targetMultiplier } = req.body;
+    const userId = (req as Request & { user: AuthPayload }).user.userId;
 
     const result = await placeBet({
       userId,
