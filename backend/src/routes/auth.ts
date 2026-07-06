@@ -37,6 +37,7 @@ import {
   generateTotpSecret,
 } from '../utils/totp';
 import { grantWelcomeBonus } from '../services/bonus';
+import { verifyWalletSignature, buildSignMessage, detectWalletType } from '../utils/wallet-signature';
 
 const router = Router();
 
@@ -239,9 +240,12 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
     const { walletAddress, signature, fingerprint } = req.body;
     const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
 
-    // TODO: Production-এ signature যাচাই করতে হবে (ethers.js দিয়ে)
-    // এখন শুধু অ্যাড্রেস দিয়েই লগইন হবে (Development mode)
-    void signature;
+    const walletType = detectWalletType(walletAddress);
+    const expectedMessage = buildSignMessage(walletAddress);
+
+    if (!verifyWalletSignature(walletAddress, signature, expectedMessage)) {
+      return res.status(401).json({ success: false, error: 'ওয়ালেট স্বাক্ষর যাচাই ব্যর্থ হয়েছে।' });
+    }
 
     let user = await query(
       'SELECT id, username, balance, is_admin, role, two_factor_enabled, is_flagged FROM users WHERE wallet_address = $1',
