@@ -29,14 +29,15 @@
     "pg": "8.22.0",
     "socket.io": "4.8.3",
     "socket.io-client": "4.8.3",
-    "tronweb": "^6.4.0",
+    "tronweb": "6.4.0",
     "uuid": "14.0.1",
     "zod": "4.4.3"
   },
   "overrides": {
     "axios": "1.18.1",
     "ws": "^8.17.1",
-    "jayson": "^4.2.0"
+    "jayson": "^4.2.0",
+    "uuid": "14.0.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
