@@ -41,7 +41,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthPayload & { isTemp?: boolean };
+    const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }) as AuthPayload & { isTemp?: boolean };
     if (decoded.isTemp) {
       return res.status(401).json({ success: false, error: '২এফএ যাচাইকরণ সম্পন্ন করুন।' });
     }
@@ -78,5 +78,5 @@ export function roleMiddleware(allowedRoles: ('super_admin' | 'support' | 'finan
 
 // টোকেন তৈরি করো
 export function createToken(payload: AuthPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
 }
