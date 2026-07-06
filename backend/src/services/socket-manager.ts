@@ -36,6 +36,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { placeBet } from './game-engine';
 import { generateServerSeed, hashServerSeed, computeFlip } from './provably-fair';
 import { getConfig } from './admin-config';
+import { getActiveSeed } from './server-seed';
 import { query, db } from '../config/database';
 import { redis } from '../config/redis';
 import { JWT_SECRET, AuthPayload } from '../middleware/auth';
@@ -105,9 +106,14 @@ export function setupSocketHandlers(io: SocketIOServer) {
 
       try {
         // ধাপ ১: ব্যাকএন্ডে স্পিনিং সিগন্যাল পাঠাও (অ্যানিমেশন শুরু)
+        // Include the committed server seed hash so the client can verify
+        // the bet was resolved against a pre-committed seed.
+        const activeSeed = await getActiveSeed();
         socket.emit('game:spinning', {
           message: 'কয়েন ঘুরছে...',
           timestamp: Date.now(),
+          serverSeedHash: activeSeed?.serverSeedHash || null,
+          seedId: activeSeed?.id || null,
         });
 
         // ── ধাপ ২: গেম ইঞ্জিনে বেট প্রসেস করো ──

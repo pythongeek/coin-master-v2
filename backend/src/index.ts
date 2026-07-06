@@ -32,6 +32,7 @@ import leaderboardsRoutes from './routes/leaderboards';
 import affiliateRoutes from './routes/affiliate';
 import promoRoutes from './routes/promo';
 import bonusRoutes from './routes/bonus';
+import { ensureActiveSeed } from './services/server-seed';
 
 
 dotenv.config();
@@ -125,6 +126,7 @@ const PORT = process.env.BACKEND_PORT || 4000;
 
 async function start() {
   await connectDB();
+  await ensureActiveSeed(); // ensure at least one provably-fair seed exists
   void redis;  // redis কানেক্ট হয় import এর সময়
   startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
   

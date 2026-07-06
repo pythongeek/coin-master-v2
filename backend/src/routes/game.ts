@@ -14,6 +14,7 @@ import { Router, Request, Response } from 'express';
 import { placeBet, getBetHistory } from '../services/game-engine';
 import { verifyFlip } from '../services/provably-fair';
 import { getConfig } from '../services/admin-config';
+import { getActiveSeed } from '../services/server-seed';
 import { validateBody } from '../middleware/validation';
 import { gameLimiter } from '../middleware/rate-limiter';
 import { betSchema, verifySchema } from '../schemas';
@@ -107,6 +108,31 @@ router.get('/jackpot', async (_req: Request, res: Response) => {
         jackpotEnabled: config.jackpotEnabled,
         jackpotHitChance: config.jackpotHitChance,
         jackpotStartPool: config.jackpotStartPool
+      }
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  GET /api/game/seed — Active provably-fair server seed hash
+// ══════════════════════════════════════════════════════════════
+router.get('/seed', async (_req: Request, res: Response) => {
+  try {
+    const seed = await getActiveSeed();
+    if (!seed) {
+      return res.status(503).json({ success: false, error: 'No active seed available' });
+    }
+    res.json({
+      success: true,
+      data: {
+        seedId: seed.id,
+        serverSeedHash: seed.serverSeedHash,
+        activeBets: seed.activeBets,
+        rotationThreshold: seed.rotationThreshold,
+        activatedAt: seed.activatedAt,
       }
     });
   } catch (err: unknown) {

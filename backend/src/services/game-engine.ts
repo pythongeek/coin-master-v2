@@ -29,6 +29,7 @@ import {
 import {
   getConfig, validateBetAmount, GameConfig
 } from './admin-config';
+import { reserveNonce, getSeedSecretById } from './server-seed';
 import { db, query } from '../config/database';
 import {
   lockBet, unlockBet, incrementWinStreak,
@@ -205,18 +206,23 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     const source = await determineBalanceSource(req.userId, req.amount, txClient);
     await debitBalanceForBet(req.userId, req.amount, source, txClient);
 
-    // ── Provably Fair সিড তৈরি করো ──────────────────────
-    const serverSeed = generateServerSeed();
-    const serverSeedHash = hashServerSeed(serverSeed);
+    // ── Provably Fair: reserve a nonce on the global active seed ──────
+    const seedReservation = await reserveNonce();
+    if (!seedReservation) {
+      throw new Error('কোনো সক্রিয় সার্ভার সিড পাওয়া যায়নি। পরে আবার চেষ্টা করুন।');
+    }
+    const { seedId, serverSeedHash, nonce } = seedReservation;
+
+    const secret = await getSeedSecretById(seedId);
+    if (!secret) {
+      throw new Error('সার্ভার সিড লোড করতে ব্যর্থ হয়েছে।');
+    }
+    const serverSeed = secret.serverSeed;
+    if (secret.serverSeedHash !== serverSeedHash) {
+      throw new Error('সার্ভার সিড হ্যাশ মিলছে না।');
+    }
+
     const clientSeed = req.clientSeed || generateClientSeed();
-
-    // নন্স বের করো (এই ইউজারের কততম গেম)
-    const nonceResult = await client.query(
-      'SELECT COUNT(*) as count FROM bets WHERE user_id = $1',
-      [req.userId]
-    );
-    const nonce = parseInt(nonceResult.rows[0].count) + 1;
-
     const seeds: SeedPair = { serverSeed, serverSeedHash, clientSeed, nonce };
 
     // ── গেম রেজাল্ট বের করো ─────────────────────────────
@@ -408,6 +414,15 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
       }
     }
 
+    // Persist the seed record for independent verification
+    const seedRecord = await client.query(
+      `INSERT INTO game_seeds (user_id, server_seed, server_seed_hash, client_seed, nonce, is_revealed)
+       VALUES ($1, $2, $3, $4, $5, true)
+       RETURNING id`,
+      [req.userId, serverSeed, serverSeedHash, clientSeed, nonce]
+    );
+    const seedRecordId = seedRecord.rows[0].id;
+
     // Save final jackpot pool value to admin_settings table
     if (config.jackpotEnabled && req.amount >= config.jackpotMinBet) {
       await client.query(
@@ -452,13 +467,13 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     const betId = uuidv4();
     await client.query(
       `INSERT INTO bets
-        (id, user_id, choice, amount, result, won, payout, house_edge, 
-         target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at,
-         scatter_hash, scatter_multiplier, scatter_payout, scatter_picked,
-         streak_before, streak_after, streak_rung_multiplier, streak_ladder_bonus, streak_at_risk, streak_banked, streak_lost,
-         lightning_triggered, lightning_multiplier, lightning_extra_payout)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'resolved',$12,NOW(),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
-      [betId, req.userId, req.choice, req.amount,
+         (id, user_id, seed_id, choice, amount, result, won, payout, house_edge, 
+          target_multiplier, actual_multiplier, win_chance, status, flip_hash, resolved_at,
+          scatter_hash, scatter_multiplier, scatter_payout, scatter_picked,
+          streak_before, streak_after, streak_rung_multiplier, streak_ladder_bonus, streak_at_risk, streak_banked, streak_lost,
+          lightning_triggered, lightning_multiplier, lightning_extra_payout)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'resolved',$13,NOW(),$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+      [betId, req.userId, seedRecordId, req.choice, req.amount,
        outcome.result, won, outcome.payout, config.houseEdgePercent,
        targetMultiplier, targetMultiplier, outcome.winChance, outcome.rawHash,
        config.scatterEnabled ? scatterHash : null,
