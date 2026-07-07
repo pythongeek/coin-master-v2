@@ -201,8 +201,6 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
     // Admin accounts MUST have 2FA enabled in production.
     // Startup validation in index.ts guarantees ADMIN_2FA_REQUIRED is set.
     const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED === 'true';
-    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED === 'true';
-    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED !== 'false';
     if (enforceAdmin2FA && user.is_admin) {
       return res.status(403).json({
         success: false,
@@ -355,8 +353,6 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
     // Admin accounts MUST have 2FA enabled in production.
     // Startup validation in index.ts guarantees ADMIN_2FA_REQUIRED is set.
     const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED === 'true';
-    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED === 'true';
-    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED !== 'false';
     if (enforceAdmin2FA && u.is_admin) {
       return res.status(403).json({
         success: false,
