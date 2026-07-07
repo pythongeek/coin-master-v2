@@ -9,6 +9,7 @@
  */
 
 import { io, Socket } from 'socket.io-client';
+import { setTokenCookie, clearTokenCookie } from './auth-cookies';
 
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return 'http://localhost:4000';
@@ -84,10 +85,11 @@ function getStoredToken(): string | null {
   return localStorage.getItem('cf_token');
 }
 
-// Token সেভ করো
+// Token সেভ করো (localStorage + cookie so SSR can read it)
 export function storeToken(token: string) {
   if (typeof window !== 'undefined') {
     localStorage.setItem('cf_token', token);
+    setTokenCookie(token);
   }
 }
 
@@ -95,6 +97,7 @@ export function clearToken() {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('cf_token');
     localStorage.removeItem('cf_user');
+    clearTokenCookie();
   }
 }
 

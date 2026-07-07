@@ -175,6 +175,7 @@ export const useGameStore = create<GameStore>()(
         if (typeof window !== 'undefined') {
           localStorage.removeItem('cf_token');
           localStorage.removeItem('cf_user');
+          import('@/lib/socket').then(({ clearToken }) => clearToken());
         }
       },
 

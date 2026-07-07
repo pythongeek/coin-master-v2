@@ -6,7 +6,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Check, X, ArrowDownUp, RefreshCw, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { Check, X, RefreshCw, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { useToast } from '@/components/providers/ToastProvider';
 
 const API =
   typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
@@ -46,7 +47,7 @@ export default function AdminWithdrawalQueue() {
   const [actionId, setActionId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const { addToast } = useToast();
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
@@ -85,8 +86,7 @@ export default function AdminWithdrawalQueue() {
   }, [status, fetchItems, fetchStats]);
 
   const showToast = (msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    addToast(msg, 'success');
   };
 
   const approve = async (id: string) => {
@@ -149,13 +149,7 @@ export default function AdminWithdrawalQueue() {
 
   return (
     <div className="glass-card overflow-hidden">
-      {toast && (
-        <div className="fixed top-4 right-4 z-50 px-4 py-2 rounded bg-brand-green text-black text-sm font-medium shadow-lg">
-          {toast}
-        </div>
-      )}
 
-      {/* Header + Stats */}
       <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center justify-between gap-3 mb-4">
           <h3 className="heading-display text-sm text-text-primary">Withdrawal Queue</h3>

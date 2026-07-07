@@ -12,10 +12,9 @@
 //       → this middleware short-circuits with rewrite → 404
 //
 //    3. User must be logged in as admin
-//       → checked client-side in app/admin/page.tsx
-//         (server-side JWT check would require an Edge-safe
-//          verifier; client check is acceptable given the URL
-//          itself is also a secret)
+//       → checked server-side in app/admin/page.tsx before any
+//         admin HTML is sent to the browser. The page reads the
+//         cf_token cookie and validates it against /api/auth/me.
 //
 //  The path is read from process.env.ADMIN_SECRET_PATH at build
 //  time (same source as next.config.js rewrites).
