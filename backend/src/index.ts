@@ -59,7 +59,15 @@ const httpServer = createServer(app);
 // ─── Socket.io ──────────────────────────────────────────────
 const io = new SocketIOServer(httpServer, {
   cors: {
-    origin: corsOrigin,
+    origin: function (origin, callback) {
+      // Allow any origin on the same hostname as the request, so admin
+      // gateway :3003 and frontend :3002 can both connect to socket.io.
+      const backendHost = (origin && (() => { try { return new URL(origin).hostname; } catch { return ''; } })());
+      if (!origin || corsOrigin.includes(origin) || backendHost === process.env.HOSTNAME || backendHost === (process.env.HOST || '')) {
+        return callback(null, true);
+      }
+      callback(new Error('Not allowed by CORS'));
+    },
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -69,7 +77,16 @@ const io = new SocketIOServer(httpServer, {
 // ─── Middleware ──────────────────────────────────────────────
 app.use(helmet(helmetConfig));
 app.use(cors({
-  origin: corsOrigin,
+  // origin function that mirrors Socket.io: allow any sub-origin on the same host
+  origin: function (origin, callback) {
+    if (!origin || corsOrigin.includes(origin)) return callback(null, true);
+    try {
+      const originHost = new URL(origin).hostname;
+      // Allow any origin whose hostname matches the server's hostname/IP
+      if (originHost === process.env.HOSTNAME || originHost === (process.env.HOST || '')) return callback(null, true);
+    } catch {}
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '10kb' }));

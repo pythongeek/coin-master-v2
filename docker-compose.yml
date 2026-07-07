@@ -62,6 +62,9 @@ services:
       - TUNNEL_APP_URL=https://mesa-sur-demonstrate-gates.trycloudflare.com
       # Allow the external IP / hostnames for dev testing from outside the VM.
       - EXTRA_ALLOWED_ORIGINS=http://46.62.247.167:3002,http://46.62.247.167:3003
+      # Public host so CORS/CSRF allows same-host different-port origins
+      # (e.g. admin gateway on :3003 talking to frontend/API on :3002).
+      - HOST=46.62.247.167
       # IPs to bypass the geoip jurisdiction block. The operator's
       # exit IP (e.g. via a proxy/CDN) may geo-locate to a blocked
       # region (IR, US, etc.) even when the operator is legitimate.

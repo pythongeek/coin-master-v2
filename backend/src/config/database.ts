@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -64,7 +65,7 @@ export async function connectDB(): Promise<void> {
       let code = '';
       let isUnique = false;
       while (!isUnique) {
-        const rand = Math.floor(100000 + Math.random() * 900000);
+        const rand = crypto.randomInt(100000, 1000000);
         code = `CF${rand}`;
         const check = await client.query('SELECT id FROM users WHERE referral_code = $1', [code]);
         if (check.rows.length === 0) {

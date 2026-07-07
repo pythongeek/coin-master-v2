@@ -96,10 +96,14 @@ export function verifyTotp(secret: string, token: string, window = 1): boolean {
   const timeStep = 30; // 30 seconds
   const currentStep = Math.floor(Date.now() / 1000 / timeStep);
 
-  // Check window to allow for time drift
+  // Check window to allow for time drift (constant-time compare to avoid timing leaks)
   for (let i = -window; i <= window; i++) {
     const calculated = generateHotp(secret, currentStep + i);
-    if (calculated === token) {
+    const calcBuf = Buffer.alloc(6, 0, 'utf8');
+    const tokenBuf = Buffer.alloc(6, 0, 'utf8');
+    calcBuf.write(calculated, 'utf8');
+    tokenBuf.write(token, 'utf8');
+    if (crypto.timingSafeEqual(calcBuf, tokenBuf)) {
       return true;
     }
   }

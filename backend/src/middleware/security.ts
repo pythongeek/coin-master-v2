@@ -25,8 +25,10 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
       if (t) allowedOrigins.push(t);
     }
   }
-  // If we're on the same host (different port) allow it. Browsers always
-  // send Origin on cross-origin fetches, so this is a controlled allowlist.
+  // Allow any origin on the same hostname as the backend itself (different
+  // port is still cross-origin for fetch, but same attacker model). This keeps
+  // the admin gateway, dev port variations, and direct IP access working.
+  const backendHost = req.headers.host ? req.headers.host.split(':')[0] : '';
   const method = req.method;
 
   // Bypass checks for safe HTTP methods
@@ -43,12 +45,20 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
   const origin = req.headers.origin;
   const referer = req.headers.referer;
 
-  // 1. Verify Origin if present
-  if (origin && !allowedOrigins.includes(origin)) {
-    return res.status(403).json({
-      success: false,
-      error: 'CSRF ভ্যালিডেশন ব্যর্থ হয়েছে। অবৈধ উৎস থেকে অনুরোধ।',
-    });
+  // 1. Verify Origin if present.
+  // Allow any origin that resolves to the same hostname as the request,
+  // so that the admin gateway on :3003 can talk to the API on :3002.
+  if (origin) {
+    const isAllowed = allowedOrigins.includes(origin)
+      || (backendHost && (() => {
+        try { return new URL(origin).hostname === backendHost; } catch { return false; }
+      })());
+    if (!isAllowed) {
+      return res.status(403).json({
+        success: false,
+        error: 'CSRF ভ্যালিডেশন ব্যর্থ হয়েছে। অবৈধ উৎস থেকে অনুরোধ।',
+      });
+    }
   }
 
   // 2. Verify Referer origin if Origin header is missing
@@ -56,7 +66,7 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
     try {
       const refererUrl = new URL(referer);
       const allowedHostnames = allowedOrigins.map((o) => new URL(o).hostname);
-      if (!allowedHostnames.includes(refererUrl.hostname)) {
+      if (!allowedHostnames.includes(refererUrl.hostname) && (!backendHost || refererUrl.hostname !== backendHost)) {
         return res.status(403).json({
           success: false,
           error: 'CSRF ভ্যালিডেশন ব্যর্থ হয়েছে। অবৈধ উৎস থেকে অনুরোধ।',

@@ -15,6 +15,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
@@ -68,7 +69,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     let userReferralCode = '';
     let isUnique = false;
     while (!isUnique) {
-      const rand = Math.floor(100000 + Math.random() * 900000);
+      const rand = crypto.randomInt(100000, 1000000);
       userReferralCode = `CF${rand}`;
       const check = await query('SELECT id FROM users WHERE referral_code = $1', [userReferralCode]);
       if (check.rows.length === 0) {
@@ -261,7 +262,7 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
       let userReferralCode = '';
       let isUnique = false;
       while (!isUnique) {
-        const rand = Math.floor(100000 + Math.random() * 900000);
+        const rand = crypto.randomInt(100000, 1000000);
         userReferralCode = `CF${rand}`;
         const check = await query('SELECT id FROM users WHERE referral_code = $1', [userReferralCode]);
         if (check.rows.length === 0) {

@@ -148,6 +148,8 @@ export default function LoginModal({ onClose }: Props) {
     try {
       const endpoint = isRegister ? '/auth/register' : '/auth/login';
       const fingerprint = isRegister ? await getBrowserFingerprint() : undefined;
+      // Use the same-origin path so requests stay on the current host/port
+      // (frontend on :3002 or admin gateway on :3003 both have /api routed).
       const res = await fetch(`${API}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
