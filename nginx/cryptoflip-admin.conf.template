@@ -54,7 +54,11 @@ server {
     # path on first install; the comments above intentionally do
     # NOT contain the real path to avoid leaking it on disk.
     location /__ADMIN_PATH__/ {
-        proxy_pass http://127.0.0.1:3002/admin/;
+        # Proxy to the frontend root (not /admin/); the remaining path
+        # after the secret prefix is preserved, so /sysop-XXX/admin
+        # reaches the frontend as /admin. Proxying to /admin/ would double
+        # the prefix and produce /admin/admin → 404.
+        proxy_pass http://127.0.0.1:3002/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
