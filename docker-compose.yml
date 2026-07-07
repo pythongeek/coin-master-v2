@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   # ─────────────────────────────────
   # 🎨 FRONTEND — Next.js
@@ -10,8 +8,7 @@ services:
       dockerfile: Dockerfile
       target: production
       args:
-        - NEXT_PUBLIC_API_URL=/api
-        - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:3003
+        NEXT_PUBLIC_API_URL: /api
     ports:
       # cx23 already uses port 3000 (Plokymarket nginx), 3003 (admin
       # vhost). CryptoFlip frontend exposed on 3002.
@@ -19,8 +16,11 @@ services:
     env_file:
       - ./.admin-gateway.env
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:4000
-      - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:3003
+      # NEXT_PUBLIC_API_URL is what the browser bundle uses.
+      # For same-host deploy (nginx reverse proxy) this is a relative path.
+      - NEXT_PUBLIC_API_URL=/api
+      # NEXT_PUBLIC_SOCKET_URL intentionally omitted —
+      # socket.ts derives from window.location.origin at runtime.
       # INTERNAL_API_URL is the docker-network hostname the
       # /api/[...path] catch-all proxy uses to reach the backend
       # from inside the frontend container. NEXT_PUBLIC_API_URL
@@ -51,7 +51,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: development
+      target: production
     ports:
       - "4000:4000"
     env_file:
@@ -64,19 +64,19 @@ services:
       - NEXT_PUBLIC_APP_URL=http://localhost:3002
       # Tunnel URL used for public browser access during dev testing.
       # This is added dynamically to the CSRF allowlist by the proxy.
-      - TUNNEL_APP_URL=https://mesa-sur-demonstrate-gates.trycloudflare.com
+      - TUNNEL_APP_URL=${TUNNEL_APP_URL:-}
       # Allow the external IP / hostnames for dev testing from outside the VM.
-      - EXTRA_ALLOWED_ORIGINS=http://46.62.247.167:3002,http://46.62.247.167:3003
+      # In production, set EXTRA_ALLOWED_ORIGINS from .env (comma-separated).
       # Public host so CORS/CSRF allows same-host different-port origins
       # (e.g. admin gateway on :3003 talking to frontend/API on :3002).
-      - HOST=46.62.247.167
+      - HOST=${HOST:-localhost}
       # IPs to bypass the geoip jurisdiction block. The operator's
       # exit IP (e.g. via a proxy/CDN) may geo-locate to a blocked
       # region (IR, US, etc.) even when the operator is legitimate.
-      - GEOIP_ALLOWLIST=103.152.18.159,46.62.247.167
+      - GEOIP_ALLOWLIST=${GEOIP_ALLOWLIST:-}
       # Dev: allow admin login without 2FA so smoke tests can run end-to-end.
       # Production should set this to 'true' or remove the override entirely.
-      - ADMIN_2FA_REQUIRED=false
+      - ADMIN_2FA_REQUIRED=${ADMIN_2FA_REQUIRED:-true}
     volumes:
       - ./backend:/app
       - /app/node_modules

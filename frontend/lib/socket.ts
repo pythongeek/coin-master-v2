@@ -16,8 +16,8 @@ function getSocketUrl(): string {
   if (host.startsWith('localhost:') || host === 'localhost') {
     return 'http://localhost:4000';
   }
-  // Production VM: always use port 3003 where nginx proxies /socket.io
-  return 'http://46.62.247.167:3003';
+  // Production: use same origin so nginx proxies /socket.io
+  return window.location.origin;
 }
 
 // সিঙ্গেলটন সকেট ইন্সট্যান্স — শুধু একটিই থাকবে
