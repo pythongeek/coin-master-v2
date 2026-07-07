@@ -35,6 +35,7 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder --chown=backend:nodejs /app/dist ./dist
+COPY --chown=backend:nodejs migrations ./migrations
 
 USER backend
 EXPOSE 4000
