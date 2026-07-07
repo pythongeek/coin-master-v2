@@ -2,7 +2,9 @@
   "compilerOptions": {
     "target": "ES2020",
     "module": "commonjs",
-    "lib": ["ES2020"],
+    "lib": [
+      "ES2020"
+    ],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -14,13 +16,29 @@
     "declarationMap": true,
     "sourceMap": true,
     "paths": {
-      "@/services/*": ["./src/services/*"],
-      "@/routes/*":   ["./src/routes/*"],
-      "@/config/*":   ["./src/config/*"],
-      "@/middleware/*":["./src/middleware/*"],
-      "@/db/*":       ["./src/db/*"]
+      "@/services/*": [
+        "./src/services/*"
+      ],
+      "@/routes/*": [
+        "./src/routes/*"
+      ],
+      "@/config/*": [
+        "./src/config/*"
+      ],
+      "@/middleware/*": [
+        "./src/middleware/*"
+      ],
+      "@/db/*": [
+        "./src/db/*"
+      ]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/db/seeds"
+  ]
 }
