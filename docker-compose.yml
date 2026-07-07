@@ -33,17 +33,13 @@ services:
       # .admin-secret-path (chmod 600).
       - ADMIN_SECRET_PATH=${ADMIN_SECRET_PATH}
       - ADMIN_GATEWAY_TOKEN=${ADMIN_GATEWAY_TOKEN}
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
+    # Production image has standalone build baked in; do NOT mount host
+    # source over it or server.js and .next/static will disappear.
+    volumes: []
     depends_on:
       - backend
     networks:
       - cryptoflip-network
-    # Production image has standalone build baked in; do NOT mount host
-    # source over it or server.js and .next/static will disappear.
-    volumes: []
 
   # ─────────────────────────────────
   # ⚙️ BACKEND — Node.js + Socket.io
