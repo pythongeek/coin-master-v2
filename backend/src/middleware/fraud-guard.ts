@@ -1,17 +1,27 @@
 import { Response, NextFunction } from 'express';
 import { query } from '../config/database';
+import { isIpWhitelisted } from '../services/ip-whitelist';
 
 /**
  * Middleware that blocks flagged accounts from performing critical actions:
  * - Betting
  * - Withdrawals
  * - Promo claiming
+ *
+ * Whitelisted IPs bypass this check (for admin testing).
  */
 export async function fraudGuard(req: any, res: Response, next: NextFunction) {
   try {
     const userId = req.user?.userId || req.body.userId;
     if (!userId) {
       return res.status(401).json({ success: false, error: 'অননুমোদিত।' });
+    }
+
+    // Check IP whitelist first
+    const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
+    const ipWhitelisted = await isIpWhitelisted(ipAddress);
+    if (ipWhitelisted) {
+      return next();
     }
 
     const userResult = await query(

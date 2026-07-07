@@ -27,6 +27,8 @@ import { getWheelStatus, spinDailyWheel, getWheelStats } from '../services/daily
 import { getLeaderboard, getLeaderboardPosition, distributeLeaderboardPrizes, getLeaderboardStats } from '../services/leaderboard';
 import { getRakebackStatus, claimRakeback, getRakebackStats } from '../services/rakeback';
 import { getUserChallengeProgress, claimChallengeReward, getChallengeStats, getChallengeDefinitions } from '../services/challenges';
+import { getWhitelistedIps, addIpToWhitelist, removeIpFromWhitelist } from '../services/ip-whitelist';
+import { ipWhitelistAddSchema } from '../schemas';
 
 const router = Router();
 
@@ -580,6 +582,68 @@ router.get('/2fa/status', authMiddleware, roleMiddleware(['super_admin', 'financ
 });
 
 // ── Admin user search (for bonus grants, support) ─────────────
+router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q.length < 2) return res.status(400).json({ success: false, error: 'Query too short.' });
+    const result = await query(
+      `SELECT id, username, email, balance
+       FROM users
+       WHERE LOWER(username) LIKE $1 OR LOWER(email) LIKE $1 OR wallet_address ILIKE $1
+       ORDER BY username ASC
+       LIMIT 20`,
+      [`%${q}%`]
+    );
+    res.json({ success: true, users: result.rows });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  IP WHITELIST ROUTES
+// ══════════════════════════════════════════════════════════════
+
+// GET /api/admin/ip-whitelist — List all whitelisted IPs
+router.get('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    const entries = await getWhitelistedIps();
+    res.json({ success: true, entries });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/ip-whitelist — Add an IP to whitelist
+router.post('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), validateBody(ipWhitelistAddSchema), async (req: Request, res: Response) => {
+  try {
+    const self = (req as Request & { user: AuthPayload }).user;
+    const { ipAddress, reason } = req.body;
+
+    const entry = await addIpToWhitelist(ipAddress, reason, self.userId);
+    res.status(201).json({ success: true, entry, message: `IP ${ipAddress} whitelisted successfully.` });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('unique constraint') || msg.includes('duplicate')) {
+      return res.status(409).json({ success: false, error: 'This IP is already whitelisted.' });
+    }
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// DELETE /api/admin/ip-whitelist/:ip — Remove an IP from whitelist
+router.delete('/ip-whitelist/:ip', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+  try {
+    const ip = req.params.ip as string;
+    const removed = await removeIpFromWhitelist(ip);
+    if (!removed) {
+      return res.status(404).json({ success: false, error: 'IP not found in whitelist.' });
+    }
+    res.json({ success: true, message: `IP ${ip} removed from whitelist.` });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
 router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response) => {
   try {
     const q = String(req.query.q || '').trim().toLowerCase();

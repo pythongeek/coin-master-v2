@@ -39,6 +39,7 @@ import {
 } from '../utils/totp';
 import { grantWelcomeBonus } from '../services/bonus';
 import { verifyWalletSignature, buildSignMessage, detectWalletType } from '../utils/wallet-signature';
+import { isIpWhitelisted } from '../services/ip-whitelist';
 
 const router = Router();
 
@@ -94,7 +95,9 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     }
 
     // 2. Check registration IP count in past 24 hours
-    if (ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+    //    (skip if IP is in admin whitelist)
+    const ipWhitelisted = await isIpWhitelisted(ipAddress);
+    if (!ipWhitelisted && ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
       const dupIpCount = await query(
         "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
         [ipAddress]
@@ -287,7 +290,9 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
       }
 
       // 2. Check registration IP count in past 24 hours
-      if (ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+      //    (skip if IP is in admin whitelist)
+      const ipWhitelistedWallet = await isIpWhitelisted(ipAddress);
+      if (!ipWhitelistedWallet && ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
         const dupIpCount = await query(
           "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
           [ipAddress]

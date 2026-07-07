@@ -624,3 +624,18 @@ export const wheelSpinSchema = z.object({
     .max(256, 'clientSeed must be 256 characters or less.'),
 });
 
+// ══════════════════════════════════════════════════════════════
+//  IP WHITELIST SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const ipWhitelistAddSchema = z.object({
+  ipAddress: z
+    .string()
+    .min(1, 'IP address is required.')
+    .max(45, 'IP address must be 45 characters or less.')
+    .regex(/^(\d{1,3}\.){3}\d{1,3}$|^([0-9a-fA-F:]+)$/, 'Invalid IP address format.'),
+  reason: z
+    .string()
+    .max(500, 'Reason must be 500 characters or less.')
+    .optional(),
+});
