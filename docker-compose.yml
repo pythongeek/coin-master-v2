@@ -134,15 +134,6 @@ services:
       - allkeys-lru
       - --tcp-keepalive
       - "60"
-      - redis-server
-      - --requirepass
-      - ${REDIS_PASSWORD}
-      - --maxmemory
-      - 256mb
-      - --maxmemory-policy
-      - allkeys-lru
-      - --tcp-keepalive
-      - 60
     volumes:
       - redis_data:/data
     healthcheck:
