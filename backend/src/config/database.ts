@@ -22,7 +22,7 @@ async function runMigrations(): Promise<void> {
 
   try {
     execSync(
-      'npx pg-migrate up --no-check-order --migrations-dir migrations',
+      'npx node-pg-migrate up --no-check-order --migrations-dir migrations',
       {
         cwd: projectRoot,
         env: process.env,
