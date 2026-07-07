@@ -77,9 +77,12 @@ services:
       # Dev: allow admin login without 2FA so smoke tests can run end-to-end.
       # Production should set this to 'true' or remove the override entirely.
       - ADMIN_2FA_REQUIRED=${ADMIN_2FA_REQUIRED:-true}
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
+    # volumes:
+    #   # Host mount disabled for production — the image already contains
+    #   # the compiled dist/ from the multi-stage Dockerfile builder.
+    #   # Uncomment for local development with hot-reload only.
+    #   - ./backend:/app
+    #   - /app/node_modules
     depends_on:
       postgres:
         condition: service_healthy
