@@ -115,16 +115,23 @@ services:
 
   # ─────────────────────────────────
   # ⚡ CACHE — Redis
+  # INTERNAL ONLY: No host port mapping. Backend accesses via
+  # Docker network (redis:6379). Password auth required.
   # ─────────────────────────────────
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    # Host port 6379 intentionally NOT mapped — Redis is internal-only.
+    # Access from host for debugging: docker exec -it coin-master-redis-1 redis-cli -a $REDIS_PASSWORD
+    command: >
+      sh -c "redis-server
+      --requirepass $${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5

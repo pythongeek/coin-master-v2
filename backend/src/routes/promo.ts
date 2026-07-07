@@ -4,6 +4,8 @@ import { query, db } from '../config/database';
 import { invalidateCache } from '../services/cache';
 import { v4 as uuidv4 } from 'uuid';
 import { fraudGuard } from '../middleware/fraud-guard';
+import { validateBody } from '../middleware/validation';
+import { promoCodeApplySchema } from '../schemas';
 
 const router = Router();
 
@@ -40,17 +42,13 @@ router.get('/promo/active', authMiddleware, async (req: any, res: Response) => {
  * POST /api/wallet/promo/claim
  * Claim a promo code (instant bonus or pending deposit match activation)
  */
-router.post('/promo/claim', authMiddleware, fraudGuard, async (req: any, res: Response) => {
+router.post('/promo/claim', authMiddleware, fraudGuard, validateBody(promoCodeApplySchema), async (req: any, res: Response) => {
   const userId = req.user?.userId;
   if (!userId) {
     return res.status(401).json({ success: false, error: 'অননুমোদিত।' });
   }
 
   const { code } = req.body;
-  if (!code || typeof code !== 'string' || code.trim() === '') {
-    return res.status(400).json({ success: false, error: 'সঠিক প্রোমো কোড প্রদান করুন।' });
-  }
-
   const cleanCode = code.trim().toUpperCase();
 
   const client = await db.connect();

@@ -11,7 +11,7 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 
 import { connectDB, query } from './config/database';
-import { redis } from './config/redis';
+import { redis, redisHealthCheck } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
 import { startReconciliationLoop } from './services/reconciliation';
 import { geoipMiddleware } from './middleware/geoip';
@@ -161,13 +161,9 @@ app.get('/health', async (_req, res) => {
     checks.database = 'error';
   }
 
-  // Redis check
-  try {
-    await redis.ping();
-    checks.redis = 'ok';
-  } catch {
-    checks.redis = 'error';
-  }
+  // Redis check (uses lazyConnect — explicit connect with timeout)
+  const redisHealth = await redisHealthCheck();
+  checks.redis = redisHealth.ok ? 'ok' : 'error';
 
   const allHealthy = Object.values(checks).every((s) => s === 'ok');
   const statusCode = allHealthy ? 200 : 503;
@@ -190,7 +186,15 @@ const PORT = process.env.BACKEND_PORT || 4000;
 async function start() {
   await connectDB();
   await ensureActiveSeed(); // ensure at least one provably-fair seed exists
-  void redis;  // redis কানেক্ট হয় import এর সময়
+  
+  // Redis: explicit connect with error handling (lazyConnect in config)
+  try {
+    await redis.connect();
+  } catch (err) {
+    console.error('⚠️ Redis connection failed on startup:', (err as Error).message);
+    console.error('   The server will continue running; Redis will retry in background.');
+  }
+  
   startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
   
   // Start periodic S3/local audit backup (every 1 hour)

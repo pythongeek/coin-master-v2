@@ -358,3 +358,269 @@ export const adminBonusCampaignSchema = z.object({
   sort_order: z.coerce.number().int().optional(),
   metadata: z.object({}).passthrough().optional(),
 });
+
+// ══════════════════════════════════════════════════════════════
+//  WALLET MANAGEMENT SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const createWalletSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Wallet name is required.')
+    .max(100, 'Wallet name must be 100 characters or less.'),
+  chain: z
+    .enum(['ethereum', 'solana', 'tron'], {
+      message: 'Invalid chain. Supported: ethereum, solana, tron'
+    }),
+  isDefault: z.boolean().optional(),
+});
+
+export const updateWalletSchema = z.object({
+  name: z
+    .string()
+    .min(1, 'Wallet name is required.')
+    .max(100, 'Wallet name must be 100 characters or less.')
+    .optional(),
+  isDefault: z.boolean().optional(),
+});
+
+export const walletSwapSchema = z.object({
+  fromChain: z
+    .enum(['ethereum', 'solana', 'tron'], {
+      message: 'Invalid fromChain. Supported: ethereum, solana, tron'
+    }),
+  toChain: z
+    .enum(['ethereum', 'solana', 'tron'], {
+      message: 'Invalid toChain. Supported: ethereum, solana, tron'
+    }),
+  amount: z.coerce
+    .number()
+    .positive('Swap amount must be positive.')
+    .min(0.01, 'Minimum swap amount is $0.01.'),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  PAYMENT / BNPL SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const paymentOrderSchema = z.object({
+  gateway: z
+    .enum(['binance_pay', 'redot_pay'], {
+      message: 'gateway must be binance_pay or redot_pay'
+    }),
+  amountUsdt: z.coerce
+    .number()
+    .positive('amountUsdt must be positive.')
+    .min(0.01, 'Minimum amount is $0.01.')
+    .max(100000, 'Maximum amount is $100,000.'),
+  returnUrl: z
+    .string()
+    .url('returnUrl must be a valid URL.')
+    .optional(),
+});
+
+export const bnplCreateSchema = z.object({
+  amount: z.coerce
+    .number()
+    .positive('BNPL amount must be positive.')
+    .min(1, 'Minimum BNPL amount is $1.')
+    .max(10000, 'Maximum BNPL amount is $10,000.'),
+  installments: z.coerce
+    .number()
+    .int()
+    .min(2, 'Minimum 2 installments.')
+    .max(12, 'Maximum 12 installments.'),
+  purpose: z
+    .string()
+    .max(500, 'Purpose must be 500 characters or less.')
+    .optional(),
+});
+
+export const bnplRepaySchema = z.object({
+  installmentNumber: z.coerce
+    .number()
+    .int()
+    .min(1, 'Installment number must be at least 1.'),
+});
+
+export const paymentDeferSchema = z.object({
+  transactionId: z
+    .string()
+    .uuid('Valid transaction ID (UUID) required.'),
+  deferUntil: z
+    .string()
+    .datetime('deferUntil must be a valid ISO 8601 datetime.'),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  RAIN / LEADERBOARD SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const rainClaimSchema = z.object({
+  rainId: z
+    .string()
+    .uuid('Valid rain ID (UUID) required.'),
+});
+
+export const leaderboardQuerySchema = z.object({
+  period: z
+    .enum(['daily', 'weekly', 'monthly', 'alltime'], {
+      message: 'period must be one of: daily, weekly, monthly, alltime'
+    })
+    .optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional(),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  KYC SCHEMAS (additional to verifyAISchema)
+// ══════════════════════════════════════════════════════════════
+
+export const kycSubmitSchema = z.object({
+  fullName: z
+    .string()
+    .min(2, 'Full name must be at least 2 characters.')
+    .max(200, 'Full name must be 200 characters or less.'),
+  dateOfBirth: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date of birth must be YYYY-MM-DD format.'),
+  documentType: z
+    .enum(['passport', 'national_id', 'driving_license'], {
+      message: 'Document type must be passport, national_id, or driving_license'
+    }),
+  documentNumber: z
+    .string()
+    .min(5, 'Document number must be at least 5 characters.')
+    .max(50, 'Document number must be 50 characters or less.'),
+  country: z
+    .string()
+    .length(2, 'Country must be a 2-letter ISO code.')
+    .toUpperCase(),
+  address: z
+    .string()
+    .max(500, 'Address must be 500 characters or less.')
+    .optional(),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  PROMO / REFERRAL SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const promoCodeApplySchema = z.object({
+  code: z
+    .string()
+    .min(3, 'Promo code must be at least 3 characters.')
+    .max(50, 'Promo code must be 50 characters or less.'),
+});
+
+export const referralClaimSchema = z.object({
+  referralCode: z
+    .string()
+    .min(3, 'Referral code must be at least 3 characters.')
+    .max(50, 'Referral code must be 50 characters or less.'),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  ADMIN USER MANAGEMENT SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const adminUserSearchSchema = z.object({
+  q: z
+    .string()
+    .max(100, 'Search query must be 100 characters or less.')
+    .optional(),
+  status: z
+    .enum(['active', 'suspended', 'banned', 'pending'])
+    .optional(),
+  role: z
+    .enum(['user', 'moderator', 'admin', 'superadmin'])
+    .optional(),
+  page: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .optional(),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional(),
+});
+
+export const adminUserUpdateSchema = z.object({
+  status: z
+    .enum(['active', 'suspended', 'banned'])
+    .optional(),
+  role: z
+    .enum(['user', 'moderator', 'admin'])
+    .optional(),
+  reason: z
+    .string()
+    .max(500, 'Reason must be 500 characters or less.')
+    .optional(),
+});
+
+export const adminTransactionFilterSchema = z.object({
+  userId: z.string().uuid().optional(),
+  type: z
+    .enum(['deposit', 'withdrawal', 'bet', 'win', 'bonus', 'rain', 'swap'])
+    .optional(),
+  status: z
+    .enum(['pending', 'completed', 'failed', 'cancelled'])
+    .optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  SQUAD / SOCIAL SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const squadCreateSchema = z.object({
+  name: z
+    .string()
+    .min(3, 'Squad name must be at least 3 characters.')
+    .max(50, 'Squad name must be 50 characters or less.'),
+  description: z
+    .string()
+    .max(500, 'Description must be 500 characters or less.')
+    .optional(),
+  maxMembers: z.coerce
+    .number()
+    .int()
+    .min(2, 'Minimum squad size is 2.')
+    .max(10, 'Maximum squad size is 10.')
+    .optional(),
+});
+
+export const squadJoinSchema = z.object({
+  squadId: z
+    .string()
+    .uuid('Valid squad ID (UUID) required.'),
+});
+
+export const chatMessageSchema = z.object({
+  message: z
+    .string()
+    .min(1, 'Message cannot be empty.')
+    .max(1000, 'Message must be 1000 characters or less.'),
+});
+
+// ══════════════════════════════════════════════════════════════
+//  WHEEL / GAME SCHEMAS
+// ══════════════════════════════════════════════════════════════
+
+export const wheelSpinSchema = z.object({
+  clientSeed: z
+    .string()
+    .min(1, 'clientSeed is required.')
+    .max(256, 'clientSeed must be 256 characters or less.'),
+});
+

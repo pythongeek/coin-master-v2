@@ -3,30 +3,92 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// ── Redis connection configuration ───────────────────────────────
+// SECURITY: Redis is internal-only (no host port mapping in Docker).
+// Access is restricted to the backend container via the Docker bridge
+// network. Password auth is required. TLS is supported for external
+// Redis connections (e.g. AWS ElastiCache, Redis Cloud) via env flag.
+// ─────────────────────────────────────────────────────────────────
+
+const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
+const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
+const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
+const REDIS_TLS_ENABLED = process.env.REDIS_TLS_ENABLED === 'true';
+const REDIS_DB = parseInt(process.env.REDIS_DB || '0');
+
 export const redisConfig = {
-  host:     process.env.REDIS_HOST     || 'localhost',
-  port:     parseInt(process.env.REDIS_PORT || '6379'),
-  password: process.env.REDIS_PASSWORD || undefined,
+  host: REDIS_HOST,
+  port: REDIS_PORT,
+  password: REDIS_PASSWORD,
+  db: REDIS_DB,
+  // Only enable TLS when explicitly requested (external managed Redis)
+  tls: REDIS_TLS_ENABLED ? {} : undefined,
 };
 
-// Redis কানেকশন
+// Production-hardened Redis client
 export const redis = new Redis({
   ...redisConfig,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
+  // Lazy connect: don't block server startup if Redis is briefly unavailable
+  lazyConnect: true,
+  // Connection timeout: fail fast if Redis is unreachable
+  connectTimeout: 10000,
+  // Command timeout: don't hang forever on a slow Redis command
+  commandTimeout: 5000,
+  // Keepalive to detect dead connections
+  keepAlive: 30000,
+  // Retry strategy with cap
+  retryStrategy: (times: number) => {
+    const delay = Math.min(times * 100, 3000);
+    // Stop retrying after ~30 seconds of continuous failure
+    if (times > 30) {
+      console.error('❌ Redis: Max retries exceeded. Giving up.');
+      return null; // stop retrying
+    }
     return delay;
   },
+  // Max retries per command before error
+  maxRetriesPerRequest: 3,
+  // Enable offline queue so commands buffer during brief disconnects
+  enableOfflineQueue: true,
+  // Show friendly error stack traces in development
+  showFriendlyErrorStack: process.env.NODE_ENV !== 'production',
+});
+
+// Explicit connect with error handling
+redis.connect().catch((err) => {
+  console.error('❌ Redis initial connection failed:', err.message);
+  // Don't exit — the retryStrategy will keep trying.
+  // In production, the health check endpoint will report Redis status.
 });
 
 redis.on('connect', () => {
-  console.log('✅ Redis কানেক্টেড!');
+  console.log('✅ Redis connected!');
+});
+
+redis.on('ready', () => {
+  console.log('✅ Redis ready!');
 });
 
 redis.on('error', (err) => {
-  console.error('❌ Redis Error:', err);
+  console.error('❌ Redis Error:', err.message);
 });
 
-// Helper: লাইভ বেট লক করা (Race Condition প্রতিরোধ)
+redis.on('reconnecting', () => {
+  console.warn('⚠️ Redis reconnecting...');
+});
+
+// ── Health check helper ──────────────────────────────────────────
+export async function redisHealthCheck(): Promise<{ ok: boolean; latencyMs: number }> {
+  const start = Date.now();
+  try {
+    await redis.ping();
+    return { ok: true, latencyMs: Date.now() - start };
+  } catch {
+    return { ok: false, latencyMs: Date.now() - start };
+  }
+}
+
+// ── Helper: লাইভ বেট লক করা (Race Condition প্রতিরোধ)
 export async function lockBet(userId: string, amount: number): Promise<boolean> {
   const key = `bet_lock:${userId}`;
   const result = await redis.set(key, amount.toString(), 'EX', 30, 'NX');
@@ -37,7 +99,7 @@ export async function unlockBet(userId: string): Promise<void> {
   await redis.del(`bet_lock:${userId}`);
 }
 
-// Helper: Win Streak ট্র্যাক করা
+// ── Helper: Win Streak ট্র্যাক করা
 export async function incrementWinStreak(userId: string): Promise<number> {
   const key = `win_streak:${userId}`;
   const count = await redis.incr(key);

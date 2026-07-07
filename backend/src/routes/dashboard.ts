@@ -23,6 +23,8 @@ import { getWheelStatus, spinDailyWheel } from '../services/daily-wheel';
 import { getLeaderboard, getLeaderboardPosition } from '../services/leaderboard';
 import { getRakebackStatus, claimRakeback } from '../services/rakeback';
 import { getUserChallengeProgress, claimChallengeReward } from '../services/challenges';
+import { validateBody } from '../middleware/validation';
+import { adminUserUpdateSchema, wheelSpinSchema } from '../schemas';
 
 const router = Router();
 
@@ -360,10 +362,10 @@ router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'suppo
 // ══════════════════════════════════════════════════════════════
 //  PATCH /api/dashboard/admin/users/:id — ইউজার ফ্রিজ/আনফ্রিজ
 // ══════════════════════════════════════════════════════════════
-router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin']), validateBody(adminUserUpdateSchema), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { isActive, balance } = req.body;
+    const { status: userStatus, balance } = req.body;
     const self = (req as Request & { user: AuthPayload }).user;
 
     if (id === self.userId) {
@@ -373,8 +375,8 @@ router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin'])
     const updates: string[] = [];
     const values: unknown[] = [];
 
-    if (isActive !== undefined) {
-      values.push(isActive);
+    if (userStatus !== undefined) {
+      values.push(userStatus === 'active');
       updates.push(`is_active = $${values.length}`);
     }
     if (balance !== undefined) {
@@ -394,7 +396,7 @@ router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin'])
 
     res.json({
       success: true,
-      message: isActive === false ? 'ইউজার ফ্রিজ করা হয়েছে।' : 'ইউজার আনফ্রিজ করা হয়েছে।',
+      message: userStatus === 'suspended' || userStatus === 'banned' ? 'ইউজার ফ্রিজ করা হয়েছে।' : 'ইউজার আনফ্রিজ করা হয়েছে।',
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
@@ -422,13 +424,10 @@ router.get('/wheel', authMiddleware, async (req: Request, res: Response) => {
 // ══════════════════════════════════════════════════════════════
 //  POST /api/dashboard/wheel/spin — দৈনিক হুইল স্পিন করো
 // ══════════════════════════════════════════════════════════════
-router.post('/wheel/spin', authMiddleware, async (req: Request, res: Response) => {
+router.post('/wheel/spin', authMiddleware, validateBody(wheelSpinSchema), async (req: Request, res: Response) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
-    const { clientSeed } = req.body as { clientSeed?: string };
-    if (!clientSeed || typeof clientSeed !== 'string') {
-      return res.status(400).json({ success: false, error: 'clientSeed is required.' });
-    }
+    const { clientSeed } = req.body;
     const result = await spinDailyWheel(self.userId, clientSeed);
     res.json({ success: true, data: result });
   } catch (err: unknown) {

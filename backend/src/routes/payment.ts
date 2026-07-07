@@ -18,32 +18,24 @@ import { apiLimiter } from '../middleware/rate-limit';
 import { listProviders } from '../services/payment-gateways';
 import { PaymentGateway } from '../services/payment-gateways/types';
 import { createPaymentOrder, listPaymentOrders } from '../services/payment';
+import { validateBody } from '../middleware/validation';
+import { paymentOrderSchema } from '../schemas';
 
 const router = Router();
 
 // ── POST /create (auth required) ────────────────────────────────
-router.post('/create', apiLimiter, authMiddleware, async (req: Request, res: Response) => {
+router.post('/create', apiLimiter, authMiddleware, validateBody(paymentOrderSchema), async (req: Request, res: Response) => {
   try {
     const user = (req as Request & { user: AuthPayload }).user;
-    const { gateway, amountUsdt } = req.body;
-    if (!gateway || !amountUsdt) {
-      return res.status(400).json({ success: false, error: 'gateway ও amountUsdt দিতে হবে।' });
-    }
-    if (!['binance_pay', 'redot_pay'].includes(gateway)) {
-      return res.status(400).json({ success: false, error: 'gateway binance_pay বা redot_pay হতে হবে।' });
-    }
-    const numAmount = parseFloat(amountUsdt);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ success: false, error: 'amountUsdt একটি ধনাত্মক সংখ্যা হতে হবে।' });
-    }
+    const { gateway, amountUsdt, returnUrl } = req.body;
 
     const result = await createPaymentOrder({
       userId: user.userId,
       gateway: gateway as PaymentGateway,
-      amountUsdt: numAmount,
+      amountUsdt: amountUsdt as number,
       ip: req.ip,
       userAgent: req.headers['user-agent'] as string,
-      returnUrl: req.body.returnUrl,
+      returnUrl,
     });
     res.json({ success: true, payment: result });
   } catch (err: unknown) {
