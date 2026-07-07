@@ -10,7 +10,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 
-import { connectDB } from './config/database';
+import { connectDB, query } from './config/database';
 import { redis } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
 import { startReconciliationLoop } from './services/reconciliation';
@@ -150,12 +150,34 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/public', adminPublicRoutes);
 
 
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'ok',
+app.get('/health', async (_req, res) => {
+  const checks: Record<string, 'ok' | 'error'> = {};
+
+  // PostgreSQL check
+  try {
+    await query('SELECT 1');
+    checks.database = 'ok';
+  } catch {
+    checks.database = 'error';
+  }
+
+  // Redis check
+  try {
+    await redis.ping();
+    checks.redis = 'ok';
+  } catch {
+    checks.redis = 'error';
+  }
+
+  const allHealthy = Object.values(checks).every((s) => s === 'ok');
+  const statusCode = allHealthy ? 200 : 503;
+
+  res.status(statusCode).json({
+    status: allHealthy ? 'ok' : 'degraded',
     service: 'CryptoFlip Backend v1.0',
     timestamp: new Date().toISOString(),
     uptime: Math.floor(process.uptime()) + 's',
+    checks,
   });
 });
 

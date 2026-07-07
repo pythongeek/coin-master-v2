@@ -41,6 +41,7 @@ import { NotificationStack, ResultCard } from '@/components/game/WinLoseOverlay'
 import { ScatterBonus } from '@/components/game/ScatterBonus';
 import { StreakLadder } from '@/components/game/StreakLadder';
 import { LightningOverlay } from '@/components/game/LightningOverlay';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { shortenAddress } from '@/lib/wallet';
 
 const Coin3D = lazy(() => import('@/components/game/Coin3D'));
@@ -133,6 +134,7 @@ export default function GamePage() {
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       {showSettings && <SettingsModal />}
 
+      <ErrorBoundary>
       <main className="h-screen flex flex-col overflow-hidden bg-void">
 
         {/* ══════════════════════════════════════════════════════
@@ -276,14 +278,29 @@ export default function GamePage() {
               )}
 
               {/* Coin */}
-              <Suspense fallback={
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <Coins size={56} className="text-brand-gold animate-spin-slow" strokeWidth={1.5} />
-                </div>
-              }>
-                <LightningOverlay />
-                <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} won={lastResult?.won ?? null} />
-              </Suspense>
+              <ErrorBoundary
+                fallback={
+                  <div className="flex flex-col items-center justify-center gap-3 text-center p-4">
+                    <AlertTriangle size={32} className="text-brand-red" />
+                    <p className="text-text-muted text-xs font-mono">Coin display failed.</p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="px-3 py-1.5 rounded border border-brand-green/40 text-brand-green text-xs font-mono hover:bg-brand-green/10"
+                    >
+                      Reload Page
+                    </button>
+                  </div>
+                }
+              >
+                <Suspense fallback={
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Coins size={56} className="text-brand-gold animate-spin-slow" strokeWidth={1.5} />
+                  </div>
+                }>
+                  <LightningOverlay />
+                  <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} won={lastResult?.won ?? null} />
+                </Suspense>
+              </ErrorBoundary>
             </div>
 
             {/* Result card (below arena) */}
@@ -299,6 +316,7 @@ export default function GamePage() {
           </aside>
         </div>
       </main>
+      </ErrorBoundary>
       {/* Mobile sticky FLIP bar */}
       <MobileGamePanels />
       <MobileBetBar />
