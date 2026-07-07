@@ -41,6 +41,9 @@ services:
       - backend
     networks:
       - cryptoflip-network
+    # Production image has standalone build baked in; do NOT mount host
+    # source over it or server.js and .next/static will disappear.
+    volumes: []
 
   # ─────────────────────────────────
   # ⚙️ BACKEND — Node.js + Socket.io
