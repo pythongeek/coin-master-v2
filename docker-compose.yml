@@ -16,6 +16,8 @@ services:
       # cx23 already uses port 3000 (Plokymarket nginx), 3003 (admin
       # vhost). CryptoFlip frontend exposed on 3002.
       - "3002:3000"
+    env_file:
+      - ./.admin-gateway.env
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:4000
       - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:3003
@@ -31,8 +33,9 @@ services:
       # next.config.js can mount the secret rewrite. Both are
       # read from /root/.admin-gateway-token and /root/coin-master/
       # .admin-secret-path (chmod 600).
-      - ADMIN_SECRET_PATH=${ADMIN_SECRET_PATH}
-      - ADMIN_GATEWAY_TOKEN=${ADMIN_GATEWAY_TOKEN}
+      # NOTE: ADMIN_SECRET_PATH and ADMIN_GATEWAY_TOKEN are read from
+      # .admin-gateway.env (chmod 600, not in repo) so the live token
+      # can be changed without rebuilding the image.
     # Production image has standalone build baked in; do NOT mount host
     # source over it or server.js and .next/static will disappear.
     volumes: []

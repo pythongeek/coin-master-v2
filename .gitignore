@@ -54,7 +54,7 @@ desktop.ini
 *.swo
 *~
 
-# ── টেস্টিং / কভারেজ ──────────────────────────────────────────
+# ── টেস্টিং / কভারেজ ──────────────────────────
 coverage/
 .nyc_output/
 
@@ -65,13 +65,21 @@ next-env.d.ts
 # ── Docker ────────────────────────────────────────────────────
 docker-compose.override.yml
 
-# ── SSL সার্টিফিকেট ───────────────────────────────────────────
+# ── SSL সার্টিফিকেট ───────────────────────────
 nginx/ssl/
 *.crt
 *.csr
 
-# ── Hidden admin URL (rotate with: python3 -c "import secrets; print('sysop-' + secrets.token_urlsafe(12))" > .admin-secret-path) ──
+# ── Hidden admin URL / gateway token (rotate with scripts) ──
 .admin-secret-path
-
-# ── Admin gateway token (secret) ──
 .admin-gateway-token
+.admin-gateway.env
+
+# ── Local env files created by wrapper scripts ──
+.env.admin
+*.env.local
+
+# ── Misc runtime state ──
+backend/exports/
+backend/uploads/
+frontend/public/uploads/
