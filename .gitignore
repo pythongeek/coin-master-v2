@@ -83,3 +83,24 @@ nginx/ssl/
 backend/exports/
 backend/uploads/
 frontend/public/uploads/
+
+# ── Temporary / local scripts ──
+fix_*.py
+*_monitor.sh
+*_cron.txt
+
+# ── SSH keys and credentials (never commit!) ──
+*_id_ed25519
+*_id_ed25519.b64
+id_ed25519
+id_ed25519.b64
+*.pub
+VPS_CREDENTIALS.txt
+SSH_CONNECTION.md
+
+# ── Assessment / audit reports (local only) ──
+*-assessment.md
+*-audit-report.md
+
+# ── Misc archives ──
+*.zip
