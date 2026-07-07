@@ -12,13 +12,6 @@ FROM base AS deps
 COPY package.json package-lock.json* ./
 RUN npm install --include=dev
 
-# ── ধাপ ২: ডেভেলপমেন্ট (hot reload সহ) ────────────────────────
-FROM base AS development
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-EXPOSE 3000
-CMD ["npm", "run", "dev"]
-
 # ── ধাপ ৩: প্রোডাকশন বিল্ড ─────────────────────────────────────
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules

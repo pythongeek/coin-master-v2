@@ -8,7 +8,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: development
+      target: production
+      args:
+        - NEXT_PUBLIC_API_URL=/api
+        - NEXT_PUBLIC_SOCKET_URL=http://46.62.247.167:3003
     ports:
       # cx23 already uses port 3000 (Plokymarket nginx), 3003 (admin
       # vhost). CryptoFlip frontend exposed on 3002.
