@@ -37,6 +37,30 @@ import { ensureActiveSeed } from './services/server-seed';
 
 dotenv.config();
 
+// ─── Mandatory Security Configuration ────────────────────────
+// ADMIN_2FA_REQUIRED must be explicitly set. We refuse to start
+// if it's missing to prevent accidental production deployments
+// with disabled 2FA.
+const admin2faRaw = process.env.ADMIN_2FA_REQUIRED;
+if (admin2faRaw === undefined || admin2faRaw === '') {
+  console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED is not set.');
+  console.error('   Set it explicitly in your .env file:');
+  console.error('     ADMIN_2FA_REQUIRED=true   # production (enforces admin 2FA)');
+  console.error('     ADMIN_2FA_REQUIRED=false  # dev/testing ONLY');
+  process.exit(1);
+}
+const admin2faValid = admin2faRaw === 'true' || admin2faRaw === 'false';
+if (!admin2faValid) {
+  console.error(`\n❌ FATAL: ADMIN_2FA_REQUIRED="${admin2faRaw}" is invalid.`);
+  console.error('   Only "true" or "false" are accepted.');
+  process.exit(1);
+}
+if (process.env.NODE_ENV === 'production' && admin2faRaw !== 'true') {
+  console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED must be "true" in production.');
+  console.error('   Admin 2FA cannot be disabled in production mode.');
+  process.exit(1);
+}
+
 // Build CORS allowlist from all configured frontend URLs.
 // NEXT_PUBLIC_APP_URL is the canonical frontend, TUNNEL_APP_URL is the
 // Cloudflare tunnel, and EXTRA_ALLOWED_ORIGINS is a comma-separated list
