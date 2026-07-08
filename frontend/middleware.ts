@@ -34,6 +34,12 @@ import { NextRequest, NextResponse } from 'next/server';
 //     (tunnel traffic comes from 127.0.0.1)
 //   - A signed header is opaque and easy to rotate
 //
+// Security note: the list of allowed tunnel domains must be
+// maintained in the upstream proxy (nginx), not in the
+// ADMIN_ALLOWLIST environment variable. Adding wildcard tunnel
+// domains would let an attacker who discovers an active tunnel
+// bypass the gate.
+//
 // The header is consumed by Next.js (not exposed to React),
 // so the React code never sees it.
 const GATEWAY_TOKEN = (process.env.ADMIN_GATEWAY_TOKEN || '').trim();
@@ -56,11 +62,20 @@ const GATEWAY_TOKEN_CONFIGURED = GATEWAY_TOKEN.length > 0;
 // path. The host is included because cloudflared tunnels terminate on
 // localhost, so we trust the tunnel hostname as a secure channel.
 // Format: comma-separated list of IPs or hostnames (e.g.
-// "203.0.113.10,46.62.247.167,localhost,127.0.0.1,mesa-sur-demonstrate-gates.trycloudflare.com").
+// "203.0.113.10,46.62.247.167,localhost,127.0.0.1").
+// NEVER add *.trycloudflare.com or any wildcard tunnel domain — an
+// attacker who discovers an active tunnel could bypass the gate.
 const ADMIN_ALLOWLIST = (process.env.ADMIN_ALLOWLIST || '')
   .split(',')
   .map((s) => s.trim().toLowerCase())
-  .filter(Boolean);
+  .filter((s) => {
+    // Reject any wildcard / tunnel-looking entries at runtime
+    const reject = s.includes('*') || s.endsWith('.trycloudflare.com') || s.endsWith('.ngrok.io') || s.endsWith('.ngrok-free.app');
+    if (reject && s) {
+      console.warn('middleware: rejected insecure ADMIN_ALLOWLIST entry:', s);
+    }
+    return !reject && Boolean(s);
+  });
 
 function isAdminPath(pathname: string): boolean {
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return true;

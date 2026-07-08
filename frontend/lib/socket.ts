@@ -12,11 +12,9 @@ import { io, Socket } from 'socket.io-client';
 import { setTokenCookie, clearTokenCookie } from './auth-cookies';
 
 function getSocketUrl(): string {
-  if (typeof window === 'undefined') return 'http://localhost:4000';
-  const host = window.location.host;
-  if (host.startsWith('localhost:') || host === 'localhost') {
-    return 'http://localhost:4000';
-  }
+  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000';
+  // Allow NEXT_PUBLIC_SOCKET_URL to override (e.g. tunnel or staging).
+  if (process.env.NEXT_PUBLIC_SOCKET_URL) return process.env.NEXT_PUBLIC_SOCKET_URL;
   // Production: use same origin so nginx proxies /socket.io
   return window.location.origin;
 }
@@ -96,12 +94,8 @@ export function storeToken(token: string) {
 export function clearToken() {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('cf_token');
-    localStorage.removeItem('cf_user');
     clearTokenCookie();
   }
 }
 
-// Expose for debugging / console smoke tests
-if (typeof window !== 'undefined') {
-  (window as any).__getSocket = getSocket;
-}
+

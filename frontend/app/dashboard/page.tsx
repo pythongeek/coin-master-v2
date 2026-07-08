@@ -19,7 +19,7 @@ import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
     ? '/api'
     : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -32,16 +32,25 @@ export default function DashboardPage() {
   const [kycStatus, setKycStatus] = useState<'unverified' | 'pending' | 'verified' | 'rejected'>('unverified');
   const [loading, setLoading] = useState(true);
 
-  // Demo userId — real app: comes from JWT
-  const userId = typeof window !== 'undefined'
-    ? JSON.parse(localStorage.getItem('cf_user') || '{}')?.userId || 'demo'
-    : 'demo';
-
   const token = typeof window !== 'undefined'
     ? localStorage.getItem('cf_token') || ''
     : '';
 
   const headers = { Authorization: `Bearer ${token}` };
+
+  // Decode the JWT to get the real userId. Falls back to demo only if
+  // no token is present (unauthenticated). Never trust localStorage for
+  // admin flags — the backend validates every request.
+  function decodeUserId(jwt: string): string {
+    if (!jwt) return 'demo';
+    try {
+      const payload = JSON.parse(atob(jwt.split('.')[1]));
+      return payload.userId || payload.sub || 'demo';
+    } catch {
+      return 'demo';
+    }
+  }
+  const userId = decodeUserId(token);
 
   async function loadAll(page = 1) {
     setLoading(true);

@@ -55,8 +55,9 @@ export default function LoginModal({ onClose }: Props) {
     };
 
     storeToken(data.token);
-    login({ user, token: data.token });
-    localStorage.setItem('cf_user', JSON.stringify(data.user));
+    localStorage.setItem('cf_token', data.token);
+    // Do NOT store cf_user; derive user from JWT on rehydrate to avoid
+    // trusting client-side isAdmin. The backend validates role.
 
     // Upgrade socket connection with the token so game bets can be sent
     reconnectWithToken(data.token);

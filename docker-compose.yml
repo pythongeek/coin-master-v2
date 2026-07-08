@@ -61,7 +61,9 @@ services:
       - REDIS_HOST=redis
       # CSRF middleware uses NEXT_PUBLIC_APP_URL as the allowed Origin.
       # Must match the actual frontend URL (host port 3002 on cx23).
-      - NEXT_PUBLIC_APP_URL=http://localhost:3002
+      # For external access, use the operator IP/domain so the browser is not
+      # blocked by CORS/CSRF when reaching the site over http://46.62.247.167:3002.
+      - NEXT_PUBLIC_APP_URL=http://46.62.247.167:3002
       # Tunnel URL used for public browser access during dev testing.
       # This is added dynamically to the CSRF allowlist by the proxy.
       - TUNNEL_APP_URL=${TUNNEL_APP_URL:-}

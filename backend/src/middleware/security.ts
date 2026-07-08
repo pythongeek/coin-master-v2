@@ -116,7 +116,6 @@ export const helmetConfig = {
         "wss://localhost:*",
         "http://localhost:*",
         "https://*.sumsub.com",
-        "https://mesa-sur-demonstrate-gates.trycloudflare.com",
       ],
       frameSrc: ["'self'", "https://*.sumsub.com"],
       objectSrc: ["'none'"],

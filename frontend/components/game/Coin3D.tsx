@@ -171,8 +171,27 @@ export default function Coin3D({ gameStatus, result, won }: CoinProps) {
     if (!coinRef.current) return;
     if (gameStatus === 'idle') {
       coinRef.current.classList.remove('show-heads', 'show-tails', 'spinning');
+      // Default face when idling is heads (front-side)
+      coinRef.current.style.transform = 'rotateY(0deg)';
     }
   }, [gameStatus]);
+
+  // Persist the landed transform after the result animation finishes.
+  // Without this, the coin snaps back to the idle default because the
+  // animation keyframes are removed when the status changes.
+  useEffect(() => {
+    if (!coinRef.current || gameStatus !== 'result' || !result) return;
+    const coin = coinRef.current;
+    const target = result === 'heads' ? 'rotateY(-1800deg)' : 'rotateY(-1980deg)';
+
+    const onEnd = () => {
+      coin.style.animation = 'none';
+      coin.style.transform = target;
+    };
+
+    coin.addEventListener('animationend', onEnd, { once: true });
+    return () => coin.removeEventListener('animationend', onEnd);
+  }, [gameStatus, result]);
 
   const containerClass = [
     styles.coinPerspective,
@@ -194,6 +213,11 @@ export default function Coin3D({ gameStatus, result, won }: CoinProps) {
   ]
     .filter(Boolean)
     .join(' ');
+
+  // Ensure the coin CSS knows the previous side so a replay starts from the
+  // correct face. Without this, replaying a "heads" result after a "heads"
+  // result re-uses the same animation and the browser may skip the animation.
+  const coinKey = gameStatus === 'result' ? `result-${result}-${Date.now()}` : gameStatus;
 
   const ariaLabel =
     gameStatus === 'spinning'
@@ -219,7 +243,7 @@ export default function Coin3D({ gameStatus, result, won }: CoinProps) {
       {/* Floor shadow for depth */}
       <div className={styles.floorShadow} aria-hidden="true" />
 
-      <div ref={coinRef} className={coinClass}>
+      <div ref={coinRef} key={coinKey} className={coinClass}>
         {/* 9 stacked Z-translated slices for the 3D edge (visual thickness) */}
         {Array.from({ length: 9 }, (_, i) => {
           const z = 4 - i; // 4, 3, 2, 1, 0, -1, -2, -3, -4

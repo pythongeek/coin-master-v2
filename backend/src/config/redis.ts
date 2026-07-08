@@ -78,13 +78,12 @@ redis.on('reconnecting', () => {
 });
 
 // ── Health check helper ──────────────────────────────────────────
-export async function redisHealthCheck(): Promise<{ ok: boolean; latencyMs: number }> {
-  const start = Date.now();
+export async function redisHealthCheck(): Promise<{ ok: boolean; error?: string }> {
   try {
     await redis.ping();
-    return { ok: true, latencyMs: Date.now() - start };
-  } catch {
-    return { ok: false, latencyMs: Date.now() - start };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
   }
 }
 

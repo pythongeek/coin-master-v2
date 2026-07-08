@@ -128,19 +128,20 @@ export default function GamePage() {
 
   return (
     <>
+      <ErrorBoundary>
       <NotificationStack />
       <SupportChat />
       <ScatterBonus />
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
       {showSettings && <SettingsModal />}
 
-      <ErrorBoundary>
       <main className="h-screen flex flex-col overflow-hidden bg-void">
 
         {/* ══════════════════════════════════════════════════════
             NAVBAR
            ══════════════════════════════════════════════════════ */}
-        <nav className="glass-card mx-3 mt-3 px-5 py-2.5 flex items-center justify-between flex-wrap gap-3 shrink-0">
+        <ErrorBoundary>
+          <nav className="glass-card mx-3 mt-3 px-5 py-2.5 flex items-center justify-between flex-wrap gap-3 shrink-0">
           <Link href="/" className="flex items-center gap-2 heading-display text-lg">
             <div className="w-7 h-7 rounded-lg bg-brand-green/10 text-brand-green flex items-center justify-center">
               <Coins size={15} />
@@ -203,6 +204,7 @@ export default function GamePage() {
             </div>
           )}
         </nav>
+        </ErrorBoundary>
 
         {/* ══════════════════════════════════════════════════════
             Main 3-column game area
@@ -210,9 +212,11 @@ export default function GamePage() {
         <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 lg:p-4 min-h-0 overflow-y-auto lg:overflow-visible pb-28 lg:pb-4">
 
           {/* ── Left column: unified tabbed sidebar ── */}
-          <aside className="lg:w-[340px] xl:w-[380px] shrink-0 flex flex-col gap-3 order-2 lg:order-1 min-h-0">
-            <GameSidebar />
-          </aside>
+          <ErrorBoundary>
+            <aside className="lg:w-[340px] xl:w-[380px] shrink-0 flex flex-col gap-3 order-2 lg:order-1 min-h-0">
+              <GameSidebar />
+            </aside>
+          </ErrorBoundary>
 
           {/* ── Center column: 3D arena + history + result ── */}
           <div className="flex-1 flex flex-col gap-3 order-1 lg:order-2 min-h-0">
@@ -310,16 +314,20 @@ export default function GamePage() {
           </div>
 
           {/* ── Right column: live chat + big wins + streak ladder ── */}
-          <aside className="lg:w-[320px] xl:w-[360px] shrink-0 order-3 overflow-hidden min-h-0 flex flex-col gap-3">
-            <StreakLadder />
-            <LiveChat />
-          </aside>
+          <ErrorBoundary>
+            <aside className="lg:w-[320px] xl:w-[360px] shrink-0 order-3 overflow-hidden min-h-0 flex flex-col gap-3">
+              <StreakLadder />
+              <LiveChat />
+            </aside>
+          </ErrorBoundary>
         </div>
       </main>
       </ErrorBoundary>
       {/* Mobile sticky FLIP bar */}
-      <MobileGamePanels />
-      <MobileBetBar />
+      <ErrorBoundary>
+        <MobileGamePanels />
+        <MobileBetBar />
+      </ErrorBoundary>
     </>
   );
 }

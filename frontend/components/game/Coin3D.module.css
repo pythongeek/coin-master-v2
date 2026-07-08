@@ -175,27 +175,30 @@
 
 /* Spinning keeps going until the backend result arrives. */
 .spinning {
-  animation: coinFlipInfinite 1.0s linear infinite;
+  animation: coinFlipInfinite 0.8s linear infinite;
 }
 @keyframes coinFlipInfinite {
   from { transform: rotateY(0deg) rotateX(0deg); }
-  to   { transform: rotateY(360deg) rotateX(360deg); }
+  to   { transform: rotateY(-720deg) rotateX(360deg); }
 }
 
 .showHeads {
   animation: coinLandHeads 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15) forwards;
 }
 @keyframes coinLandHeads {
-  from { transform: rotateY(360deg) rotateX(360deg); }
-  to   { transform: rotateY(1800deg) rotateX(0deg); }
+  from { transform: rotateY(0deg) rotateX(0deg); }
+  to   { transform: rotateY(-1800deg) rotateX(0deg); }
 }
 
 .showTails {
   animation: coinLandTails 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15) forwards;
 }
 @keyframes coinLandTails {
-  from { transform: rotateY(360deg) rotateX(360deg); }
-  to   { transform: rotateY(1980deg) rotateX(0deg); }
+  /* TAILS face is on the back of the coin. rotateY(-180deg) shows it face-on.
+     Add full 5-spin rotations (-1800deg) so the animation is visually
+     consistent with the heads landing animation. */
+  from { transform: rotateY(0deg) rotateX(0deg); }
+  to   { transform: rotateY(-1980deg) rotateX(0deg); }
 }
 
 /* Win/loss result pulse after landing */

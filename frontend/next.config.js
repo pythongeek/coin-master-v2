@@ -16,6 +16,7 @@ const nextConfig = {
     NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
     // Source of truth: .admin-secret-path (chmod 600, gitignored)
     NEXT_PUBLIC_ADMIN_PATH: process.env.ADMIN_SECRET_PATH || '',
+    NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   },
 
   // Secret admin URL rewrites
@@ -30,23 +31,19 @@ const nextConfig = {
 
   async headers() {
     // CORS for Next.js API route proxies (/api/* on the frontend).
-    // NOTE: Access-Control-Allow-Origin with credentials=true only
-    // accepts a SINGLE origin. For production, set NEXT_PUBLIC_APP_URL
-    // to the exact origin (e.g. https://cryptoflip.com).
-    // Extra origins can be set via NEXT_PUBLIC_EXTRA_ORIGINS (comma-separated).
+    // Only the canonical app origin is trusted; dynamic origins are
+    // denied. Tunnel domains must be explicitly mounted via the
+    // upstream proxy, not added to this allowlist.
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const extraOriginsRaw = process.env.NEXT_PUBLIC_EXTRA_ORIGINS || '';
-    const extraOrigins = extraOriginsRaw
-      .split(',')
-      .map((o) => o.trim())
-      .filter((o) => o.startsWith('http://') || o.startsWith('https://'));
-    const allowedOrigins = [appUrl, 'http://localhost:3002', 'http://localhost:3000', ...extraOrigins];
+    if (!appUrl || !appUrl.startsWith('http')) {
+      throw new Error('NEXT_PUBLIC_APP_URL must be a valid http/https origin');
+    }
 
     return [
       {
         source: '/api/:path*',
         headers: [
-          { key: 'Access-Control-Allow-Origin', value: allowedOrigins[0] || appUrl },
+          { key: 'Access-Control-Allow-Origin', value: appUrl },
           { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
           { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
           { key: 'Access-Control-Allow-Credentials', value: 'true' },
@@ -65,8 +62,8 @@ const nextConfig = {
   },
 
   images: {
-    domains: ['localhost'],
     formats: ['image/webp'],
+    remotePatterns: [],
   },
 };
 

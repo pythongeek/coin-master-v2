@@ -201,7 +201,7 @@ export class WalletApiError extends Error {
 // ── Helpers ────────────────────────────────────────────────────
 
 const BASE =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
+  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
     ? '/api'
     : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coin landing test</title>
+  <style>
+    body { background: #0f172a; color: #fff; font-family: sans-serif; padding: 2rem; }
+    .coin {
+      width: 200px; height: 200px; margin: 2rem auto;
+      transform-style: preserve-3d; position: relative;
+    }
+    .face {
+      position: absolute; width: 100%; height: 100%;
+      backface-visibility: hidden; border-radius: 50%;
+      display: grid; place-items: center; font-size: 2rem; font-weight: bold;
+    }
+    .front { background: #00c566; transform: translateZ(1px); }
+    .back  { background: #e8384f; transform: rotateY(180deg) translateZ(1px); }
+    .heads { animation: landHeads 2s forwards; }
+    .tails { animation: landTails 2s forwards; }
+    @keyframes landHeads { from { transform: rotateY(0deg); } to { transform: rotateY(-1800deg); } }
+    @keyframes landTails { from { transform: rotateY(0deg); } to { transform: rotateY(-1980deg); } }
+  </style>
+</head>
+<body>
+  <h1>Heads (green) and Tails (red) landing</h1>
+  <p>Green/Heads: -1800deg &rarr; 0 deg effective</p>
+  <div class="coin heads">
+    <div class="face front">HEADS</div>
+    <div class="face back">TAILS</div>
+  </div>
+  <p>Red/Tails: -1980deg &rarr; -180deg effective</p>
+  <div class="coin tails">
+    <div class="face front">HEADS</div>
+    <div class="face back">TAILS</div>
+  </div>
+</body>
+</html>

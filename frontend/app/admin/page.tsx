@@ -11,13 +11,13 @@
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { AlertCircle, LogOut } from 'lucide-react';
-import { fetchAdminUser } from '@/lib/admin-server';
+import { isAdminAuthorized } from '@/lib/admin-server';
 import AdminClientShell from '@/components/dashboard/AdminClientShell';
 
 export default async function AdminPage() {
   const cookieStore = await cookies();
   const token = cookieStore.get('cf_token')?.value;
-  const user = token ? await fetchAdminUser(token) : null;
+  const user = token ? await isAdminAuthorized(token) : null;
 
   if (!user) {
     return (

@@ -41,12 +41,16 @@ dotenv.config();
 // ADMIN_2FA_REQUIRED must be explicitly set. We refuse to start
 // if it's missing to prevent accidental production deployments
 // with disabled 2FA.
+//
+// Fail-closed: in development/admin mode (NODE_ENV != production) we
+// still require an explicit value. Use ADMIN_2FA_REQUIRED=false only
+// for local dev, never in staging/production.
 const admin2faRaw = process.env.ADMIN_2FA_REQUIRED;
 if (admin2faRaw === undefined || admin2faRaw === '') {
   console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED is not set.');
   console.error('   Set it explicitly in your .env file:');
-  console.error('     ADMIN_2FA_REQUIRED=true   # production (enforces admin 2FA)');
-  console.error('     ADMIN_2FA_REQUIRED=false  # dev/testing ONLY');
+  console.error('     ADMIN_2FA_REQUIRED=true   # production / staging (enforces admin 2FA)');
+  console.error('     ADMIN_2FA_REQUIRED=false  # local dev ONLY');
   process.exit(1);
 }
 const admin2faValid = admin2faRaw === 'true' || admin2faRaw === 'false';
@@ -60,6 +64,11 @@ if (process.env.NODE_ENV === 'production' && admin2faRaw !== 'true') {
   console.error('   Admin 2FA cannot be disabled in production mode.');
   process.exit(1);
 }
+const ADMIN_2FA_REQUIRED = admin2faRaw === 'true';
+if (ADMIN_2FA_REQUIRED) {
+  console.log('🔐 ADMIN_2FA_REQUIRED=true: admin 2FA enforcement enabled');
+}
+export { ADMIN_2FA_REQUIRED };
 
 // Build CORS allowlist from all configured frontend URLs.
 // NEXT_PUBLIC_APP_URL is the canonical frontend, TUNNEL_APP_URL is the
@@ -151,21 +160,27 @@ app.use('/api/public', adminPublicRoutes);
 
 
 app.get('/health', async (_req, res) => {
-  const checks: Record<string, 'ok' | 'error'> = {};
+  const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; message?: string }> = {};
 
   // PostgreSQL check
+  const pgStart = Date.now();
   try {
     await query('SELECT 1');
-    checks.database = 'ok';
-  } catch {
-    checks.database = 'error';
+    checks.database = { status: 'ok', latencyMs: Date.now() - pgStart };
+  } catch (err) {
+    checks.database = { status: 'error', latencyMs: Date.now() - pgStart, message: (err as Error).message };
   }
 
   // Redis check (uses lazyConnect — explicit connect with timeout)
+  const redisStart = Date.now();
   const redisHealth = await redisHealthCheck();
-  checks.redis = redisHealth.ok ? 'ok' : 'error';
+  checks.redis = {
+    status: redisHealth.ok ? 'ok' : 'error',
+    latencyMs: Date.now() - redisStart,
+    ...(redisHealth.error ? { message: redisHealth.error } : {}),
+  };
 
-  const allHealthy = Object.values(checks).every((s) => s === 'ok');
+  const allHealthy = Object.values(checks).every((s) => s.status === 'ok');
   const statusCode = allHealthy ? 200 : 503;
 
   res.status(statusCode).json({

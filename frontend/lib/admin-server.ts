@@ -28,6 +28,12 @@ function internalApiBaseUrl(): string {
   return process.env.INTERNAL_API_URL || 'http://localhost:4000';
 }
 
+interface AuthMeResponse {
+  success?: boolean;
+  data?: AdminUser;
+  user?: Partial<AdminUser> & { isAdmin?: boolean; two_factor_enabled?: boolean };
+}
+
 export async function fetchAdminUser(token: string): Promise<AdminUser | null> {
   const base = internalApiBaseUrl();
   try {
@@ -43,11 +49,7 @@ export async function fetchAdminUser(token: string): Promise<AdminUser | null> {
       return null;
     }
 
-    const json = (await res.json()) as {
-      success?: boolean;
-      data?: AdminUser;
-      user?: Partial<AdminUser> & { isAdmin?: boolean };
-    };
+    const json = (await res.json()) as AuthMeResponse;
 
     if (!json.success) {
       return null;
@@ -71,4 +73,19 @@ export async function fetchAdminUser(token: string): Promise<AdminUser | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Gate used by the admin page. If the backend says the user is an admin
+ * and has 2FA enabled, the server renders the admin shell. Any client-side
+ * tampering of localStorage cannot bypass this check.
+ */
+export async function isAdminAuthorized(token: string): Promise<AdminUser | null> {
+  const user = await fetchAdminUser(token);
+  if (!user) return null;
+  // 2FA is mandatory for admin accounts. The backend also enforces this
+  // on login, but we double-check at the edge so a stolen JWT from a
+  // non-2FA session cannot reach the admin panel.
+  if (!user.two_factor_enabled) return null;
+  return user;
 }

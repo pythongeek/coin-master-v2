@@ -21,6 +21,7 @@ import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
+import { ADMIN_2FA_REQUIRED } from '../index';
 import { validateBody } from '../middleware/validation';
 import { authLimiter } from '../middleware/rate-limiter';
 import {
@@ -201,10 +202,8 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       });
     }
 
-    // Admin accounts MUST have 2FA enabled in production.
-    // Startup validation in index.ts guarantees ADMIN_2FA_REQUIRED is set.
-    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED === 'true';
-    if (enforceAdmin2FA && user.is_admin) {
+    // Admin accounts MUST have 2FA enabled when ADMIN_2FA_REQUIRED is true.
+    if (ADMIN_2FA_REQUIRED && user.is_admin) {
       return res.status(403).json({
         success: false,
         require2FASetup: true,
@@ -355,10 +354,8 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
       });
     }
 
-    // Admin accounts MUST have 2FA enabled in production.
-    // Startup validation in index.ts guarantees ADMIN_2FA_REQUIRED is set.
-    const enforceAdmin2FA = process.env.ADMIN_2FA_REQUIRED === 'true';
-    if (enforceAdmin2FA && u.is_admin) {
+    // Admin accounts MUST have 2FA enabled when ADMIN_2FA_REQUIRED is true.
+    if (ADMIN_2FA_REQUIRED && u.is_admin) {
       return res.status(403).json({
         success: false,
         require2FASetup: true,

@@ -174,7 +174,6 @@ export const useGameStore = create<GameStore>()(
         set({ user: null, token: null, lastResult: null, activeScatter: null, pendingScatter: null });
         if (typeof window !== 'undefined') {
           localStorage.removeItem('cf_token');
-          localStorage.removeItem('cf_user');
           import('@/lib/socket').then(({ clearToken }) => clearToken());
         }
       },
@@ -288,51 +287,55 @@ export const useGameStore = create<GameStore>()(
       version: 2,
       onRehydrateStorage: (state) => {
         // Some login flows (legacy + manual token injection) only write
-        // cf_token / cf_user. Make sure the Zustand store picks them up.
+        // cf_token. Make sure the Zustand store picks it up, but never
+        // trust client-side isAdmin — the backend validates role on every
+        // request.
         if (typeof window === 'undefined') return;
         if (state?.user && state?.token) return;
         try {
           const token = localStorage.getItem('cf_token');
-          const userJson = localStorage.getItem('cf_user');
-          if (token && userJson) {
-            const user = JSON.parse(userJson);
+          if (token) {
+            const payload = JSON.parse(atob(token.split('.')[1]));
             const parsedUser: User = {
-              userId: user.userId,
-              username: user.username,
-              email: user.email,
-              balance: user.balance,
-              isAdmin: user.isAdmin || false,
-              walletAddress: user.walletAddress,
-              isFlagged: user.isFlagged,
+              userId: payload.userId || payload.sub,
+              username: payload.username || 'player',
+              email: payload.email || null,
+              balance: payload.balance || 0,
+              isAdmin: false,
+              walletAddress: payload.walletAddress || null,
+              isFlagged: payload.isFlagged || false,
             };
             useGameStore.setState({ user: parsedUser, token });
           }
         } catch (e) {
-          console.warn('[store] rehydrate from cf_token/cf_user failed', e);
+          console.warn('[store] rehydrate from cf_token failed', e);
         }
       },
       migrate: (persistedState, version) => {
         if (version < 1 && typeof window !== 'undefined') {
           try {
             const legacyToken = localStorage.getItem('cf_token');
-            const legacyUserJson = localStorage.getItem('cf_user');
-            if (legacyToken && legacyUserJson) {
-              const legacyUser = JSON.parse(legacyUserJson);
+            if (legacyToken) {
+              // Decode JWT to derive the user instead of trusting a stale
+              // cf_user blob that may have been tampered with.
+              const payload = JSON.parse(atob(legacyToken.split('.')[1]));
               const state = (persistedState ?? {}) as Partial<GameStore>;
               return {
                 ...state,
                 token: legacyToken,
                 user: {
-                  userId: legacyUser.userId,
-                  username: legacyUser.username,
-                  email: legacyUser.email,
-                  balance: legacyUser.balance,
-                  isAdmin: legacyUser.isAdmin,
+                  userId: payload.userId || payload.sub,
+                  username: payload.username || 'player',
+                  email: payload.email || null,
+                  balance: payload.balance || 0,
+                  // NEVER trust client-side isAdmin; the backend validates role.
+                  isAdmin: false,
+                  walletAddress: payload.walletAddress || null,
                 },
               } as GameStore;
             }
           } catch (e) {
-            console.warn('[store] migration from cf_token/cf_user failed', e);
+            console.warn('[store] migration from cf_token failed', e);
           }
         }
         return persistedState as GameStore;
