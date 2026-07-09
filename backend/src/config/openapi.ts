@@ -6,6 +6,8 @@
  * the JSON and renders the docs at /api/docs.
  */
 
+const PUBLIC_APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://crazycoin.duckdns.org';
+
 export const openApiSpec = {
   openapi: '3.1.0',
   info: {
@@ -16,11 +18,11 @@ export const openApiSpec = {
       'All `/api/admin/*` and `/api/admin/withdrawals/*` routes require an ' +
       'authenticated user with the matching admin role and 2FA enabled. ' +
       'Most mutations are rate-limited (see per-route headers).',
-    contact: { name: 'CryptoFlip', url: 'https://crazycoin.duckdns.org' },
+    contact: { name: 'CryptoFlip', url: PUBLIC_APP_URL },
     license: { name: 'Proprietary' },
   },
   servers: [
-    { url: 'https://crazycoin.duckdns.org', description: 'Production' },
+    { url: PUBLIC_APP_URL, description: 'Production' },
     { url: 'http://localhost:4000', description: 'Local dev' },
   ],
   tags: [
