@@ -1,5 +1,6 @@
 import { PrismaClient, DepositStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import crypto from 'crypto';
 import { rateLockService } from './rate-lock.service';
 import { walletService } from './wallet.service';
 import { logger } from '../config/logger';
@@ -62,8 +63,7 @@ export class DepositService {
       ipAddress,
       deviceFingerprint
     );
-
-    const depositAddress = env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
+    const depositAddress = this.generateDepositAddress(userId);
     const memo = this.generateMemo(userId, lock.lockId);
 
     const expiresAt = new Date(Date.now() + DEPOSIT_EXPIRY_MS);
@@ -383,7 +383,25 @@ export class DepositService {
   }
 
   private generateDepositAddress(userId: string): string {
-    return env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
+    const hot = env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
+    if (env.DEPOSIT_ADDRESS_DERIVATION === 'per_user') {
+      // Derive a deterministic TRON address for this user from the hot wallet
+      // private key. We hash userId + private key to produce a new key pair;
+      // the resulting address is unique per user but recoverable by the operator.
+      const pk = env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED || env.HOT_WALLET_ADDRESS;
+      const seed = `${pk}:${userId}`;
+      const hash = crypto.createHash('sha256').update(seed).digest('hex');
+      // Use the first 64 hex chars as a private key. TronWeb private keys are 64
+      // hex chars; this is a deterministic derivation, not a standard BIP-32 path.
+      const { TronWeb } = require('tronweb');
+      const tw = new TronWeb({ fullHost: 'http://localhost:8090' });
+      const account = tw.address.fromPrivateKey(hash);
+      if (account && typeof account === 'string' && account.startsWith('T')) {
+        return account;
+      }
+      // Fall through to hot wallet if derivation somehow fails.
+    }
+    return hot;
   }
 
   private generateMemo(userId: string, lockId: string): string {
