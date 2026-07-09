@@ -29,5 +29,8 @@ export function getApiBase(): string {
     if (!process.env.NEXT_PUBLIC_API_URL) return '/api';
     return process.env.NEXT_PUBLIC_API_URL;
   }
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  // Server-side / SSR: reach the backend directly inside the container
+  // network via INTERNAL_API_URL. No localhost fallback is ever baked
+  // in, so production SSR cannot accidentally call http://localhost:4000.
+  return process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL || '';
 }

@@ -118,11 +118,13 @@ router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['supe
 // ══════════════════════════════════════════════════════════════
 router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
-    const [totalBets, todayBets, totalUsers, activeRain] = await Promise.all([
+    // Add houseProfit to the admin stats response.
+    const [totalBets, todayBets, totalUsers, activeRain, houseProfit] = await Promise.all([
       query('SELECT COUNT(*) as count, SUM(amount) as volume FROM bets'),
       query("SELECT COUNT(*) as count, SUM(amount) as volume FROM bets WHERE created_at > NOW() - INTERVAL '24 hours'"),
       query('SELECT COUNT(*) as count FROM users WHERE is_active = true'),
       query("SELECT COUNT(*) as count FROM crypto_rain_events WHERE status = 'active'"),
+      query('SELECT COALESCE(SUM(amount - payout), 0) as profit FROM bets'),
     ]);
 
     res.json({
@@ -134,6 +136,7 @@ router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
         todayVolume: parseFloat(todayBets.rows[0].volume || '0'),
         totalUsers: parseInt(totalUsers.rows[0].count),
         activeRainEvents: parseInt(activeRain.rows[0].count),
+        houseProfit: parseFloat(houseProfit.rows[0].profit || '0'),
       },
     });
   } catch (err) {

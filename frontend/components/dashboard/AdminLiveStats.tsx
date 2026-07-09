@@ -31,12 +31,23 @@ export default function AdminLiveStats() {
   const fetchStats = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
     try {
-      const res = await fetch(`${API}/dashboard/admin/live`, {
+      const res = await fetch(`${API}/admin/stats`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
-      if (data.success) {
-        setStats(data.data);
+      const json = await res.json();
+      if (json.success && json.stats) {
+        const s = json.stats;
+        setStats({
+          users: { total: s.totalUsers ?? 0, today: 0 }, // backend /admin/stats has no daily user count
+          bets: {
+            total: s.totalBets ?? 0,
+            totalVolume: s.totalVolume ?? 0,
+            today: s.todayBets ?? 0,
+            todayVolume: s.todayVolume ?? 0,
+          },
+          houseProfit: s.houseProfit ?? 0,
+          activeRains: s.activeRainEvents ?? 0,
+        });
         setLastUpdate(new Date());
       }
     } catch {
@@ -44,7 +55,7 @@ export default function AdminLiveStats() {
       if (!stats) setStats(null);
     }
     setLoading(false);
-  }, []);
+  }, [stats]);
 
   useEffect(() => {
     fetchStats();
