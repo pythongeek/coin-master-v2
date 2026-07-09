@@ -37,6 +37,7 @@ import affiliateRoutes from './routes/affiliate';
 import promoRoutes from './routes/promo';
 import bonusRoutes from './routes/bonus';
 import { ensureActiveSeed } from './services/server-seed';
+import depositRoutes from './routes/deposit';
 
 
 dotenv.config();
@@ -78,34 +79,32 @@ if (ADMIN_2FA_REQUIRED) {
 export { ADMIN_2FA_REQUIRED };
 
 // Build CORS allowlist from all configured frontend URLs.
-// NEXT_PUBLIC_APP_URL is the canonical frontend, TUNNEL_APP_URL is the
-// Cloudflare tunnel, and EXTRA_ALLOWED_ORIGINS is a comma-separated list
-// for dev/external-IP access (e.g. http://46.62.247.167:3002).
+// NEXT_PUBLIC_APP_URL is the canonical frontend, and EXTRA_ALLOWED_ORIGINS is a
+// comma-separated list for explicitly whitelisted dev/admin origins (e.g.
+// http://46.62.247.167:3003). Cloudflare tunnel domains and wildcard entries
+// are NEVER accepted; the upstream nginx proxy must terminate those before
+// traffic reaches the backend.
 const allowedOrigins = new Set<string>();
 
 // NEXT_PUBLIC_APP_URL is the canonical frontend URL (e.g. https://app.cryptoflip.com).
 // We never fall back to a wildcard localhost in production; missing config is a fatal error.
 if (process.env.NEXT_PUBLIC_APP_URL) allowedOrigins.add(process.env.NEXT_PUBLIC_APP_URL);
 
-if (process.env.NODE_ENV !== 'production') {
-  // In dev/staging only, allow explicit tunnel or extra origins.
-  if (process.env.TUNNEL_APP_URL) allowedOrigins.add(process.env.TUNNEL_APP_URL);
-  if (process.env.EXTRA_ALLOWED_ORIGINS) {
-    for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
-      const t = o.trim();
-      if (t) allowedOrigins.add(t);
+// In all environments, only allow explicit extra origins. Reject any wildcard
+// or tunnel-looking entries that could let an attacker bypass the gate.
+if (process.env.EXTRA_ALLOWED_ORIGINS) {
+  for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
+    const t = o.trim();
+    if (!t) continue;
+    // Block tunnel/wildcard domains (case-insensitive)
+    if (/[*]|\.trycloudflare\.com$/i.test(t) || /\.ngrok\.io$/i.test(t) || /\.ngrok-free\.app$/i.test(t)) {
+      console.warn('CORS: rejecting insecure origin:', t);
+      continue;
     }
-  }
-} else {
-  // In production, also allow explicitly configured admin / operator
-  // origins so the hidden admin vhost (e.g. :3003) can talk to the API.
-  if (process.env.EXTRA_ALLOWED_ORIGINS) {
-    for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
-      const t = o.trim();
-      if (t) allowedOrigins.add(t);
-    }
+    allowedOrigins.add(t);
   }
 }
+
 
 const corsOrigin = Array.from(allowedOrigins);
 if (process.env.NODE_ENV === 'production' && corsOrigin.length === 0) {
@@ -195,6 +194,7 @@ app.use('/metrics', metricsRoutes);
 app.use('/api/payment', paymentRoutes);
 // Alternative public banner route (avoids /api/admin prefix collision)
 app.use('/api/public', adminPublicRoutes);
+app.use('/api/deposit', depositRoutes);
 
 
 app.get('/api/health', async (_req, res) => {

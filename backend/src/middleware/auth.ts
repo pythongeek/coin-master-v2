@@ -16,6 +16,12 @@ export interface AuthPayload {
   username: string;
   isAdmin: boolean;
   role?: string;
+  /** Alias for userId, provided for v2-pro module compatibility. */
+  id?: string;
+}
+
+export interface AuthRequest extends Request {
+  user: AuthPayload;
 }
 
 /**
@@ -33,7 +39,7 @@ const JWT_SECRET = ((): string => {
 export { JWT_SECRET };
 
 // JWT টোকেন যাচাই করো
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export function authMiddleware(req: Request, res: Response, next: NextFunction): Response | void {
   const token = req.headers.authorization?.replace('Bearer ', '');
 
   if (!token) {
@@ -45,7 +51,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     if (decoded.isTemp) {
       return res.status(401).json({ success: false, error: '২এফএ যাচাইকরণ সম্পন্ন করুন।' });
     }
-    (req as Request & { user: AuthPayload }).user = decoded;
+    (req as Request & { user: AuthPayload }).user = { ...decoded, id: decoded.userId };
     next();
   } catch {
     return res.status(401).json({ success: false, error: 'টোকেন মেয়াদ শেষ বা ভুল। আবার লগইন করুন।' });

@@ -9,10 +9,14 @@
  */
 
 import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import Link from 'next/link';
 import { AlertCircle, LogOut } from 'lucide-react';
 import { isAdminAuthorized } from '@/lib/admin-server';
 import AdminClientShell from '@/components/dashboard/AdminClientShell';
+
+export const runtime = 'edge';
 
 export default async function AdminPage() {
   const cookieStore = await cookies();

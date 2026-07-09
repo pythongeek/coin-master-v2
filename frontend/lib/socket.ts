@@ -18,7 +18,7 @@ function getSocketUrl(): string {
     }
     return process.env.NEXT_PUBLIC_SOCKET_URL;
   }
-  // Allow NEXT_PUBLIC_SOCKET_URL to override (e.g. tunnel or staging).
+  // Allow NEXT_PUBLIC_SOCKET_URL to override (e.g. staging).
   if (process.env.NEXT_PUBLIC_SOCKET_URL) return process.env.NEXT_PUBLIC_SOCKET_URL;
   // Production: use same origin so nginx proxies /socket.io
   return window.location.origin;

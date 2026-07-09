@@ -12,10 +12,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Banknote, Landmark, Dices, CloudRain, type LucideIcon } from 'lucide-react';
 
-const API =
-  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL;
+import { getApiBase } from '@/lib/api/base';
+
+const API = getApiBase();
 
 interface LiveStats {
   users:       { total: number; today: number };

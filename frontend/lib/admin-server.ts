@@ -86,8 +86,6 @@ export async function isAdminAuthorized(token: string): Promise<AdminUser | null
   // 2FA is mandatory for admin accounts when ADMIN_2FA_REQUIRED is enabled.
   // The backend also enforces this on login, but we double-check at the edge
   // so a stolen JWT from a non-2FA session cannot reach the admin panel.
-  // NOTE: temporarily relaxed while the operator is setting up the panel.
-  // Re-enable the check below before going live.
-  // if (!user.two_factor_enabled) return null;
+  if (!user.two_factor_enabled) return null;
   return user;
 }
