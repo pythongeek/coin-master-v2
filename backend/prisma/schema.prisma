@@ -1,0 +1,330 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum RateSourceType {
+  binance_p2p
+  binance_spot
+  bangladesh_bank
+  custom
+  manual_override
+}
+
+enum RateLockStatus {
+  active
+  consumed
+  expired
+  cancelled
+}
+
+enum DepositStatus {
+  initiated
+  rate_locked
+  awaiting_payment
+  payment_detected
+  confirming
+  completed
+  failed
+  expired
+  refunded
+}
+
+enum CurrencyCode {
+  BDT
+  USD
+  USDT
+}
+
+enum LedgerEntryType {
+  deposit
+  withdrawal
+  bet
+  win
+  loss
+  refund
+  admin_adjustment
+  fee
+  transfer_in
+  transfer_out
+}
+
+enum AdminActionType {
+  balance_adjustment
+  rate_override
+  seed_rotation
+  config_change
+  withdrawal_approval
+  kyc_manual_review
+}
+
+enum AdminApprovalStatus {
+  pending
+  approved
+  rejected
+  executed
+  cancelled
+}
+
+// ==================== MODELS ====================
+
+model ExchangeRate {
+  id              String         @id @default(uuid()) @db.Uuid
+  currencyPair    String         @map("currency_pair")
+  baseCurrency    String         @map("base_currency")
+  quoteCurrency   String         @map("quote_currency")
+
+  rate            Decimal        @db.Decimal(20, 10)
+  inverseRate     Decimal        @map("inverse_rate") @db.Decimal(20, 10)
+
+  sourceType      RateSourceType @map("source_type")
+  sourceUrl       String?        @map("source_url")
+  sourceResponse  Json?          @map("source_response") @db.JsonB
+
+  buySpread       Decimal        @default(0) @map("buy_spread") @db.Decimal(5, 4)
+  sellSpread      Decimal        @default(0) @map("sell_spread") @db.Decimal(5, 4)
+
+  effectiveBuyRate   Decimal     @map("effective_buy_rate") @db.Decimal(20, 10)
+  effectiveSellRate  Decimal     @map("effective_sell_rate") @db.Decimal(20, 10)
+
+  fetchedAt       DateTime       @map("fetched_at")
+  expiresAt       DateTime       @map("expires_at")
+  isStale         Boolean        @default(false) @map("is_stale")
+
+  setById         String?        @map("set_by_id") @db.Uuid
+  customJustification String?    @map("custom_justification")
+  isPlatformDefault   Boolean    @default(false) @map("is_platform_default")
+
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([currencyPair, isPlatformDefault])
+  @@index([currencyPair, fetchedAt])
+  @@index([sourceType, isPlatformDefault])
+  @@map("exchange_rates")
+}
+
+model RateLock {
+  id              String         @id @default(uuid()) @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+
+  currencyPair    String         @map("currency_pair")
+
+  lockedRate      Decimal        @map("locked_rate") @db.Decimal(20, 10)
+  lockedInverseRate Decimal      @map("locked_inverse_rate") @db.Decimal(20, 10)
+
+  direction       String
+
+  inputAmount     Decimal        @map("input_amount") @db.Decimal(20, 8)
+  outputAmount    Decimal        @map("output_amount") @db.Decimal(20, 8)
+
+  exchangeRateId  String         @map("exchange_rate_id") @db.Uuid
+
+  lockedAt        DateTime       @default(now()) @map("locked_at")
+  expiresAt       DateTime       @map("expires_at")
+  status          RateLockStatus @default(active)
+
+  consumedAt      DateTime?      @map("consumed_at")
+  consumedByTxId  String?        @map("consumed_by_tx_id") @db.Uuid
+
+  ipAddress       String?        @map("ip_address")
+  deviceFingerprint String?      @map("device_fingerprint")
+
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  @@index([userId, status])
+  @@index([expiresAt, status])
+  @@map("rate_locks")
+}
+
+model DepositTransaction {
+  id              String          @id @default(uuid()) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  currencyId      String          @map("currency_id") @db.Uuid
+
+  rateLockId      String?         @map("rate_lock_id") @db.Uuid
+
+  blockchainNetwork String?       @map("blockchain_network")
+  fromAddress     String?         @map("from_address")
+  toAddress       String          @map("to_address")
+  blockchainTxId  String?         @map("blockchain_tx_id")
+  blockNumber     Int?            @map("block_number")
+  confirmations   Int             @default(0) @map("confirmations")
+  requiredConfirmations Int       @default(19) @map("required_confirmations")
+
+  cryptoAmount    Decimal         @map("crypto_amount") @db.Decimal(20, 8)
+  fiatEquivalent  Decimal         @map("fiat_equivalent") @db.Decimal(20, 8)
+  platformFee     Decimal         @default(0) @map("platform_fee") @db.Decimal(20, 8)
+  netCreditAmount Decimal         @map("net_credit_amount") @db.Decimal(20, 8)
+
+  status          DepositStatus   @default(initiated)
+  statusHistory   Json[]          @map("status_history") @db.JsonB
+
+  failureReason   String?         @map("failure_reason")
+  retryCount      Int             @default(0) @map("retry_count")
+
+  initiatedAt     DateTime        @default(now()) @map("initiated_at")
+  lockedAt        DateTime?       @map("locked_at")
+  detectedAt      DateTime?         @map("detected_at")
+  confirmedAt     DateTime?         @map("confirmed_at")
+  completedAt     DateTime?         @map("completed_at")
+  expiredAt       DateTime?         @map("expired_at")
+  expiresAt       DateTime          @map("expires_at")
+
+  ledgerEntryId   String?         @map("ledger_entry_id") @db.Uuid
+
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([blockchainTxId])
+  @@index([toAddress, status])
+  @@index([status, createdAt])
+  @@map("deposit_transactions")
+}
+
+model CustomRateConfig {
+  id              String         @id @default(uuid()) @db.Uuid
+  currencyPair    String         @map("currency_pair")
+
+  customRate      Decimal        @map("custom_rate") @db.Decimal(20, 10)
+  inverseRate     Decimal        @map("inverse_rate") @db.Decimal(20, 10)
+
+  buySpread       Decimal        @default(0) @map("buy_spread") @db.Decimal(5, 4)
+  sellSpread      Decimal        @default(0) @map("sell_spread") @db.Decimal(5, 4)
+
+  isActive        Boolean        @default(true) @map("is_active")
+  isPlatformDefault Boolean      @default(false) @map("is_platform_default")
+
+  setById         String         @map("set_by_id") @db.Uuid
+  justification   String
+
+  validFrom       DateTime       @default(now()) @map("valid_from")
+  validUntil      DateTime?      @map("valid_until")
+
+  autoRevert      Boolean        @default(true) @map("auto_revert")
+
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@index([currencyPair, isPlatformDefault])
+  @@index([currencyPair, isActive])
+  @@map("custom_rate_configs")
+}
+
+model Currency {
+  id                String       @id @default(uuid()) @db.Uuid
+  code              CurrencyCode @unique
+  name              String
+  symbol            String
+  decimalPlaces     Int          @default(2) @map("decimal_places")
+
+  exchangeRate      Decimal      @map("exchange_rate") @db.Decimal(20, 10)
+  exchangeRateUpdatedAt DateTime @map("exchange_rate_updated_at")
+
+  isDefault         Boolean      @default(false) @map("is_default")
+  isActive          Boolean      @default(true) @map("is_active")
+
+  minDeposit        Decimal?     @map("min_deposit") @db.Decimal(20, 8)
+  maxDeposit        Decimal?     @map("max_deposit") @db.Decimal(20, 8)
+  minWithdrawal     Decimal?     @map("min_withdrawal") @db.Decimal(20, 8)
+  maxWithdrawal     Decimal?     @map("max_withdrawal") @db.Decimal(20, 8)
+  withdrawalFee     Decimal?     @map("withdrawal_fee") @db.Decimal(20, 8)
+
+  blockchainNetwork String?      @map("blockchain_network")
+  contractAddress   String?      @map("contract_address")
+
+  updatedById       String?      @map("updated_by_id") @db.Uuid
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  @@index([isDefault])
+  @@index([isActive])
+  @@map("currencies")
+}
+
+model UserBalance {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  currencyId        String   @map("currency_id") @db.Uuid
+
+  availableBalance  Decimal  @map("available_balance") @db.Decimal(20, 8)
+  reservedBalance   Decimal  @default(0) @map("reserved_balance") @db.Decimal(20, 8)
+
+  totalDeposited    Decimal  @default(0) @map("total_deposited") @db.Decimal(20, 8)
+  totalWithdrawn    Decimal  @default(0) @map("total_withdrawn") @db.Decimal(20, 8)
+  totalWagered      Decimal  @default(0) @map("total_wagered") @db.Decimal(20, 8)
+  totalWon          Decimal  @default(0) @map("total_won") @db.Decimal(20, 8)
+  totalLost         Decimal  @default(0) @map("total_lost") @db.Decimal(20, 8)
+
+  version           Int      @default(0)
+
+  lastUpdatedAt     DateTime @default(now()) @map("last_updated_at")
+
+  @@unique([userId, currencyId])
+  @@index([userId])
+  @@index([currencyId])
+  @@map("user_balances")
+}
+
+model LedgerEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  currencyId      String          @map("currency_id") @db.Uuid
+
+  entryType       LedgerEntryType @map("entry_type")
+  amount          Decimal         @db.Decimal(20, 8)
+  balanceBefore   Decimal         @map("balance_before") @db.Decimal(20, 8)
+  balanceAfter    Decimal         @map("balance_after") @db.Decimal(20, 8)
+
+  sessionId       String?         @map("session_id") @db.Uuid
+  gameRoundId     String?         @map("game_round_id") @db.Uuid
+  referenceId     String?         @unique @map("reference_id")
+
+  previousHash    String          @map("previous_hash")
+  currentHash     String          @map("current_hash")
+  signature       String
+
+  metadata        Json?           @db.JsonB
+
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  @@index([userId, currencyId, createdAt])
+  @@index([referenceId])
+  @@index([entryType])
+  @@map("ledger_entries")
+}
+
+model AdminAction {
+  id              String              @id @default(uuid()) @db.Uuid
+  adminId         String              @map("admin_id") @db.Uuid
+
+  actionType      AdminActionType     @map("action_type")
+  targetType      String              @map("target_type")
+  targetId        String              @map("target_id") @db.Uuid
+
+  oldValue        Json?               @map("old_value") @db.JsonB
+  newValue        Json?               @map("new_value") @db.JsonB
+  justification   String
+
+  approvalStatus  AdminApprovalStatus @default(pending) @map("approval_status")
+  approvedById    String?             @map("approved_by_id") @db.Uuid
+  approvedAt      DateTime?           @map("approved_at")
+  executedAt      DateTime?           @map("executed_at")
+
+  ipAddress       String?             @map("ip_address")
+  userAgent       String?             @map("user_agent")
+
+  createdAt       DateTime            @default(now()) @map("created_at")
+
+  @@index([adminId, createdAt])
+  @@index([approvalStatus])
+  @@index([targetType, targetId])
+  @@map("admin_actions")
+}

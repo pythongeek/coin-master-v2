@@ -10,6 +10,8 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { Decimal } from '@prisma/client/runtime/library';
+import { PrismaClient } from '@prisma/client';
 import {
   getConfig, updateConfig, updateAllConfig,
   resetToDefaults, CONFIG_LABELS, DEFAULT_CONFIG, GameConfig
@@ -661,6 +663,106 @@ router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super
     );
     res.json({ success: true, users: result.rows });
   } catch (err: unknown) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DEPOSIT & RATE MANAGEMENT
+// ══════════════════════════════════════════════════════════════
+
+import { customRateService } from '../services/custom-rate.service';
+import { depositService } from '../services/deposit.service';
+
+// GET /api/admin/rates — list active custom rates
+router.get('/rates', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const pair = req.query.pair as string | undefined;
+    const rates = await customRateService.listCustomRates(pair);
+    res.json({ success: true, data: rates });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// GET /api/admin/deposits/queue — pending deposit queue
+router.get('/deposits/queue', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    const prisma = new PrismaClient();
+    const queue = await prisma.depositTransaction.findMany({
+      where: { status: { in: ['rate_locked', 'awaiting_payment', 'payment_detected', 'confirming'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    res.json({ success: true, count: queue.length, data: queue });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/deposits/:depositId/force-complete — manually complete a deposit
+router.post('/deposits/:depositId/force-complete', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const { depositId } = req.params;
+    await depositService.confirmDeposit(depositId as string, 999);
+    res.json({ success: true, message: 'Deposit force-completed' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/deposits/expire-old — manually expire timed-out deposits
+router.post('/deposits/expire-old', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (_req: Request, res: Response) => {
+  try {
+    const count = await depositService.expireOldDeposits();
+    res.json({ success: true, count });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/rates/custom — set a custom rate override
+router.post('/rates/custom', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+  try {
+    const { pair, customRate, buySpread, sellSpread, justification, validUntil } = req.body;
+    if (!pair || !customRate || !buySpread || !sellSpread || !justification) {
+      return res.status(400).json({ success: false, error: 'pair, customRate, buySpread, sellSpread, justification required' });
+    }
+    const user = (req as Request & { user?: AuthPayload }).user;
+    if (!user?.id) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    const result = await customRateService.setCustomRate(
+      user.id,
+      pair as string,
+      new Decimal(customRate),
+      new Decimal(buySpread),
+      new Decimal(sellSpread),
+      justification as string,
+      new Date(),
+      validUntil ? new Date(validUntil) : undefined,
+      true
+    );
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/rates/revert — revert a custom rate to market
+router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+  try {
+    const { pair, justification } = req.body;
+    if (!pair || !justification) {
+      return res.status(400).json({ success: false, error: 'pair and justification required' });
+    }
+    const user = (req as Request & { user?: AuthPayload }).user;
+    if (!user?.id) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    await customRateService.revertToMarketRate(user.id, pair, justification);
+    res.json({ success: true, message: 'Reverted to market rate' });
+  } catch (err) {
     res.status(500).json({ success: false, error: String(err) });
   }
 });

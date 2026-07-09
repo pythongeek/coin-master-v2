@@ -15,7 +15,7 @@ router.use(authMiddleware as RequestHandler);
 router.use(globalLimiter as RequestHandler);
 
 router.post('/initiate', depositController.initiateDeposit as RequestHandler);
-router.get('/:depositId/status', depositController.getDepositStatus as RequestHandler);
 router.get('/history', depositController.getDepositHistory as RequestHandler);
+router.get('/:depositId/status', depositController.getDepositStatus as RequestHandler);
 
 export default router;

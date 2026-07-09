@@ -21,11 +21,14 @@ CMD ["npm", "run", "dev"]
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npx prisma generate
 RUN npm run build
 
 # ── ধাপ ৪: প্রোডাকশন রানার ─────────────────────────────────────
 FROM base AS production
 ENV NODE_ENV=production
+
+RUN apk add --no-cache openssl
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 backend
@@ -36,7 +39,10 @@ RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder --chown=backend:nodejs /app/dist ./dist
 COPY --chown=backend:nodejs migrations ./migrations
+COPY --chown=backend:nodejs prisma ./prisma
 COPY --chown=backend:nodejs tesseract-lang ./tesseract-lang
+RUN npx prisma generate
+RUN mkdir -p /app/logs && chown backend:nodejs /app/logs
 
 USER backend
 EXPOSE 4000

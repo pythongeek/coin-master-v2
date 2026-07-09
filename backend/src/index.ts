@@ -20,6 +20,7 @@ import { csrfMiddleware, helmetConfig } from './middleware/security';
 import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
+import { tronDepositMonitor } from './services/tron-deposit-monitor';
 import docsRoutes from './routes/docs';
 import router from './routes/metrics';
 
@@ -260,6 +261,9 @@ async function start() {
   
   startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
   
+  // Start TronGrid deposit monitor to detect incoming USDT payments
+  tronDepositMonitor.start();
+
   // Start periodic S3/local audit backup (every 1 hour)
   startAuditBackupWorker(3600000);
 

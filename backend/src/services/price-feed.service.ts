@@ -103,45 +103,40 @@ export class PriceFeedService {
 
     const effectiveRate = direction === 'buy' ? effectiveBuyRate : effectiveSellRate;
 
-    const stored = await prisma.exchangeRate.upsert({
-      where: {
-        currencyPair_isPlatformDefault: {
-          currencyPair: pair,
-          isPlatformDefault: true,
-        },
-      },
-      create: {
-        currencyPair: pair,
-        baseCurrency: marketRate.baseCurrency,
-        quoteCurrency: marketRate.quoteCurrency,
-        rate: marketRate.rate,
-        inverseRate: marketRate.inverseRate,
-        sourceType: marketRate.source,
-        sourceUrl: marketRate.sourceUrl,
-        sourceResponse: marketRate.rawResponse,
-        buySpread,
-        sellSpread,
-        effectiveBuyRate,
-        effectiveSellRate,
-        fetchedAt: marketRate.timestamp,
-        isPlatformDefault: true,
-        expiresAt: new Date(Date.now() + this.STALE_THRESHOLD_MS),
-      },
-      update: {
-        rate: marketRate.rate,
-        inverseRate: marketRate.inverseRate,
-        sourceType: marketRate.source,
-        sourceUrl: marketRate.sourceUrl,
-        sourceResponse: marketRate.rawResponse,
-        buySpread,
-        sellSpread,
-        effectiveBuyRate,
-        effectiveSellRate,
-        fetchedAt: marketRate.timestamp,
-        isStale: false,
-        expiresAt: new Date(Date.now() + this.STALE_THRESHOLD_MS),
-      },
+    const existingDefault = await prisma.exchangeRate.findFirst({
+      where: { currencyPair: pair, isPlatformDefault: true },
+      orderBy: { createdAt: 'desc' },
     });
+
+    const commonRateData = {
+      rate: marketRate.rate,
+      inverseRate: marketRate.inverseRate,
+      sourceType: marketRate.source,
+      sourceUrl: marketRate.sourceUrl,
+      sourceResponse: marketRate.rawResponse,
+      buySpread,
+      sellSpread,
+      effectiveBuyRate,
+      effectiveSellRate,
+      fetchedAt: marketRate.timestamp,
+      isStale: false,
+      expiresAt: new Date(Date.now() + this.STALE_THRESHOLD_MS),
+      isPlatformDefault: true,
+    };
+
+    const stored = existingDefault
+      ? await prisma.exchangeRate.update({
+          where: { id: existingDefault.id },
+          data: commonRateData,
+        })
+      : await prisma.exchangeRate.create({
+          data: {
+            currencyPair: pair,
+            baseCurrency: marketRate.baseCurrency,
+            quoteCurrency: marketRate.quoteCurrency,
+            ...commonRateData,
+          },
+        });
 
     await redis.setex(cacheKey, this.CACHE_TTL, JSON.stringify({
       rate: marketRate.rate.toString(),
