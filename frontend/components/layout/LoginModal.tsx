@@ -21,6 +21,7 @@ import { storeToken, reconnectWithToken } from '@/lib/socket';
 import { getBrowserFingerprint } from '@/utils/fingerprint';
 import { trackEvent, identifyUser } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
+import { setTokenCookie } from '@/lib/auth-cookies';
 
 const API = '/api';
 
@@ -56,8 +57,12 @@ export default function LoginModal({ onClose }: Props) {
 
     storeToken(data.token);
     localStorage.setItem('cf_token', data.token);
+    setTokenCookie(data.token);
     // Do NOT store cf_user; derive user from JWT on rehydrate to avoid
     // trusting client-side isAdmin. The backend validates role.
+
+    // Update client-side store so the UI reflects logged-in state immediately.
+    login({ user, token: data.token });
 
     // Upgrade socket connection with the token so game bets can be sent
     reconnectWithToken(data.token);

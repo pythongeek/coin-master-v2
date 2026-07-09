@@ -7,10 +7,9 @@
 import { useState, useCallback } from "react";
 import { Gift, Loader2, Lock } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
-const API =
-  typeof window !== "undefined" && !window.location.host.startsWith("localhost:") && window.location.host !== "localhost"
-    ? "/api"
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+import { getApiBase } from '@/lib/api/base';
+
+const API = getApiBase();
 
 interface WheelData {
   enabled: boolean;

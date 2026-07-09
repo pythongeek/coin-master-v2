@@ -41,8 +41,18 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
     }
 
     // 1. Fetch user actual balance with FOR UPDATE
+    // The live DB uses split balances: bonus_balance_coins and withdrawable_balance_coins.
+    // The legacy `balance` column is derived by the sync_user_balance trigger.
+    // Therefore we must reconcile the actual sub-balances against the ledger
+    // events that affect them, not just the derived total.
     const userRes = await client.query(
-      'SELECT balance, is_active FROM users WHERE id = $1 FOR UPDATE',
+      `SELECT balance,
+              bonus_balance_coins,
+              withdrawable_balance_coins,
+              wagering_required_coins,
+              wagering_completed_coins,
+              is_active
+         FROM users WHERE id = $1 FOR UPDATE`,
       [userId]
     );
 
@@ -52,29 +62,19 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
 
     const userRow = userRes.rows[0];
     const actualUserBalance = parseFloat(userRow.balance);
+    const actualBonusBalance = parseFloat(userRow.bonus_balance_coins || '0');
+    const actualWithdrawableBalance = parseFloat(userRow.withdrawable_balance_coins || '0');
+    const actualWageringRequired = parseFloat(userRow.wagering_required_coins || '0');
+    const actualWageringCompleted = parseFloat(userRow.wagering_completed_coins || '0');
 
-    // 2. Fetch expected user balance components.
-    //
-    // The merged schema uses status = 'completed' for finished
-    // transactions, but the live DB uses 'confirmed' (the pre-merge
-    // schema's vocabulary). Including both keeps the reconcile in
-    // sync with either data set — see the related fix in
-    // `auth.ts` register (writes a 'bonus' tx with status='confirmed'
-    // for the welcome bonus) and the constraint update that
-    // allowed both values in `transactions_status_check`.
-    //
-    // The merged code's reconcileUser originally only counted
-    // `deposits`, missing the welcome `bonus` transactions written
-    // by the register flow. Without the bonus being part of the
-    // expected balance, every fresh user with a $10 welcome bonus
-    // would be flagged as compromised (actual=10, expected=0) and
-    // frozen on their first bet. We add bonus to the sum here so
-    // the welcome credit is part of the user's legitimate balance.
+    // 2. Fetch expected user balance components from the ledger.
+    //    Only deposits and withdrawals directly move withdrawable funds.
+    //    Bonus credits are tracked separately in bonus_claims.
     const depRes = await client.query(
       `SELECT COALESCE(SUM(amount), 0) as total
        FROM transactions
        WHERE user_id = $1
-         AND type IN ('deposit', 'bonus')
+         AND type = 'deposit'
          AND status IN ('completed', 'confirmed')`,
       [userId]
     );
@@ -91,7 +91,9 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
     );
     const withdrawals = parseFloat(wdRes.rows[0].total);
 
-    // Bets resolved (won/lost)
+    // Bets resolved (won/lost). Payouts are credited to the same source
+    // used for the debit, so the net P&L across all resolved bets matches
+    // the movement in withdrawable+bonus combined.
     const betRes = await client.query(
       "SELECT COALESCE(SUM(payout - amount), 0) as total FROM bets WHERE user_id = $1 AND status = 'resolved'",
       [userId]
@@ -115,8 +117,31 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
     );
     const rainClaims = parseFloat(rainRes.rows[0].total);
 
-    const expectedUserBalance = deposits - withdrawals + bets + squadFlips + rainClaims;
+    // Bonus claims: expected bonus_balance = SUM(amount_coins) - SUM(cancelled/forfeited amount)
+    // For active/completed claims, the full amount was credited to bonus_balance_coins.
+    const bonusRes = await client.query(
+      `SELECT COALESCE(SUM(amount_coins), 0) as total
+       FROM bonus_claims
+       WHERE user_id = $1 AND status IN ('active', 'completed')`,
+      [userId]
+    );
+    const bonusCredits = parseFloat(bonusRes.rows[0].total);
+
+    // Expected totals from the ledger.
+    const expectedUserBalance = deposits - withdrawals + bets + squadFlips + rainClaims + bonusCredits;
     const userBalanceMismatch = Math.abs(expectedUserBalance - actualUserBalance);
+
+    // 2a. Split-balance checks.
+    // Withdrawable balance should be deposits - withdrawals + withdrawable portion of bet P&L.
+    // The exact split per bet is not stored historically, so we cannot reconstruct it
+    // perfectly from legacy data. However, all bets currently debit from the source chosen
+    // at bet time, and credits return to the same source. The worst-case mismatch is bounded
+    // by the bonus_balance_coins. We therefore assert the invariant that total balance equals
+    // bonus + withdrawable, and verify bonus_balance against the bonus_claims ledger.
+    const splitBalanceMismatch = Math.abs(actualUserBalance - (actualBonusBalance + actualWithdrawableBalance));
+    const bonusBalanceMismatch = Math.abs(actualBonusBalance - bonusCredits);
+    const expectedWithdrawable = expectedUserBalance - bonusCredits;
+    const withdrawableBalanceMismatch = Math.abs(expectedWithdrawable - actualWithdrawableBalance);
 
     let isCompromised = false;
     let userAlertId: string | null = null;
@@ -134,11 +159,49 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
           expectedUserBalance,
           actualUserBalance,
           expectedUserBalance - actualUserBalance,
-          JSON.stringify({ deposits, withdrawals, bets, squadFlips, rainClaims })
+          JSON.stringify({ deposits, withdrawals, bets, squadFlips, rainClaims, bonusCredits })
         ]
       );
       userAlertId = alertRes.rows[0].id;
     }
+
+    // Split-balance invariant alerts
+    if (splitBalanceMismatch > TOLERANCE) {
+      isCompromised = true;
+      await client.query(
+        `INSERT INTO ledger_alerts 
+          (user_id, alert_type, expected_balance, actual_balance, mismatch_amount, currency, details)
+         VALUES ($1, 'split_balance_invariant', $2, $3, $4, 'USDT', $5)`,
+        [
+          userId,
+          actualBonusBalance + actualWithdrawableBalance,
+          actualUserBalance,
+          splitBalanceMismatch,
+          JSON.stringify({ actualBonusBalance, actualWithdrawableBalance, actualUserBalance })
+        ]
+      );
+    }
+
+    if (bonusBalanceMismatch > TOLERANCE) {
+      isCompromised = true;
+      await client.query(
+        `INSERT INTO ledger_alerts 
+          (user_id, alert_type, expected_balance, actual_balance, mismatch_amount, currency, details)
+         VALUES ($1, 'bonus_balance_mismatch', $2, $3, $4, 'USDT', $5)`,
+        [
+          userId,
+          bonusCredits,
+          actualBonusBalance,
+          bonusBalanceMismatch,
+          JSON.stringify({ bonusCredits, actualBonusBalance, actualWageringRequired, actualWageringCompleted })
+        ]
+      );
+    }
+
+    // We do not alert on withdrawableBalanceMismatch because the historical split
+    // per bet is not stored; we only alert when the derived total or bonus ledger
+    // is inconsistent. A dedicated withdrawable mismatch would require storing
+    // per-bet source, which is out of scope for this hotfix.
 
     // 3. Fetch user wallets with FOR UPDATE
     const walletsRes = await client.query(

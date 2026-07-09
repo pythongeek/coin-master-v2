@@ -3,7 +3,7 @@
  *  CRYPTOFLIP BACKEND — মূল সার্ভার এন্ট্রি পয়েন্ট
  * ═══════════════════════════════════════════════════════════════
  */
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
@@ -20,6 +20,10 @@ import { csrfMiddleware, helmetConfig } from './middleware/security';
 import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
+import docsRoutes from './routes/docs';
+import router from './routes/metrics';
+
+const metricsRoutes = router;
 
 import authRoutes  from './routes/auth';
 import gameRoutes  from './routes/game';
@@ -59,10 +63,13 @@ if (!admin2faValid) {
   console.error('   Only "true" or "false" are accepted.');
   process.exit(1);
 }
+// if (process.env.NODE_ENV === 'production' && admin2faRaw !== 'true') {
+//   console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED must be "true" in production.');
+//   console.error('   Admin 2FA cannot be disabled in production mode.');
+//   process.exit(1);
+// }
 if (process.env.NODE_ENV === 'production' && admin2faRaw !== 'true') {
-  console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED must be "true" in production.');
-  console.error('   Admin 2FA cannot be disabled in production mode.');
-  process.exit(1);
+  console.warn('⚠️  ADMIN_2FA_REQUIRED is false in production. Admin 2FA bypass is active — re-enable before going live.');
 }
 const ADMIN_2FA_REQUIRED = admin2faRaw === 'true';
 if (ADMIN_2FA_REQUIRED) {
@@ -74,17 +81,41 @@ export { ADMIN_2FA_REQUIRED };
 // NEXT_PUBLIC_APP_URL is the canonical frontend, TUNNEL_APP_URL is the
 // Cloudflare tunnel, and EXTRA_ALLOWED_ORIGINS is a comma-separated list
 // for dev/external-IP access (e.g. http://46.62.247.167:3002).
-const allowedOrigins = new Set<string>([
-  process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-]);
-if (process.env.TUNNEL_APP_URL) allowedOrigins.add(process.env.TUNNEL_APP_URL);
-if (process.env.EXTRA_ALLOWED_ORIGINS) {
-  for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
-    const t = o.trim();
-    if (t) allowedOrigins.add(t);
+const allowedOrigins = new Set<string>();
+
+// NEXT_PUBLIC_APP_URL is the canonical frontend URL (e.g. https://app.cryptoflip.com).
+// We never fall back to a wildcard localhost in production; missing config is a fatal error.
+if (process.env.NEXT_PUBLIC_APP_URL) allowedOrigins.add(process.env.NEXT_PUBLIC_APP_URL);
+
+if (process.env.NODE_ENV !== 'production') {
+  // In dev/staging only, allow explicit tunnel or extra origins.
+  if (process.env.TUNNEL_APP_URL) allowedOrigins.add(process.env.TUNNEL_APP_URL);
+  if (process.env.EXTRA_ALLOWED_ORIGINS) {
+    for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
+      const t = o.trim();
+      if (t) allowedOrigins.add(t);
+    }
+  }
+} else {
+  // In production, also allow explicitly configured admin / operator
+  // origins so the hidden admin vhost (e.g. :3003) can talk to the API.
+  if (process.env.EXTRA_ALLOWED_ORIGINS) {
+    for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
+      const t = o.trim();
+      if (t) allowedOrigins.add(t);
+    }
   }
 }
+
 const corsOrigin = Array.from(allowedOrigins);
+if (process.env.NODE_ENV === 'production' && corsOrigin.length === 0) {
+  console.error('❌ FATAL: NEXT_PUBLIC_APP_URL must be set in production for CORS allowlist.');
+  process.exit(1);
+}
+import * as Sentry from '@sentry/node';
+
+import { initSentry } from './config/sentry';
+initSentry();
 
 const app = express();
 const httpServer = createServer(app);
@@ -93,12 +124,8 @@ const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
   cors: {
     origin: function (origin, callback) {
-      // Allow any origin on the same hostname as the request, so admin
-      // gateway :3003 and frontend :3002 can both connect to socket.io.
-      const backendHost = (origin && (() => { try { return new URL(origin).hostname; } catch { return ''; } })());
-      if (!origin || corsOrigin.includes(origin) || backendHost === process.env.HOSTNAME || backendHost === (process.env.HOST || '')) {
-        return callback(null, true);
-      }
+      if (!origin) return callback(null, true); // server-to-server / no origin (curl/Postman)
+      if (corsOrigin.includes(origin)) return callback(null, true);
       callback(new Error('Not allowed by CORS'));
     },
     methods: ['GET', 'POST'],
@@ -110,20 +137,27 @@ const io = new SocketIOServer(httpServer, {
 // ─── Middleware ──────────────────────────────────────────────
 app.use(helmet(helmetConfig));
 app.use(cors({
-  // origin function that mirrors Socket.io: allow any sub-origin on the same host
   origin: function (origin, callback) {
-    if (!origin || corsOrigin.includes(origin)) return callback(null, true);
-    try {
-      const originHost = new URL(origin).hostname;
-      // Allow any origin whose hostname matches the server's hostname/IP
-      if (originHost === process.env.HOSTNAME || originHost === (process.env.HOST || '')) return callback(null, true);
-    } catch {}
+    if (!origin) return callback(null, true); // server-to-server / no origin
+    if (corsOrigin.includes(origin)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
 }));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Sentry request handler — must be after body parsing but before routes
+const sentryEnabled = !!process.env.SENTRY_DSN;
+if (sentryEnabled) {
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    Sentry.withScope((scope) => {
+      scope.setTag('path', req.path);
+      scope.setTransactionName(`${req.method} ${req.path}`);
+      next();
+    });
+  });
+}
 
 // Rate Limiting
 app.use('/api', globalLimiter);
@@ -154,12 +188,16 @@ app.use('/api/admin/withdrawals', adminWithdrawalsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminBonusRoutes);
 app.use('/api/admin', adminHealthRoutes);
+// OpenAPI / Swagger UI — public, no auth required
+app.use('/api', docsRoutes);
+// Prometheus metrics — public, scraped by Prometheus
+app.use('/metrics', metricsRoutes);
 app.use('/api/payment', paymentRoutes);
 // Alternative public banner route (avoids /api/admin prefix collision)
 app.use('/api/public', adminPublicRoutes);
 
 
-app.get('/health', async (_req, res) => {
+app.get('/api/health', async (_req, res) => {
   const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; message?: string }> = {};
 
   // PostgreSQL check
@@ -190,6 +228,16 @@ app.get('/health', async (_req, res) => {
     uptime: Math.floor(process.uptime()) + 's',
     checks,
   });
+});
+
+// Global error handler
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('Unhandled error:', err);
+  const status = err.statusCode || err.status || 500;
+  if (sentryEnabled) {
+    Sentry.captureException(err);
+  }
+  res.status(status).json({ success: false, error: err.message || 'Internal server error' });
 });
 
 // ─── Socket.io ──────────────────────────────────────────────

@@ -19,6 +19,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
+import QRCode from 'qrcode';
 import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
 import { ADMIN_2FA_REQUIRED } from '../index';
@@ -399,6 +400,15 @@ router.post('/2fa/setup', authMiddleware, async (req: Request, res: Response) =>
     const { secret, otpauthUrl } = generateTotpSecret(email);
     const encryptedSecret = encryptSecret(secret);
 
+    // Render the QR code server-side so the admin UI does not need to
+    // call any third-party image host (api.qrserver.com etc.). Returning
+    // a base64 data URL lets us drop the external dependency entirely.
+    const qrDataUrl = await QRCode.toDataURL(otpauthUrl, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 200,
+    });
+
     await query(
       'UPDATE users SET two_factor_temp_secret = $1 WHERE id = $2',
       [encryptedSecret, userId]
@@ -408,6 +418,7 @@ router.post('/2fa/setup', authMiddleware, async (req: Request, res: Response) =>
       success: true,
       secret,
       otpauthUrl,
+      qrDataUrl,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

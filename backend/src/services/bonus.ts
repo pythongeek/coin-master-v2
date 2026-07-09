@@ -336,52 +336,67 @@ export async function creditWagering(
 
   let remaining = betAmount;
   let claimsCompleted = 0;
-  for (const c of activeClaims.rows as Array<{ wagering_required: string | number }>) {
+
+  // Track per-claim wagering progress in bonus_claims.wagering_completed.
+  // This is the correct model: each active claim has its own target, and
+  // the user-level counters are aggregates. We FIFO-apply the bet amount
+  // until it is exhausted or all claims are completed.
+  for (const c of activeClaims.rows as Array<{ id: string; wagering_required: string | number; wagering_completed?: string | number }>) {
     if (remaining <= 0) break;
-    const need = parseFloat(String(c.wagering_required)) - parseFloat(String(c.wagering_required)); // already at 0; use claim-wagering tracking instead
-    // We're at 0 progress per-claim (we don't track per-claim wagering in this schema),
-    // so we just mark as completed if user-level wagering >= user-level wagering_required.
-    // Simpler model: track at user level, claims complete when user-level threshold reached.
-    void need;
+
+    const required = parseFloat(String(c.wagering_required));
+    const completed = parseFloat(String(c.wagering_completed ?? 0));
+    const need = Math.max(0, required - completed);
+    if (need <= 0) continue;
+
+    const apply = Math.min(remaining, need);
+    const newCompleted = completed + apply;
+    remaining -= apply;
+
+    await q(txClient)(
+      `UPDATE bonus_claims
+          SET wagering_completed = $2,
+              status = CASE WHEN $2 >= wagering_required THEN 'completed' ELSE status END,
+              completed_at = CASE WHEN $2 >= wagering_required THEN NOW() ELSE completed_at END
+        WHERE id = $1`,
+      [c.id, newCompleted],
+    );
+
+    if (newCompleted >= required) {
+      claimsCompleted += 1;
+    }
   }
 
-  // Simpler model: if user wagering_completed >= user wagering_required, complete oldest claim(s)
-  const userRow = await q(txClient)(
-    `SELECT wagering_required_coins, wagering_completed_coins
-     FROM users WHERE id = $1`,
+  // Keep user-level counters accurate: they should always reflect the
+  // outstanding requirements and completed volume across all active claims.
+  const aggRow = await q(txClient)(
+    `SELECT COALESCE(SUM(wagering_required), 0) AS total_required,
+            COALESCE(SUM(wagering_completed), 0) AS total_completed
+     FROM bonus_claims
+     WHERE user_id = $1 AND status = 'active'`,
     [userId],
   );
-  const userRow0 = (userRow.rows as Array<{ wagering_required_coins?: string | number; wagering_completed_coins?: string | number }>)[0];
-  const reqd = parseFloat(String(userRow0?.wagering_required_coins ?? 0));
-  const done = parseFloat(String(userRow0?.wagering_completed_coins ?? 0));
+  const agg = aggRow.rows[0];
+  const totalRequired = parseFloat(String(agg.total_required ?? 0));
+  const totalCompleted = parseFloat(String(agg.total_completed ?? 0));
 
-  if (reqd > 0 && done >= reqd) {
-    // Mark all active claims completed, reset user counters
-    const upd = await q(txClient)(
-      `UPDATE bonus_claims
-         SET status = 'completed', completed_at = NOW()
-       WHERE user_id = $1 AND status = 'active'
-       RETURNING id`,
-      [userId],
+  await q(txClient)(
+    `UPDATE users
+        SET wagering_required_coins = $2,
+            wagering_completed_coins = $3
+      WHERE id = $1`,
+    [userId, totalRequired, totalCompleted],
+  );
+
+  if (claimsCompleted > 0) {
+    await q(txClient)(
+      `INSERT INTO audit_log (category, action, severity, user_id, details)
+       VALUES ('bonus', 'bonus.wagering.completed', 'info', $1, $2)`,
+      [
+        userId,
+        JSON.stringify({ claims_completed: claimsCompleted, total_wagered: totalCompleted }),
+      ],
     );
-    claimsCompleted = upd.rows.length;
-    if (claimsCompleted > 0) {
-      await q(txClient)(
-        `UPDATE users
-           SET wagering_required_coins = 0,
-               wagering_completed_coins = 0
-         WHERE id = $1`,
-        [userId],
-      );
-      await q(txClient)(
-        `INSERT INTO audit_log (category, action, severity, user_id, details)
-         VALUES ('bonus', 'bonus.wagering.completed', 'info', $1, $2)`,
-        [
-          userId,
-          JSON.stringify({ claims_completed: claimsCompleted, total_wagered: done }),
-        ],
-      );
-    }
   }
 
   return { claimsCompleted };

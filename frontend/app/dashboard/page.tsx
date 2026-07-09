@@ -17,11 +17,9 @@ import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard';
 import { RakebackCard } from '@/components/dashboard/RakebackCard';
 import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API = getApiBase();
 
 export default function DashboardPage() {
   const { t } = useTranslation();

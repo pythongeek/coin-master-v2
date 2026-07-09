@@ -11,6 +11,8 @@ import { useState, useEffect } from 'react';
 import { Users, Share2, Copy, Trophy, Percent, Loader2, CheckCircle2, Wallet, ChevronDown, ChevronUp } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getApiBase } from '@/lib/api/base';
+
 
 export default function AffiliatePanel() {
   const { user, token, updateBalance } = useGameStore();
@@ -28,10 +30,7 @@ export default function AffiliatePanel() {
     referralsWagered: 0,
   });
 
-  const API =
-    typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-      ? '/api'
-      : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  const API = getApiBase();
   const referralLink = stats.referralCode 
     ? `${window.location.origin}/register?ref=${stats.referralCode}` 
     : '';

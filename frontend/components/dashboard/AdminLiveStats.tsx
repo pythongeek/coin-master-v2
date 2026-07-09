@@ -15,7 +15,7 @@ import { Users, Banknote, Landmark, Dices, CloudRain, type LucideIcon } from 'lu
 const API =
   typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
     ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    : process.env.NEXT_PUBLIC_API_URL;
 
 interface LiveStats {
   users:       { total: number; today: number };

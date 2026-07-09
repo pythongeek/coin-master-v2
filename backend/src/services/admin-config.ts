@@ -499,6 +499,28 @@ export async function updateAllConfig(config: Partial<GameConfig>): Promise<void
   }
 }
 
+/**
+ * Generic raw key/value helpers for settings that are outside the typed
+ * GameConfig interface (e.g., KYC provider secrets and thresholds).
+ */
+export async function getRawSetting(key: string): Promise<string | null> {
+  try {
+    const result = await query('SELECT value FROM admin_settings WHERE key = $1', [key]);
+    return result.rows[0]?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setRawSetting(key: string, value: string, description?: string): Promise<void> {
+  await query(
+    `INSERT INTO admin_settings (key, value, description, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, description = COALESCE($3, admin_settings.description), updated_at = NOW()`,
+    [key, value, description || null]
+  );
+}
+
 /** সব সেটিং ডিফল্টে ফিরিয়ে দাও */
 export async function resetToDefaults(): Promise<void> {
   await updateAllConfig(DEFAULT_CONFIG);

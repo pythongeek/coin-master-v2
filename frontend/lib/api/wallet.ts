@@ -1,3 +1,5 @@
+import { getApiBase } from '@/lib/api/base';
+
 /**
  * ═══════════════════════════════════════════════════════════════
  *  WALLET API CLIENT — typed fetch wrappers for the merged backend
@@ -200,10 +202,7 @@ export class WalletApiError extends Error {
 
 // ── Helpers ────────────────────────────────────────────────────
 
-const BASE =
-  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const BASE = getApiBase();
 
 async function call<T>(path: string, init: RequestInit = {}, token?: string | null): Promise<T> {
   const headers: Record<string, string> = {

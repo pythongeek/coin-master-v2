@@ -24,7 +24,7 @@ import { KeyRound, RotateCw, CheckCircle2, Lock, X, AlertTriangle } from 'lucide
 const API =
   typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
     ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    : process.env.NEXT_PUBLIC_API_URL;
 
 export default function SeedRotationPanel() {
   const [rotating, setRotating]       = useState(false);

@@ -8,11 +8,10 @@
 import { useState, useEffect } from 'react';
 import { Megaphone, AlertTriangle, Info, Check, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
+const API = getApiBase();
 
 type BannerType = 'info' | 'warning' | 'maintenance';
 

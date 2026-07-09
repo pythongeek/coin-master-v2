@@ -3,11 +3,16 @@ import { Queue, Worker, Job } from 'bullmq';
 import { db, query } from '../config/database';
 import { redisConfig } from '../config/redis';
 import { reconcileUser } from './reconciliation-engine';
+import { getKycSettings } from './kyc-settings';
 
 // Configure a withdrawal Queue
 export const withdrawalQueue = new Queue('withdrawals', {
   connection: redisConfig
 });
+
+function isKycVerified(kycStatus: string): boolean {
+  return kycStatus === 'verified' || kycStatus === 'approved';
+}
 
 /**
  * Initiates a withdrawal request by performing safety checks, debited balances,
@@ -43,7 +48,8 @@ export async function requestWithdrawal(
       throw new Error('Account is inactive');
     }
 
-    if (user.kyc_status !== 'verified') {
+    const kycSettings = await getKycSettings();
+    if (kycSettings.requiredForWithdrawal && !isKycVerified(user.kyc_status)) {
       throw new Error('KYC verification required for withdrawals');
     }
 

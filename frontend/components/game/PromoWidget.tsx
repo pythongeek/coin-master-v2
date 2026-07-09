@@ -10,6 +10,8 @@ import { useGameStore } from '@/lib/store';
 import { trackEvent } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
 import { api } from '@/lib/api';
+import { getApiBase } from '@/lib/api/base';
+
 
 interface Campaign {
   id: string;
@@ -43,10 +45,7 @@ export default function PromoWidget() {
   const [activeMatch, setActiveMatch] = useState<ActivePromo | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
 
-  const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+  const API = getApiBase();
 
   const fetchPromo = async () => {
     if (!token) return;

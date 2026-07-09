@@ -813,8 +813,12 @@ export function installCommonMocks(options?: {
     || tryRequire('../config/redis');
   // Replace the `redis` instance with our own MockRedisClass instance and
   // overlay the named helper functions (lockBet, unlockBet, etc.).
-  redisModule.redis = new MockRedisClass();
-  Object.assign(redisModule, mockRedis);
+  if (redisModule) {
+    redisModule.redis = new MockRedisClass();
+    Object.assign(redisModule, mockRedis);
+  } else {
+    console.warn('test-mocks: redis module not found; skipping redis mock install');
+  }
 }
 
 // ── Reset helpers ──────────────────────────────────────────────

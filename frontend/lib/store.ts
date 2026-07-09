@@ -285,31 +285,36 @@ export const useGameStore = create<GameStore>()(
       }),
       skipHydration: false,
       version: 2,
-      onRehydrateStorage: (state) => {
+      onRehydrateStorage: () => {
         // Some login flows (legacy + manual token injection) only write
         // cf_token. Make sure the Zustand store picks it up, but never
         // trust client-side isAdmin — the backend validates role on every
         // request.
+        // This callback returns a patch merged after hydration. The merged
+        // state runs inside the store, so we must avoid calling setState
+        // directly here (circular init error).
         if (typeof window === 'undefined') return;
-        if (state?.user && state?.token) return;
-        try {
-          const token = localStorage.getItem('cf_token');
-          if (token) {
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            const parsedUser: User = {
-              userId: payload.userId || payload.sub,
-              username: payload.username || 'player',
-              email: payload.email || null,
-              balance: payload.balance || 0,
-              isAdmin: false,
-              walletAddress: payload.walletAddress || null,
-              isFlagged: payload.isFlagged || false,
-            };
-            useGameStore.setState({ user: parsedUser, token });
+        return (state: GameStore | undefined) => {
+          if (state?.user && state?.token) return;
+          try {
+            const token = localStorage.getItem('cf_token');
+            if (token) {
+              const payload = JSON.parse(atob(token.split('.')[1]));
+              const parsedUser: User = {
+                userId: payload.userId || payload.sub,
+                username: payload.username || 'player',
+                email: payload.email || null,
+                balance: payload.balance || 0,
+                isAdmin: false,
+                walletAddress: payload.walletAddress || null,
+                isFlagged: payload.isFlagged || false,
+              };
+              return { user: parsedUser, token } as Partial<GameStore>;
+            }
+          } catch (e) {
+            console.warn('[store] rehydrate from cf_token failed', e);
           }
-        } catch (e) {
-          console.warn('[store] rehydrate from cf_token failed', e);
-        }
+        };
       },
       migrate: (persistedState, version) => {
         if (version < 1 && typeof window !== 'undefined') {

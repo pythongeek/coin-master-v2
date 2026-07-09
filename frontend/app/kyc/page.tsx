@@ -1,86 +1,106 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  KYC VERIFICATION PAGE — এআই-চালিত কেওয়াইসি ভেরিফিকেশন পেজ
+ *  KYC VERIFICATION PAGE — Real AI-powered KYC using MiniMax M3
  * ═══════════════════════════════════════════════════════════════
  */
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import {
-  ShieldCheck,
-  UploadCloud,
-  Camera,
-  Loader2,
-  ArrowLeft,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  UserCheck,
-  ChevronRight,
-  Sparkles,
-  Check,
-  Fingerprint
-} from 'lucide-react';
+import { ShieldCheck, UploadCloud, Camera, Loader2, ArrowLeft, CheckCircle2, AlertTriangle, RefreshCw, Fingerprint, Check, Sparkles } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API = getApiBase();
 
-interface AIVerifyResponse {
+interface KycVerifyResponse {
   success: boolean;
-  verified: boolean;
-  confidence: number;
-  reason: string;
-  documentInfo?: {
-    name: string;
-    dateOfBirth: string;
-    docNumber: string;
-  };
+  sessionId?: string;
+  status?: 'pending' | 'approved' | 'review' | 'rejected';
+  riskScore?: number;
+  riskTier?: string;
+  decision?: string;
+  documentValid?: boolean;
+  faceMatch?: boolean;
+  faceSimilarity?: number;
+  livenessPassed?: boolean;
+  sanctionsClear?: boolean;
+  extractedFields?: Record<string, string | undefined>;
+  fraudSignals?: string[];
+  complianceReasoning?: string;
+  error?: string;
+}
+
+interface KycSession {
+  id: string;
+  status: 'pending' | 'approved' | 'review' | 'rejected';
+  risk_score: number | null;
+  risk_tier: string | null;
+  final_decision: string | null;
+  document_valid: boolean | null;
+  face_match: boolean | null;
+  face_similarity: number | null;
+  liveness_passed: boolean | null;
+  sanctions_clear: boolean | null;
+  extracted_fields: Record<string, string | undefined> | null;
+  fraud_signals: string[] | null;
+  compliance_reasoning: string | null;
+  created_at: string;
+  completed_at: string | null;
+  reviewed_at: string | null;
+}
+
+interface KycStatusResponse {
+  success: boolean;
+  kycStatus: 'unverified' | 'pending' | 'approved' | 'review' | 'rejected' | 'verified';
+  verifiedAt: string | null;
+  provider: string;
+  latestSession: KycSession | null;
 }
 
 export default function KYCPage() {
   const router = useRouter();
-  const { user, setUser } = useGameStore();
+  const { user } = useGameStore();
 
   const [loading, setLoading] = useState(true);
-  const [kycStatus, setKycStatus] = useState<'unverified' | 'pending' | 'verified' | 'rejected'>('unverified');
+  const [kycStatus, setKycStatus] = useState<KycStatusResponse['kycStatus']>('unverified');
   const [verifiedAt, setVerifiedAt] = useState<string | null>(null);
-  const [applicantId, setApplicantId] = useState<string | null>(null);
-  const [aiMockMode, setAiMockMode] = useState(true);
+  const [provider, setProvider] = useState<string>('manual');
+  const [latestSession, setLatestSession] = useState<KycSession | null>(null);
 
-  // Verification Upload/Capture States
   const [docBase64, setDocBase64] = useState<string | null>(null);
   const [selfieBase64, setSelfieBase64] = useState<string | null>(null);
   const [docFileName, setDocFileName] = useState<string | null>(null);
-
-  // Camera capture states
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-
-  // Verification process states
   const [verifying, setVerifying] = useState(false);
   const [verifyStep, setVerifyStep] = useState<string>('');
-  const [aiResult, setAiResult] = useState<AIVerifyResponse | null>(null);
+  const [result, setResult] = useState<KycVerifyResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') || '' : '';
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Load User KYC Info on mount
+  const steps = [
+    'Uploading document and selfie...',
+    'Running open-source OCR...',
+    'Analyzing document and face with MiniMax M3...',
+    'Running sanctions and fraud checks...',
+    'Calculating final risk score...',
+  ];
+
   async function fetchKYCStatus() {
     setLoading(true);
     try {
       const res = await fetch(`${API}/kyc/status`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data = (await res.json()) as KycStatusResponse;
       if (data.success) {
         setKycStatus(data.kycStatus);
         setVerifiedAt(data.verifiedAt);
-        setApplicantId(data.applicantId);
-        setAiMockMode(data.aiMockMode);
+        setProvider(data.provider);
+        setLatestSession(data.latestSession);
       }
     } catch (err) {
       console.error('Failed to load KYC status:', err);
@@ -95,20 +115,15 @@ export default function KYCPage() {
       return;
     }
     fetchKYCStatus();
-
-    // Clean up camera stream if active on unmount
-    return () => {
-      stopCamera();
-    };
+    return () => stopCamera();
   }, [token]);
 
-  // Start Webcam stream
   async function startCamera() {
     try {
       setIsCameraActive(true);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: 480, height: 480 },
-        audio: false
+        audio: false,
       });
       setCameraStream(stream);
       if (videoRef.current) {
@@ -117,12 +132,11 @@ export default function KYCPage() {
       }
     } catch (err) {
       console.error('Failed to open camera:', err);
-      alert('ক্যামেরা চালু করা সম্ভব হয়নি। অনুগ্রহ করে ক্যামেরা পারমিশন চেক করুন অথবা সেলফি ফাইল আপলোড করুন।');
+      alert('Could not start camera. Please allow camera permission or upload a selfie file.');
       setIsCameraActive(false);
     }
   }
 
-  // Stop Webcam stream
   function stopCamera() {
     if (cameraStream) {
       cameraStream.getTracks().forEach((track) => track.stop());
@@ -131,140 +145,112 @@ export default function KYCPage() {
     setIsCameraActive(false);
   }
 
-  // Take Snapshot from video element
   function captureSelfie() {
-    if (videoRef.current) {
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      // Capture a square aspect ratio
-      const size = Math.min(video.videoWidth, video.videoHeight);
-      canvas.width = size;
-      canvas.height = size;
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        // Crop center
-        const sx = (video.videoWidth - size) / 2;
-        const sy = (video.videoHeight - size) / 2;
-        ctx.drawImage(video, sx, sy, size, size, 0, 0, size, size);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        setSelfieBase64(dataUrl);
-      }
-      stopCamera();
-    }
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    const size = Math.min(video.videoWidth, video.videoHeight);
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const sx = (video.videoWidth - size) / 2;
+    const sy = (video.videoHeight - size) / 2;
+    ctx.drawImage(video, sx, sy, size, size, 0, 0, size, size);
+    setSelfieBase64(canvas.toDataURL('image/jpeg', 0.85));
+    stopCamera();
   }
 
-  // Handle Document File selection
   function handleDocumentChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) {
-      setDocFileName(file.name);
-      const reader = new FileReader();
-      reader.onload = () => {
-        setDocBase64(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+    setDocFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => setDocBase64(reader.result as string);
+    reader.readAsDataURL(file);
   }
 
-  // Handle Selfie File upload (fallback if no camera)
   function handleSelfieFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setSelfieBase64(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setSelfieBase64(reader.result as string);
+    reader.readAsDataURL(file);
   }
 
-  // Start real-time AI verification
-  async function runAIVerify() {
+  async function runVerify() {
     if (!docBase64 || !selfieBase64) return;
 
     setVerifying(true);
-    setAiResult(null);
+    setResult(null);
+    setError(null);
 
-    // Simulated step indicators for visual polish
-    const steps = [
-      'ডকুমেন্ট আপলোড হচ্ছে...',
-      'অপটিক্যাল ক্যারেক্টার রিকগনিশন (OCR) চালনা করা হচ্ছে...',
-      'জাতীয় ডাটাবেজের সাথে তথ্য মিলিয়ে দেখা হচ্ছে...',
-      'মুখের অবয়ব এবং সেলফি মেলাচ্ছেন কৃত্তিম বুদ্ধিমত্তা...',
-      'চূড়ান্ত রেটিং ও সিদ্ধান্ত যাচাই হচ্ছে...'
-    ];
-
-    let currentStepIdx = 0;
+    let currentStep = 0;
     setVerifyStep(steps[0]);
-
-    const stepInterval = setInterval(() => {
-      if (currentStepIdx < steps.length - 1) {
-        currentStepIdx++;
-        setVerifyStep(steps[currentStepIdx]);
-      }
-    }, 1500);
+    const interval = setInterval(() => {
+      currentStep = Math.min(currentStep + 1, steps.length - 1);
+      setVerifyStep(steps[currentStep]);
+    }, 2000);
 
     try {
-      const res = await fetch(`${API}/kyc/verify-ai`, {
+      const res = await fetch(`${API}/kyc/verify`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          document: docBase64,
-          selfie: selfieBase64
-        })
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document: docBase64, selfie: selfieBase64 }),
       });
 
-      clearInterval(stepInterval);
-      const data = (await res.json()) as AIVerifyResponse;
-      setAiResult(data);
+      const data = (await res.json()) as KycVerifyResponse;
+      clearInterval(interval);
+      setVerifyStep('');
 
-      if (data.success && data.verified) {
-        setKycStatus('verified');
-        if (user) {
-          // Update local balance state and reload details
-          setUser({ ...user, balance: user.balance });
-        }
+      if (!data.success) {
+        setError(data.error || 'Verification failed');
       } else {
-        setKycStatus('rejected');
+        setResult(data);
+        setKycStatus(data.status === 'approved' ? 'approved' : data.status === 'rejected' ? 'rejected' : 'review');
       }
     } catch (err) {
-      clearInterval(stepInterval);
-      console.error('AI verification failed:', err);
-      alert('ভেরিফিকেশন প্রক্রিয়া সম্পন্ন করা সম্ভব হয়নি। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
-      setVerifying(false);
+      clearInterval(interval);
+      setError(err instanceof Error ? err.message : 'Network error');
     } finally {
       setVerifying(false);
     }
   }
 
+  const statusMap: Record<string, string> = {
+    approved: 'Verified',
+    verified: 'Verified',
+    pending: 'Pending Review',
+    review: 'Under Review',
+    rejected: 'Rejected',
+    unverified: 'Not Verified',
+  };
+
+  const statusColor = (s: string) => {
+    if (s === 'approved' || s === 'verified') return 'text-brand-green';
+    if (s === 'rejected') return 'text-brand-red';
+    if (s === 'pending' || s === 'review') return 'text-brand-info';
+    return 'text-text-muted';
+  };
+
   return (
     <main className="min-h-screen p-4 md:p-6 max-w-2xl mx-auto flex flex-col justify-center">
-      {/* Back Button */}
       <div className="mb-6">
-        <Link
-          href="/dashboard"
-          className="inline-flex items-center gap-1.5 text-text-muted hover:text-text-primary text-sm font-mono transition-colors"
-        >
+        <Link href="/dashboard" className="inline-flex items-center gap-1.5 text-text-muted hover:text-text-primary text-sm font-mono transition-colors">
           <ArrowLeft size={16} />
-          ড্যাশবোর্ডে ফিরে যান
+          Back to Dashboard
         </Link>
       </div>
 
       <div className="glass-card p-6 md:p-8 rounded-2xl relative overflow-hidden shadow-elevate-lg border border-border">
-        {/* Decorative Grid Gradient */}
         <div className="absolute top-0 right-0 w-48 h-48 bg-brand-green/5 rounded-full blur-3xl -z-10 pointer-events-none" />
 
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16 space-y-4">
             <Loader2 size={48} className="text-brand-green animate-spin" />
-            <p className="text-text-secondary text-sm font-mono">ভেরিফিকেশন স্ট্যাটাস চেক করা হচ্ছে...</p>
+            <p className="text-text-secondary text-sm font-mono">Checking verification status...</p>
           </div>
         ) : verifying ? (
-          /* ── AI Processing View ───────────────────────────────────────── */
           <div className="flex flex-col items-center justify-center py-16 space-y-6 text-center animate-lift-in">
             <div className="relative">
               <div className="w-20 h-20 rounded-full border-2 border-brand-green/30 border-t-brand-green animate-spin flex items-center justify-center">
@@ -273,7 +259,7 @@ export default function KYCPage() {
               <div className="absolute -inset-1 rounded-full border border-brand-green/10 animate-ping pointer-events-none" />
             </div>
             <div>
-              <h2 className="heading-display text-xl text-text-primary mb-1">এআই ভেরিফিকেশন চলছে</h2>
+              <h2 className="heading-display text-xl text-text-primary mb-1">AI KYC Verification</h2>
               <p className="text-text-muted text-xs font-mono max-w-sm mx-auto">{verifyStep}</p>
             </div>
             <div className="w-full max-w-xs bg-surface2 h-1 rounded-full overflow-hidden">
@@ -282,87 +268,104 @@ export default function KYCPage() {
           </div>
         ) : (
           <>
-            {/* ── Status 1: Verified ────────────────────────────────────────── */}
-            {kycStatus === 'verified' && (
+            {(kycStatus === 'approved' || kycStatus === 'verified') && (
               <div className="text-center py-8 space-y-6 animate-lift-in">
                 <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-brand-green/10 border border-brand-green/20 text-brand-green">
                   <ShieldCheck size={44} strokeWidth={1.5} />
                 </div>
                 <div>
-                  <h1 className="heading-display text-2xl text-text-primary mb-2">KYC ভেরিফিকেশন সফল!</h1>
-                  <p className="text-text-secondary text-sm">
-                    আপনার পরিচয় সফলভাবে যাচাই করা হয়েছে। আপনার অ্যাকাউন্টটি এখন সম্পূর্ণ সক্রিয়।
-                  </p>
+                  <h1 className="heading-display text-2xl text-text-primary mb-2">KYC Verified!</h1>
+                  <p className="text-text-secondary text-sm">Your identity has been confirmed. Your account is fully active.</p>
+                  {verifiedAt && (
+                    <p className="text-text-muted text-xs font-mono mt-1">Verified at: {new Date(verifiedAt).toLocaleString()}</p>
+                  )}
                 </div>
 
-                {aiResult?.documentInfo && (
+                {latestSession?.extracted_fields && (
                   <div className="glass-card max-w-sm mx-auto p-4 rounded-xl space-y-2.5 border border-border text-left font-mono text-xs">
                     <h4 className="text-text-primary font-display font-semibold text-[13px] border-b border-border/50 pb-1.5 flex items-center gap-1.5">
                       <Sparkles size={13} className="text-brand-green" />
-                      এআই দ্বারা সনাক্তকৃত তথ্য:
+                      Extracted Information
                     </h4>
-                    <div className="flex justify-between">
-                      <span className="text-text-muted">পূর্ণ নাম:</span>
-                      <span className="text-text-primary font-semibold">{aiResult.documentInfo.name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-text-muted">জন্ম তারিখ:</span>
-                      <span className="text-text-primary font-semibold">{aiResult.documentInfo.dateOfBirth}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-text-muted">ডকুমেন্ট নম্বর:</span>
-                      <span className="text-text-primary font-semibold">{aiResult.documentInfo.docNumber}</span>
-                    </div>
+                    {Object.entries(latestSession.extracted_fields).map(([key, value]) => (
+                      <div className="flex justify-between" key={key}>
+                        <span className="text-text-muted capitalize">{key.replace(/_/g, ' ')}:</span>
+                        <span className="text-text-primary font-semibold">{value || '—'}</span>
+                      </div>
+                    ))}
                     <div className="flex justify-between border-t border-border/50 pt-1.5">
-                      <span className="text-text-muted">ম্যাচিং স্কোর:</span>
-                      <span className="text-brand-green font-semibold">{aiResult.confidence}% (সঠিক)</span>
+                      <span className="text-text-muted">Face similarity:</span>
+                      <span className="text-brand-green font-semibold">
+                        {latestSession.face_similarity ? `${(latestSession.face_similarity * 100).toFixed(1)}%` : '—'}
+                      </span>
                     </div>
                   </div>
                 )}
 
-                <div className="flex flex-col gap-2 max-w-xs mx-auto">
-                  <Link href="/game" className="btn-brand py-3 px-6 rounded-xl font-display font-semibold text-center">
-                    গেম খেলা শুরু করুন
-                  </Link>
-                </div>
+                <Link href="/game" className="btn-brand py-3 px-6 rounded-xl font-display font-semibold text-center inline-block">
+                  Play Game
+                </Link>
               </div>
             )}
 
-            {/* ── Status 2: Rejected ────────────────────────────────────────── */}
-            {kycStatus === 'rejected' && (
+            {(kycStatus === 'rejected' || error) && (
               <div className="text-center py-8 space-y-6 animate-lift-in">
                 <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-brand-red/10 border border-brand-red/20 text-brand-red">
                   <AlertTriangle size={44} strokeWidth={1.5} />
                 </div>
                 <div>
-                  <h1 className="heading-display text-2xl text-text-primary mb-2">ভেরিফিকেশন প্রত্যাখ্যান হয়েছে</h1>
+                  <h1 className="heading-display text-2xl text-text-primary mb-2">Verification Failed</h1>
                   <p className="text-text-secondary text-sm max-w-md mx-auto">
-                    দুঃখিত, কৃত্তিম বুদ্ধিমত্তা আপনার ডকুমেন্টস এবং ফেস প্রোফাইল মেলাতে পারেনি।
+                    {error || result?.complianceReasoning || 'We could not verify your identity. Please review the requirements and try again.'}
                   </p>
-                  {aiResult?.reason && (
-                    <div className="mt-3 p-3 bg-brand-red/5 border border-brand-red/10 rounded-xl max-w-sm mx-auto text-xs text-brand-red font-mono">
-                      কারণ: {aiResult.reason}
-                    </div>
+                  {result?.fraudSignals && result.fraudSignals.length > 0 && (
+                    <ul className="mt-3 text-xs text-brand-red font-mono list-disc list-inside max-w-sm mx-auto text-left">
+                      {result.fraudSignals.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
                   )}
                 </div>
-                <div className="pt-2">
-                  <button
-                    onClick={() => {
-                      setDocBase64(null);
-                      setSelfieBase64(null);
-                      setDocFileName(null);
-                      setAiResult(null);
-                      setKycStatus('unverified');
-                    }}
-                    className="btn-brand py-3 px-6 rounded-xl font-display font-semibold"
-                  >
-                    আবার চেষ্টা করুন
-                  </button>
-                </div>
+                <button
+                  onClick={() => {
+                    setDocBase64(null);
+                    setSelfieBase64(null);
+                    setDocFileName(null);
+                    setResult(null);
+                    setError(null);
+                    setKycStatus('unverified');
+                  }}
+                  className="btn-brand py-3 px-6 rounded-xl font-display font-semibold"
+                >
+                  Try Again
+                </button>
               </div>
             )}
 
-            {/* ── Status 3: Unverified (Main Verification Form) ──────────────── */}
+            {(kycStatus === 'pending' || kycStatus === 'review') && (
+              <div className="text-center py-8 space-y-6 animate-lift-in">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-brand-info/10 border border-brand-info/20 text-brand-info">
+                  <Loader2 size={44} strokeWidth={1.5} className="animate-spin" />
+                </div>
+                <div>
+                  <h1 className="heading-display text-2xl text-text-primary mb-2">Under Review</h1>
+                  <p className="text-text-secondary text-sm max-w-md mx-auto">
+                    Your submission is being reviewed by our compliance team. This usually takes a few minutes to a few hours.
+                  </p>
+                  {latestSession && (
+                    <div className="mt-4 text-xs font-mono text-text-muted space-y-1">
+                      <div>Risk score: {latestSession.risk_score ?? '—'} ({latestSession.risk_tier ?? '—'})</div>
+                      <div>Submitted: {new Date(latestSession.created_at).toLocaleString()}</div>
+                    </div>
+                  )}
+                </div>
+                <button onClick={fetchKYCStatus} className="btn-secondary py-2 px-5 rounded-xl text-sm">
+                  <RefreshCw size={14} className="inline mr-1" />
+                  Refresh Status
+                </button>
+              </div>
+            )}
+
             {kycStatus === 'unverified' && (
               <div className="space-y-6 animate-lift-in">
                 <div className="flex items-center justify-between border-b border-border pb-4">
@@ -371,99 +374,63 @@ export default function KYCPage() {
                       <Fingerprint size={18} />
                     </div>
                     <div>
-                      <h1 className="heading-display text-xl text-text-primary">এআই কেওয়াইসি (AI KYC) ভেরিফিকেশন</h1>
-                      <p className="text-text-muted text-xs font-mono">
-                        {aiMockMode ? 'ডেভলপার সিমুলেটর মোড সক্রিয়' : 'Real-time AI Verification Engine'}
-                      </p>
+                      <h1 className="heading-display text-xl text-text-primary">Identity Verification</h1>
+                      <p className="text-text-muted text-xs font-mono">Provider: {provider === 'manual' ? 'Manual Review' : 'MiniMax M3 Vision'}</p>
                     </div>
                   </div>
-                  {aiMockMode && (
-                    <span className="text-[10px] font-mono bg-brand-info/10 text-brand-info px-2 py-0.5 border border-brand-info/20 rounded">
-                      MOCK ACTIVE
-                    </span>
-                  )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Left Column: ID Document */}
                   <div className="space-y-3">
-                    <label className="text-xs font-semibold text-text-secondary block font-mono">
-                      ধাপ ১: আইডি ডকুমেন্ট আপলোড (NID/পাসপোর্ট)
-                    </label>
-
+                    <label className="text-xs font-semibold text-text-secondary block font-mono">Step 1: Upload ID (NID/Passport)</label>
                     {docBase64 ? (
                       <div className="border border-brand-green/30 bg-brand-green/5 rounded-xl p-4 text-center relative">
                         <div className="w-10 h-10 rounded-full bg-brand-green/10 text-brand-green flex items-center justify-center mx-auto mb-2">
                           <Check size={16} />
                         </div>
-                        <p className="text-xs text-text-primary font-semibold truncate max-w-[200px] mx-auto">
-                          {docFileName || 'ডকুমেন্ট ইমেজ'}
-                        </p>
-                        <button
-                          onClick={() => setDocBase64(null)}
-                          className="text-[10px] text-text-muted hover:text-brand-red font-mono underline mt-1.5 block mx-auto"
-                        >
-                          পরিবর্তন করুন
+                        <p className="text-xs text-text-primary font-semibold truncate max-w-[200px] mx-auto">{docFileName || 'Document image'}</p>
+                        <button onClick={() => setDocBase64(null)} className="text-[10px] text-text-muted hover:text-brand-red font-mono underline mt-1.5 block mx-auto">
+                          Change
                         </button>
                       </div>
                     ) : (
                       <div className="relative border border-dashed border-border hover:border-brand-green/30 bg-surface/20 hover:bg-surface/35 transition-all rounded-xl p-6 text-center cursor-pointer group">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={handleDocumentChange}
-                          className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                        />
+                        <input type="file" accept="image/*" onChange={handleDocumentChange} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                         <UploadCloud size={28} className="text-text-muted group-hover:text-brand-green mx-auto mb-2 transition-colors" />
-                        <span className="text-xs font-semibold text-text-secondary block">এনআইডি/পাসপোর্ট আপলোড</span>
-                        <span className="text-[9px] text-text-muted font-mono block mt-0.5">ছবি সিলেক্ট করুন</span>
+                        <span className="text-xs font-semibold text-text-secondary block">Upload ID/Passport</span>
+                        <span className="text-[9px] text-text-muted font-mono block mt-0.5">Select image</span>
                       </div>
                     )}
                   </div>
 
-                  {/* Right Column: Selfie Capture */}
                   <div className="space-y-3">
-                    <label className="text-xs font-semibold text-text-secondary block font-mono">
-                      ধাপ ২: ফেস সেলফি স্ক্যান (Liveness Selfie)
-                    </label>
-
+                    <label className="text-xs font-semibold text-text-secondary block font-mono">Step 2: Face Selfie (Liveness)</label>
                     {selfieBase64 ? (
                       <div className="border border-brand-green/30 bg-brand-green/5 rounded-xl p-4 text-center relative">
                         <div className="w-12 h-12 rounded-full overflow-hidden border border-brand-green/20 mx-auto mb-2">
                           <img src={selfieBase64} alt="Captured Selfie" className="w-full h-full object-cover" />
                         </div>
-                        <p className="text-xs text-brand-green font-semibold">সেলফি সফলভাবে ক্যাপচার্ড</p>
-                        <button
-                          onClick={() => setSelfieBase64(null)}
-                          className="text-[10px] text-text-muted hover:text-brand-red font-mono underline mt-1.5 block mx-auto"
-                        >
-                          আবার তুলুন
+                        <p className="text-xs text-brand-green font-semibold">Selfie captured</p>
+                        <button onClick={() => setSelfieBase64(null)} className="text-[10px] text-text-muted hover:text-brand-red font-mono underline mt-1.5 block mx-auto">
+                          Retake
                         </button>
                       </div>
                     ) : isCameraActive ? (
-                      /* Live Camera Screen */
                       <div className="border border-border bg-void rounded-xl overflow-hidden relative flex flex-col items-center p-2">
                         <div className="w-32 h-32 rounded-full overflow-hidden border-2 border-brand-info relative bg-surface">
                           <video ref={videoRef} className="w-full h-full object-cover transform -scale-x-100" playsInline muted />
                           <div className="absolute inset-0 border border-brand-info/10 animate-pulse pointer-events-none" />
                         </div>
                         <div className="flex gap-2 w-full mt-3">
-                          <button
-                            onClick={captureSelfie}
-                            className="flex-1 py-1.5 rounded-lg bg-brand-info text-void text-[11px] font-display font-semibold hover:bg-brand-info/90"
-                          >
-                            ছবি তুলুন
+                          <button onClick={captureSelfie} className="flex-1 py-1.5 rounded-lg bg-brand-info text-void text-[11px] font-display font-semibold hover:bg-brand-info/90">
+                            Capture
                           </button>
-                          <button
-                            onClick={stopCamera}
-                            className="px-2 py-1.5 rounded-lg bg-surface hover:bg-surface2 border border-border text-[11px] text-text-secondary"
-                          >
-                            বন্ধ
+                          <button onClick={stopCamera} className="px-2 py-1.5 rounded-lg bg-surface hover:bg-surface2 border border-border text-[11px] text-text-secondary">
+                            Close
                           </button>
                         </div>
                       </div>
                     ) : (
-                      /* Options Choose Box */
                       <div className="grid grid-cols-1 gap-2">
                         <button
                           onClick={startCamera}
@@ -471,19 +438,14 @@ export default function KYCPage() {
                         >
                           <Camera size={20} className="text-text-muted group-hover:text-brand-info transition-colors" />
                           <div>
-                            <span className="text-xs font-semibold text-text-secondary block">লাইভ ক্যামেরা দিয়ে ছবি তুলুন</span>
-                            <span className="text-[8px] text-text-muted font-mono block mt-0.5">ওয়েবক্যাম সেলফি</span>
+                            <span className="text-xs font-semibold text-text-secondary block">Take live selfie</span>
+                            <span className="text-[8px] text-text-muted font-mono block mt-0.5">Webcam selfie</span>
                           </div>
                         </button>
                         <div className="relative border border-dashed border-border hover:border-brand-info/30 bg-surface/10 hover:bg-surface/20 transition-all rounded-xl p-2.5 text-center flex items-center justify-center gap-2 cursor-pointer group">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleSelfieFileChange}
-                            className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                          />
+                          <input type="file" accept="image/*" onChange={handleSelfieFileChange} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                           <UploadCloud size={14} className="text-text-muted group-hover:text-brand-info" />
-                          <span className="text-[10px] text-text-muted font-mono">সেলফি ফাইল আপলোড করুন (বিকল্প)</span>
+                          <span className="text-[10px] text-text-muted font-mono">Upload selfie file (alternative)</span>
                         </div>
                       </div>
                     )}
@@ -492,18 +454,16 @@ export default function KYCPage() {
 
                 <div className="border-t border-border pt-4">
                   <button
-                    onClick={runAIVerify}
+                    onClick={runVerify}
                     disabled={!docBase64 || !selfieBase64}
                     className="w-full btn-brand py-3 rounded-xl font-display font-semibold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Sparkles size={16} />
-                    আইডেন্টিটি ভেরিফিকেশন সম্পন্ন করুন (AI check)
+                    Verify Identity
                   </button>
-                  {aiMockMode && (
-                    <p className="text-center text-[10px] font-mono text-text-muted mt-2">
-                      💡 ডেমো মোড চালু আছে। যেকোনো ছবি সাবমিট করলেই ভেরিফাইড হয়ে যাবে।
-                    </p>
-                  )}
+                  <p className="text-center text-[10px] font-mono text-text-muted mt-2">
+                    Images are processed securely and not stored permanently. Provider: {provider === 'manual' ? 'Manual review' : 'MiniMax M3 Vision'}.
+                  </p>
                 </div>
               </div>
             )}

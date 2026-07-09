@@ -12,7 +12,12 @@ import { io, Socket } from 'socket.io-client';
 import { setTokenCookie, clearTokenCookie } from './auth-cookies';
 
 function getSocketUrl(): string {
-  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000';
+  if (typeof window === 'undefined') {
+    if (!process.env.NEXT_PUBLIC_SOCKET_URL) {
+      throw new Error('NEXT_PUBLIC_SOCKET_URL is required for server-side socket URL resolution');
+    }
+    return process.env.NEXT_PUBLIC_SOCKET_URL;
+  }
   // Allow NEXT_PUBLIC_SOCKET_URL to override (e.g. tunnel or staging).
   if (process.env.NEXT_PUBLIC_SOCKET_URL) return process.env.NEXT_PUBLIC_SOCKET_URL;
   // Production: use same origin so nginx proxies /socket.io

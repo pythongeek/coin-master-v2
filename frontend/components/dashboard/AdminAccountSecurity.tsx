@@ -7,11 +7,9 @@
 
 import { useState, useEffect } from 'react';
 import { Key, Shield, Eye, EyeOff, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API = getApiBase();
 
 export default function AdminAccountSecurity({ currentUser }: { currentUser?: { username: string; role: string; twoFactorEnabled: boolean } }) {
   const [currentPassword, setCurrentPassword] = useState('');
@@ -24,7 +22,7 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
 
   const [twoFaEnabled, setTwoFaEnabled] = useState<boolean>(currentUser?.twoFactorEnabled || false);
   const [twoFaLoading, setTwoFaLoading] = useState(false);
-  const [twoFaSetup, setTwoFaSetup] = useState<{ secret: string; otpauthUrl: string } | null>(null);
+  const [twoFaSetup, setTwoFaSetup] = useState<{ secret: string; otpauthUrl: string; qrDataUrl?: string } | null>(null);
   const [twoFaCode, setTwoFaCode] = useState('');
   const [twoFaMsg, setTwoFaMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
@@ -85,7 +83,7 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
       });
       const data = await res.json();
       if (data.success) {
-        setTwoFaSetup({ secret: data.secret, otpauthUrl: data.otpauthUrl });
+        setTwoFaSetup({ secret: data.secret, otpauthUrl: data.otpauthUrl, qrDataUrl: data.qrDataUrl });
       } else {
         setTwoFaMsg({ type: 'err', text: data.error || '2FA setup failed.' });
       }
@@ -212,12 +210,16 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
         {twoFaSetup && (
           <form onSubmit={verify2fa} className="space-y-3 max-w-md">
             <p className="text-xs text-text-muted">Scan the QR code in your authenticator app, then enter the 6-digit code.</p>
-            <div className="p-3 rounded bg-white">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(twoFaSetup.otpauthUrl)}`}
-                alt="2FA QR code"
-                className="w-40 h-40"
-              />
+            <div className="p-3 rounded bg-white inline-block">
+              {twoFaSetup.qrDataUrl ? (
+                <img
+                  src={twoFaSetup.qrDataUrl}
+                  alt="2FA QR code"
+                  className="w-40 h-40"
+                />
+              ) : (
+                <p className="text-xs text-text-muted">QR unavailable — use the secret below.</p>
+              )}
             </div>
             <div className="text-[10px] text-text-muted font-mono break-all">Secret: {twoFaSetup.secret}</div>
             <input

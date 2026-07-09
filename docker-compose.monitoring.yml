@@ -1,0 +1,85 @@
+version: '3.9'
+
+# ═══════════════════════════════════════════════════════════════
+#  MONITORING STACK — Grafana + Loki + Promtail + Prometheus
+#  Run with: docker compose -f docker-compose.monitoring.yml --profile monitoring up -d
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─────────────────────────────────
+  # 📊 GRAFANA — dashboards
+  # ─────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeMe}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboard.json:/var/lib/grafana/dashboards/cryptoflip.json:ro
+    networks:
+      - cryptoflip-network
+    profiles:
+      - monitoring
+
+  # ─────────────────────────────────
+  # 🗂️ LOKI — log aggregation
+  # ─────────────────────────────────
+  loki:
+    image: grafana/loki:2.9.4
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - cryptoflip-network
+    profiles:
+      - monitoring
+
+  # ─────────────────────────────────
+  # 📡 PROMTAIL — ship Docker + host logs to Loki
+  # ─────────────────────────────────
+  promtail:
+    image: grafana/promtail:2.9.4
+    volumes:
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - cryptoflip-network
+    profiles:
+      - monitoring
+
+  # ─────────────────────────────────
+  # 📈 PROMETHEUS — metrics scraper
+  # ─────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    networks:
+      - cryptoflip-network
+    profiles:
+      - monitoring
+
+volumes:
+  grafana_data:
+  loki_data:
+  prometheus_data:
+
+networks:
+  cryptoflip-network:
+    external: true

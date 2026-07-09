@@ -9,6 +9,11 @@ services:
       target: production
       args:
         NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://crazycoin.duckdns.org}
+        NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-wss://crazycoin.duckdns.org}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-CryptoFlip}
+        ADMIN_SECRET_PATH: ${ADMIN_SECRET_PATH}
+        ADMIN_GATEWAY_TOKEN: ${ADMIN_GATEWAY_TOKEN}
     ports:
       # cx23 already uses port 3000 (Plokymarket nginx), 3003 (admin
       # vhost). CryptoFlip frontend exposed on 3002.
@@ -19,6 +24,7 @@ services:
       # NEXT_PUBLIC_API_URL is what the browser bundle uses.
       # For same-host deploy (nginx reverse proxy) this is a relative path.
       - NEXT_PUBLIC_API_URL=/api
+      - INTERNAL_API_URL=http://backend:4000
       # NEXT_PUBLIC_SOCKET_URL intentionally omitted —
       # socket.ts derives from window.location.origin at runtime.
       # INTERNAL_API_URL is the docker-network hostname the
@@ -122,8 +128,8 @@ services:
   # ─────────────────────────────────
   redis:
     image: redis:7-alpine
-    # Host port 6379 intentionally NOT mapped — Redis is internal-only.
-    # Access from host for debugging: docker exec -it coin-master-redis-1 redis-cli -a $REDIS_PASSWORD
+    # No host port mapping: Redis is internal-only (Docker network only).
+    # Host access: docker exec -it coin-master-redis-1 redis-cli -a $REDIS_PASSWORD
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     command:

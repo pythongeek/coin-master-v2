@@ -8,14 +8,13 @@
 
 import { useState, useEffect } from 'react';
 import { X, AlertTriangle, Info } from 'lucide-react';
+import { getApiBase } from '@/lib/api/base';
+
 
 // API base — `/api` on non-localhost (browser → nginx → backend),
 // `http://localhost:4000` on localhost (browser → backend directly).
 // All endpoint paths below should NOT include another `/api` prefix.
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API = getApiBase();
 
 interface BannerData {
   enabled: boolean;

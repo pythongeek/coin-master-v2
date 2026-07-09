@@ -1,71 +1,146 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleMiddleware, AuthPayload } from '../middleware/auth';
 import { query } from '../config/database';
-import { kycService } from '../services/kyc';
-import { validateBody } from '../middleware/validation';
-import { verifyAISchema } from '../schemas';
+import { submitKycVerification, getLatestKycSession, listKycSessions, reviewKycSession } from '../services/kyc-session';
+import { getKycSettings, setKycApiKey, setKycSettings, KycSettings } from '../services/kyc-settings';
+import { validateMiniMaxApiKey } from '../services/minimax-client';
+import rateLimit from 'express-rate-limit';
 
 const router = Router();
 
-// Extend Request type locally
 export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
 
-// ══════════════════════════════════════════════════════════════
-//  GET /api/kyc/admin/list — Super admin: list KYC submissions
-//
-//  Reads from the kyc_submissions table (joined with users) since
-//  the legacy users.kyc_status column does not exist on this DB.
-// ══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+//  Rate limiters
+// ═══════════════════════════════════════════════════════════════
+const verifyLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req as AuthRequest).user?.userId || req.ip || 'anonymous',
+  handler: (_req, res) => res.status(429).json({ success: false, error: 'Too many KYC attempts. Try again in 1 hour.' }),
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  GET /api/kyc/status — Current user KYC status
+// ═══════════════════════════════════════════════════════════════
+router.get('/status', authMiddleware, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const userResult = await query(
+      'SELECT kyc_status, kyc_verified_at FROM users WHERE id = $1',
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    const session = await getLatestKycSession(userId);
+    const settings = await getKycSettings();
+
+    res.json({
+      success: true,
+      kycStatus: userResult.rows[0].kyc_status,
+      verifiedAt: userResult.rows[0].kyc_verified_at,
+      provider: settings.provider,
+      latestSession: session
+        ? {
+            id: session.id,
+            status: session.status,
+            riskScore: session.risk_score,
+            riskTier: session.risk_tier,
+            finalDecision: session.final_decision,
+            documentValid: session.document_valid,
+            faceMatch: session.face_match,
+            faceSimilarity: session.face_similarity,
+            livenessPassed: session.liveness_passed,
+            sanctionsClear: session.sanctions_clear,
+            extractedFields: session.extracted_fields,
+            fraudSignals: session.fraud_signals,
+            complianceReasoning: session.compliance_reasoning,
+            createdAt: session.created_at,
+            completedAt: session.completed_at,
+            reviewedAt: session.reviewed_at,
+          }
+        : null,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  POST /api/kyc/verify — Submit document + selfie for verification
+// ═══════════════════════════════════════════════════════════════
+router.post('/verify', authMiddleware, verifyLimiter, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const { document, selfie } = req.body;
+    if (!document || !selfie || typeof document !== 'string' || typeof selfie !== 'string') {
+      return res.status(400).json({ success: false, error: 'document and selfie are required as base64 strings' });
+    }
+
+    const result = await submitKycVerification(userId, document, selfie);
+
+    res.json({
+      success: true,
+      sessionId: result.sessionId,
+      status: result.status,
+      riskScore: result.riskScore,
+      riskTier: result.riskTier,
+      decision: result.decision,
+      documentValid: result.documentValid,
+      faceMatch: result.faceMatch,
+      faceSimilarity: result.faceSimilarity,
+      livenessPassed: result.livenessPassed,
+      sanctionsClear: result.sanctionsClear,
+      extractedFields: result.extractedFields,
+      fraudSignals: result.fraudSignals,
+      complianceReasoning: result.complianceReasoning,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[KYC Route] Verification error for user ${req.user?.userId}:`, msg);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  ADMIN ROUTES
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/kyc/admin/list
 router.get('/admin/list', authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
   try {
-    const status = (req.query.status as string) || 'pending';
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(100, parseInt(req.query.limit as string) || 20);
     const offset = (page - 1) * limit;
 
-    const validStatuses = ['pending', 'approved', 'rejected', 'expired'];
-    const useStatusFilter = validStatuses.includes(status);
-
-    let result;
-    let countResult: { rows: { total: string }[] };
-    if (useStatusFilter) {
-      result = await query(
-        `SELECT k.id AS submission_id, k.user_id, u.username, u.email,
-                k.status, k.document_type AS provider,
-                k.reviewed_at, k.submitted_at AS created_at
-         FROM kyc_submissions k
-         JOIN users u ON u.id = k.user_id
-         WHERE k.status = $3
-         ORDER BY k.submitted_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset, status]
-      );
-      countResult = await query(
-        `SELECT COUNT(*) AS total FROM kyc_submissions WHERE status = $1`,
-        [status]
-      );
-    } else {
-      result = await query(
-        `SELECT k.id AS submission_id, k.user_id, u.username, u.email,
-                k.status, k.document_type AS provider,
-                k.reviewed_at, k.submitted_at AS created_at
-         FROM kyc_submissions k
-         JOIN users u ON u.id = k.user_id
-         ORDER BY k.submitted_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
-      );
-      countResult = await query(
-        `SELECT COUNT(*) AS total FROM kyc_submissions`
-      );
-    }
-
+    const sessions = await listKycSessions(status as any, limit, offset);
+    const countResult = await query(
+      status
+        ? 'SELECT COUNT(*) AS total FROM kyc_sessions WHERE status = $1'
+        : 'SELECT COUNT(*) AS total FROM kyc_sessions',
+      status ? [status] : []
+    );
     const total = parseInt(countResult.rows[0].total);
+
     res.json({
       success: true,
-      data: result.rows,
+      data: sessions,
       pagination: {
         total,
         page,
@@ -79,266 +154,112 @@ router.get('/admin/list', authMiddleware, roleMiddleware(['super_admin', 'suppor
   }
 });
 
-// ══════════════════════════════════════════════════════════════
-//  POST /api/kyc/admin/approve/:userId
-//  POST /api/kyc/admin/reject/:userId
-//  Super admin: manual KYC decision. Updates the latest pending
-//  submission for the user.
-// ══════════════════════════════════════════════════════════════
-async function decideKyc(req: Request, res: Response, decision: 'approved' | 'rejected') {
+// GET /api/kyc/admin/settings
+router.get('/admin/settings', authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
   try {
-    const self = (req as Request & { user: AuthPayload }).user;
-    const { userId } = req.params;
-
-    const result = await query(
-      `UPDATE kyc_submissions
-         SET status = $1,
-             reviewed_at = NOW(),
-             reviewer_id = $2,
-             rejection_reason = CASE WHEN $1 = 'rejected' THEN COALESCE(rejection_reason, 'Manually rejected by admin') ELSE rejection_reason END
-       WHERE id = (
-         SELECT id FROM kyc_submissions
-         WHERE user_id = $3 AND status = 'pending'
-         ORDER BY submitted_at DESC LIMIT 1
-       )
-       RETURNING id, status, reviewed_at`,
-      [decision, self.userId, userId]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ success: false, error: 'No pending submission found for this user.' });
-    }
-
-    // Also stamp the users.kyc_verified_at for fast status checks
-    await query(
-      `UPDATE users
-         SET kyc_verified_at = CASE WHEN $1 = 'approved' THEN NOW() ELSE kyc_verified_at END
-       WHERE id = $2`,
-      [decision, userId]
-    );
-
-    res.json({ success: true, kyc: result.rows[0], message: `KYC ${decision}.` });
+    const settings = await getKycSettings();
+    res.json({
+      success: true,
+      settings: {
+        provider: settings.provider,
+        minimaxApiKeySet: settings.minimaxApiKeySet,
+        minimaxModel: settings.minimaxModel,
+        minimaxBaseUrl: settings.minimaxBaseUrl,
+        requiredForWithdrawal: settings.requiredForWithdrawal,
+        requiredForBetAbove: settings.requiredForBetAbove,
+        autoApproveThreshold: settings.autoApproveThreshold,
+        autoRejectThreshold: settings.autoRejectThreshold,
+        maxFileSizeBytes: settings.maxFileSizeBytes,
+        allowedExtensions: settings.allowedExtensions,
+      },
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: msg });
   }
-}
+});
 
-router.post('/admin/approve/:userId', authMiddleware, roleMiddleware(['super_admin']), (req, res) => decideKyc(req, res, 'approved'));
-router.post('/admin/reject/:userId',  authMiddleware, roleMiddleware(['super_admin']), (req, res) => decideKyc(req, res, 'rejected'));
-
-/**
- * Handler for GET /api/kyc/status
- */
-export async function getStatus(req: AuthRequest, res: Response) {
+// POST /api/kyc/admin/settings
+router.post('/admin/settings', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
+    const {
+      provider,
+      minimaxModel,
+      minimaxBaseUrl,
+      requiredForWithdrawal,
+      requiredForBetAbove,
+      autoApproveThreshold,
+      autoRejectThreshold,
+      maxFileSizeBytes,
+      allowedExtensions,
+    } = req.body;
 
-    const result = await query(
-      'SELECT kyc_status, kyc_verified_at, kyc_applicant_id FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-
-    const user = result.rows[0];
-    res.json({
-      success: true,
-      kycStatus: user.kyc_status,
-      verifiedAt: user.kyc_verified_at,
-      applicantId: user.kyc_applicant_id,
-      mockMode: kycService.isMockMode(),
-      aiMockMode: kycService.isAIMockMode(),
+    await setKycSettings({
+      provider,
+      minimaxModel,
+      minimaxBaseUrl,
+      requiredForWithdrawal,
+      requiredForBetAbove,
+      autoApproveThreshold,
+      autoRejectThreshold,
+      maxFileSizeBytes,
+      allowedExtensions,
     });
+
+    res.json({ success: true, message: 'KYC settings updated.' });
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: errorMsg });
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
   }
-}
+});
 
-/**
- * Handler for POST /api/kyc/token
- */
-export async function postToken(req: AuthRequest, res: Response) {
+// POST /api/kyc/admin/api-key — Save or update MiniMax API key
+router.post('/admin/api-key', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const { apiKey } = req.body;
+    if (!apiKey || typeof apiKey !== 'string' || apiKey.length < 20) {
+      return res.status(400).json({ success: false, error: 'Invalid API key' });
     }
 
-    const userResult = await query(
-      'SELECT email, username, kyc_applicant_id, kyc_status FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-
-    const user = userResult.rows[0];
-    let applicantId = user.kyc_applicant_id;
-
-    if (!applicantId) {
-      const email = user.email || `${user.username}@mockmail.com`;
-      const applicantData = await kycService.createApplicant(userId, email);
-      applicantId = applicantData.applicantId;
-
-      await query(
-        'UPDATE users SET kyc_applicant_id = $1, kyc_status = $2 WHERE id = $3',
-        [applicantId, 'pending', userId]
-      );
-    }
-
-    const token = await kycService.getAccessToken(userId);
-
-    res.json({
-      success: true,
-      token,
-      userId,
-      applicantId,
-      mockMode: kycService.isMockMode(),
-    });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: errorMsg });
-  }
-}
-
-/**
- * Handler for POST /api/kyc/verify-ai
- * AI-powered multimodal KYC verification
- */
-export async function postVerifyAI(req: AuthRequest, res: Response) {
-  try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Unauthorized' });
-    }
-
-    const { document, selfie } = req.body;
-
-    console.log(`[KYC Route] Initiating AI verification for user: ${userId}`);
-    const result = await kycService.verifyIdentityAI(userId, document, selfie);
-
-    const applicantId = `ai_${userId}`;
-
-    if (result.verified) {
-      await query(
-        "UPDATE users SET kyc_status = 'verified', kyc_verified_at = NOW(), kyc_applicant_id = $1 WHERE id = $2",
-        [applicantId, userId]
-      );
-      console.log(`[KYC Route] AI verification SUCCESS for user: ${userId}`);
-    } else {
-      await query(
-        "UPDATE users SET kyc_status = 'rejected', kyc_applicant_id = $1 WHERE id = $2",
-        [applicantId, userId]
-      );
-      console.log(`[KYC Route] AI verification REJECTED for user: ${userId}. Reason: ${result.reason}`);
-    }
-
-    res.json({
-      success: true,
-      verified: result.verified,
-      confidence: result.confidence,
-      reason: result.reason,
-      documentInfo: result.documentInfo,
-    });
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[KYC Route] AI verification error for user: ${req.user?.userId}:`, errorMsg);
-    res.status(500).json({ success: false, error: errorMsg });
-  }
-}
-
-/**
- * Handler for POST /api/kyc/webhook
- */
-export async function postWebhook(req: Request, res: Response) {
-  try {
-    const rawBody = JSON.stringify(req.body);
-    const signature = req.headers['x-payload-digest'] as string || '';
-
-    const isValid = kycService.verifyWebhookSignature(rawBody, signature);
+    const isValid = await validateMiniMaxApiKey(apiKey);
     if (!isValid) {
-      return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
+      return res.status(400).json({ success: false, error: 'MiniMax API key validation failed. Check the key.' });
     }
 
-    const payload = req.body;
-    const { applicantId, externalUserId, reviewStatus, reviewResult } = payload;
+    await setKycApiKey(apiKey);
 
-    if (!externalUserId) {
-      return res.status(400).json({ success: false, error: 'Missing externalUserId' });
-    }
-
-    if (reviewStatus === 'completed') {
-      const answer = reviewResult?.reviewAnswer;
-      if (answer === 'GREEN') {
-        await query(
-          "UPDATE users SET kyc_status = 'verified', kyc_verified_at = NOW() WHERE id = $1",
-          [externalUserId]
-        );
-      } else if (answer === 'RED') {
-        await query(
-          "UPDATE users SET kyc_status = 'rejected' WHERE id = $1",
-          [externalUserId]
-        );
-      }
-    } else if (reviewStatus === 'initiate') {
-      await query(
-        "UPDATE users SET kyc_status = 'pending' WHERE id = $1",
-        [externalUserId]
-      );
-    }
-
-    res.json({ success: true });
+    res.json({ success: true, message: 'MiniMax API key saved and validated.' });
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: errorMsg });
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
   }
-}
+});
 
-/**
- * Handler for POST /api/kyc/simulate-success
- */
-export async function postSimulateSuccess(req: AuthRequest, res: Response) {
+// POST /api/kyc/admin/review/:sessionId
+router.post('/admin/review/:sessionId', authMiddleware, roleMiddleware(['super_admin']), async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user?.userId;
-    if (!userId) {
+    const { sessionId } = req.params;
+    const { decision, note } = req.body;
+    const reviewerId = req.user?.userId;
+
+    if (!reviewerId) {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
-
-    if (!kycService.isMockMode()) {
-      return res.status(403).json({
-        success: false,
-        error: 'Simulation is disabled when production Sumsub credentials are configured.',
-      });
+    if (!sessionId || typeof sessionId !== 'string') {
+      return res.status(400).json({ success: false, error: 'Invalid session ID' });
     }
+    if (decision !== 'approved' && decision !== 'rejected') {
+      return res.status(400).json({ success: false, error: 'Decision must be approved or rejected' });
+    }
+    const finalDecision: 'approved' | 'rejected' = decision;
 
-    await query(
-      "UPDATE users SET kyc_status = 'verified', kyc_verified_at = NOW(), kyc_applicant_id = COALESCE(kyc_applicant_id, $1) WHERE id = $2",
-      [`mock_applicant_${userId}`, userId]
-    );
+    await reviewKycSession(sessionId, reviewerId, finalDecision, note);
 
-    res.json({
-      success: true,
-      message: 'Simulated verification completed successfully! KYC status is now verified.',
-    });
+    res.json({ success: true, message: `KYC session ${decision}.` });
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: errorMsg });
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
   }
-}
-
-// Router registrations
-router.get('/status', authMiddleware, getStatus);
-router.post('/token', authMiddleware, postToken);
-router.post('/verify-ai', authMiddleware, validateBody(verifyAISchema), postVerifyAI);
-router.post('/webhook', postWebhook);
-router.post('/simulate-success', authMiddleware, postSimulateSuccess);
+});
 
 export default router;

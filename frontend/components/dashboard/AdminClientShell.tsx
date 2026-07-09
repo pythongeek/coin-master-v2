@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, Trophy, Target, type LucideIcon } from 'lucide-react';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
@@ -23,6 +24,7 @@ import AdminHealthDashboard from '@/components/dashboard/AdminHealthDashboard';
 import AdminBannerControl from '@/components/dashboard/AdminBannerControl';
 import SeedRotationPanel from '@/components/dashboard/SeedRotationPanel';
 import AdminKycReviewPanel from '@/components/dashboard/AdminKycReviewPanel';
+import AdminKycSettings from '@/components/dashboard/AdminKycSettings';
 import AdminLeaderboardPanel from '@/components/dashboard/AdminLeaderboardPanel';
 import AdminChallengesPanel from '@/components/dashboard/AdminChallengesPanel';
 import { useToast } from '@/components/providers/ToastProvider';
@@ -80,6 +82,13 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <Link
+            href="/game"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-text-secondary hover:border-brand-green/40 hover:text-brand-green text-xs font-mono"
+            title="Open the game UI as this admin user"
+          >
+            Open Game UI
+          </Link>
           <span className="w-2 h-2 rounded-full bg-brand-green animate-pulse-soft" />
           <span className="text-text-muted text-xs font-mono">System Online</span>
           <button
@@ -135,7 +144,14 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
         {activeTab === 'bonuses' && <AdminBonusPanel />}
         {activeTab === 'leaderboard' && <AdminLeaderboardPanel />}
         {activeTab === 'challenges' && <AdminChallengesPanel />}
-        {activeTab === 'kyc' && isSuperAdmin && <AdminKycReviewPanel />}
+        {activeTab === 'kyc' && isSuperAdmin && (
+          <>
+            <AdminKycSettings />
+            <div className="mt-5">
+              <AdminKycReviewPanel />
+            </div>
+          </>
+        )}
         {activeTab === 'audit' && <AdminAuditLogViewer />}
         {activeTab === 'health' && <AdminHealthDashboard />}
         {activeTab === 'security' && <>
