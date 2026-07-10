@@ -218,43 +218,82 @@ export class TronMcpService {
 
   /**
    * Build a signed USDT transfer from the hot wallet to a destination.
+   * The private key is used only locally; TronGrid never receives it.
    */
   async buildUsdtTransfer(
     toAddress: string,
     amountUsdt: number,
     privateKey: string
-  ): Promise<{ signedTx: string; txId: string }> {
+  ): Promise<{ signedTx: any; txId: string }> {
     const decimals = 6;
-    const rawAmount = Math.round(amountUsdt * 10 ** decimals).toString();
+    const rawAmount = Math.round(amountUsdt * 10 ** decimals);
+    const ownerAddress = this.hotWalletAddressFromKey(privateKey);
 
-    const result = await this.callTool('triggerSmartContract', {
+    const { TronWeb } = require('tronweb');
+    const tw = new TronWeb({
+      fullHost: 'https://api.trongrid.io',
+      headers: { 'TRON-PRO-API-KEY': this.apiKey },
+      privateKey,
+    });
+
+    const trigger = await tw.transactionBuilder.triggerSmartContract(
+      this.usdtContract,
+      'transfer(address,uint256)',
+      { feeLimit: 100_000_000, callValue: 0 },
+      [
+        { type: 'address', value: toAddress },
+        { type: 'uint256', value: rawAmount },
+      ],
+      ownerAddress
+    );
+
+    if (!trigger?.transaction) {
+      throw new Error('Failed to build USDT transfer: triggerSmartContract failed');
+    }
+
+    const signedTx = await tw.trx.sign(trigger.transaction);
+    return {
+      signedTx: signedTx as any,
+      txId: signedTx.txID,
+    };
+  }
+
+  /**
+   * Estimate energy required for a USDT transfer from the hot wallet.
+   */
+  async estimateEnergy(
+    toAddress: string,
+    amountUsdt: number,
+    privateKey: string
+  ): Promise<{ energy: number; transaction?: any }> {
+    const decimals = 6;
+    const rawAmount = Math.round(amountUsdt * 10 ** decimals);
+    const ownerAddress = this.hotWalletAddressFromKey(privateKey);
+
+    const result = await this.callTool('estimateEnergy', {
       contract_address: this.usdtContract,
       function_selector: 'transfer(address,uint256)',
       parameter: {
         to_address: toAddress,
-        amount: rawAmount,
+        amount: rawAmount.toString(),
       },
-      owner_address: this.hotWalletAddressFromKey(privateKey),
-      private_key: privateKey,
+      owner_address: ownerAddress,
       visible: true,
     });
 
     const parsed = this.parseToolResult(result);
-    if (!parsed?.transaction?.txID) {
-      throw new Error('Failed to build USDT transfer: missing txID');
-    }
-
     return {
-      signedTx: parsed.transaction.raw_data_hex || JSON.stringify(parsed.transaction),
-      txId: parsed.transaction.txID,
+      energy: Number(parsed?.energy_required || parsed?.energy || 0),
+      transaction: parsed?.transaction,
     };
   }
 
   /**
    * Broadcast a signed transaction to the TRON network.
    */
-  async broadcastTransaction(signedTx: string): Promise<{ txId: string; result: boolean; code?: string }> {
-    const result = await this.callTool('broadcastTransaction', { transaction: signedTx });
+  async broadcastTransaction(signedTx: string | object): Promise<{ txId: string; result: boolean; code?: string }> {
+    const transaction = typeof signedTx === 'string' ? signedTx : JSON.stringify(signedTx);
+    const result = await this.callTool('broadcastTransaction', { transaction });
     const parsed = this.parseToolResult(result);
     return {
       txId: parsed.txid || parsed.txID || parsed.transaction?.txID,

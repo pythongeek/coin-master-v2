@@ -17,15 +17,31 @@ export interface WithdrawalPayoutResult {
  * Broadcast a TRON (TRC-20 USDT) withdrawal to the blockchain.
  * Called after the admin has approved the withdrawal in the queue.
  *
+ * Flow:
+ *  1. Validate destination, amount and chain.
+ *  2. Decrypt the hot wallet private key.
+ *  3. Use MCP estimateEnergy to check the on-chain cost.
+ *  4. Build and sign the USDT transfer locally (private key never leaves the server).
+ *  5. Broadcast via TronGrid MCP broadcastTransaction.
+ *  6. Poll getTransactionInfoById until confirmed.
+ *  7. Mark withdrawal completed with the real tx hash.
+ *
  * Security:
- * - The private key is decrypted from HOT_WALLET_PRIVATE_KEY_ENCRYPTED.
- * - The destination address is validated as a TRON address.
- * - The amount is verified against the locked transaction row.
- * - The real on-chain tx hash is stored; no mock hashes are used.
+ * - Private key is decrypted only in memory for signing.
+ * - Destination address is validated as a TRON address.
+ * - Amount is verified against the locked transaction row.
+ * - Real on-chain tx hash is stored; no mock hashes.
  */
 export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayoutResult> {
   if (!env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED) {
     return { success: false, error: 'HOT_WALLET_PRIVATE_KEY_ENCRYPTED is not configured' };
+  }
+
+  let privateKey: string;
+  try {
+    privateKey = decryptSecret(env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED);
+  } catch (err) {
+    return { success: false, error: 'Failed to decrypt hot wallet private key' };
   }
 
   const client = await db.connect();
@@ -64,35 +80,55 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       throw new Error('This payout function only handles TRON withdrawals');
     }
 
-    // Decrypt hot wallet private key
-    let privateKey: string;
-    try {
-      privateKey = decryptSecret(env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED!);
-    } catch (err) {
-      throw new Error('Failed to decrypt hot wallet private key');
-    }
-
     // Ensure MCP session is ready
     await tronMcpService.start();
 
-    // Build and broadcast the USDT transfer
+    // 1. Estimate energy cost before spending real funds
+    logger.info('Estimating TRON withdrawal energy', { txId, toAddress, amount });
+    const energyEstimate = await tronMcpService.estimateEnergy(toAddress, amount, privateKey);
+    logger.info('Energy estimate', { txId, energy: energyEstimate.energy });
+
+    // 2. Build and sign locally
     const build = await tronMcpService.buildUsdtTransfer(toAddress, amount, privateKey);
     if (!build.txId || !build.signedTx) {
       throw new Error('Failed to build USDT withdrawal transaction');
     }
+    logger.info('USDT withdrawal signed locally', { txId, unsignedTxId: build.txId });
 
+    // 3. Broadcast via TronGrid MCP
     const broadcast = await tronMcpService.broadcastTransaction(build.signedTx);
-    if (!broadcast.result) {
+    if (!broadcast.result || !broadcast.txId) {
       throw new Error(`Broadcast failed: ${broadcast.code || 'unknown'}`);
     }
+    logger.info('USDT withdrawal broadcast', { txId, onChainTxHash: broadcast.txId });
 
-    // Mark transaction completed and unlock balance
+    // 4. Wait for on-chain confirmation (real tx hash, not mock)
+    let confirmation = await tronMcpService.confirmTransaction(broadcast.txId, REQUIRED_CONFIRMATIONS);
+    let attempts = 0;
+    while (!confirmation.confirmed && attempts < 30) {
+      await new Promise((resolve) => setTimeout(resolve, 10000));
+      confirmation = await tronMcpService.confirmTransaction(broadcast.txId, REQUIRED_CONFIRMATIONS);
+      attempts++;
+      logger.info('Withdrawal confirmation polling', {
+        txId,
+        onChainTxHash: broadcast.txId,
+        confirmations: confirmation.confirmations,
+        attempt: attempts,
+      });
+    }
+
+    if (!confirmation.confirmed) {
+      throw new Error(`Withdrawal broadcast ${broadcast.txId} did not reach ${REQUIRED_CONFIRMATIONS} confirmations in time`);
+    }
+
+    // 5. Mark completed and release locked balance
     await client.query(
       `UPDATE transactions
        SET status = 'completed', tx_hash = $1, completed_at = NOW(),
-           metadata = metadata || jsonb_build_object('broadcast_block', $2::text, 'payout_chain', 'tron')
-       WHERE id = $3`,
-      [broadcast.txId, metadata.chain, txId]
+           confirmations = $2,
+           metadata = metadata || jsonb_build_object('broadcast_block', $3::text, 'payout_chain', 'tron', 'energy_estimate', $4::int)
+       WHERE id = $5`,
+      [broadcast.txId, confirmation.confirmations, confirmation.blockNumber, energyEstimate.energy, txId]
     );
 
     await client.query(
@@ -104,11 +140,12 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
 
     await client.query('COMMIT');
 
-    logger.info('TRON withdrawal paid out', {
+    logger.info('TRON withdrawal paid out and confirmed', {
       txId,
       onChainTxHash: broadcast.txId,
       toAddress,
       amount,
+      confirmations: confirmation.confirmations,
     });
 
     return { success: true, txHash: broadcast.txId };
@@ -116,7 +153,6 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
     await client.query('ROLLBACK');
     const error = err instanceof Error ? err.message : String(err);
 
-    // Record failure without releasing locked funds (manual review required)
     await query(
       `UPDATE transactions
        SET status = 'failed',
@@ -132,11 +168,6 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
   }
 }
 
-/**
- * Confirm a previously broadcast TRON withdrawal has enough on-chain confirmations.
- * If confirmed, nothing more to do because the balance was already unlocked on broadcast.
- * This is mainly useful for audit and secondary confirmation checks.
- */
 export async function confirmTronWithdrawal(txId: string): Promise<{ confirmed: boolean; confirmations: number }> {
   const txResult = await query(
     `SELECT tx_hash, status FROM transactions WHERE id = $1 AND type = 'withdrawal'`,
