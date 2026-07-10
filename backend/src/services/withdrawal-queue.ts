@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { Queue, Worker, Job } from 'bullmq';
+import { logger } from '../config/logger';
 import { db, query } from '../config/database';
 import { redisConfig } from '../config/redis';
 import { reconcileUser } from './reconciliation-engine';
@@ -159,17 +160,21 @@ export async function requestWithdrawal(
 
 // Configure and start Worker
 export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
-  const { txId, walletId, amount, chain, userId } = job.data;
+  const { txId, walletId, amount, chain, userId, toAddress } = job.data;
 
   try {
-    // 1. Simulate blockchain payout / broadcast
+    // TRON withdrawals are paid out via the MCP payout worker after admin approval.
+    if (chain === 'tron') {
+      logger.info('Skipping TRON simulation payout; will be handled by MCP payout worker after admin approval', { txId, toAddress });
+      return { success: true, handledBy: 'mcp-payout-worker' };
+    }
+
+    // 1. Simulate blockchain payout / broadcast for non-TRON chains (legacy/manual)
     let txHash: string;
     if (chain === 'ethereum') {
       txHash = '0x' + crypto.randomUUID().replace(/-/g, '') + '000000000000';
     } else if (chain === 'solana') {
       txHash = crypto.randomUUID().replace(/-/g, '') + 'sol';
-    } else if (chain === 'tron') {
-      txHash = crypto.randomUUID().replace(/-/g, '') + 'tron';
     } else {
       txHash = crypto.randomUUID().replace(/-/g, '') + 'mock';
     }

@@ -825,12 +825,16 @@ export async function approveWithdrawal(
   adminUserId: string,
 ): Promise<{ ok: boolean }> {
   const tx = await query(
-    `SELECT user_id, amount, status FROM transactions
+    `SELECT user_id, amount, status, metadata, currency FROM transactions
      WHERE id = $1 AND type = 'withdrawal'`,
     [withdrawalId],
   );
   if (!tx.rows.length) return { ok: false };
   if (tx.rows[0].status !== 'pending') return { ok: false };
+
+  const metadata = typeof tx.rows[0].metadata === 'string' ? JSON.parse(tx.rows[0].metadata) : (tx.rows[0].metadata || {});
+  const chain = metadata.chain || metadata.payout_chain || 'unknown';
+  const token = metadata.currency || tx.rows[0].currency || 'USDT';
 
   await query(
     `UPDATE transactions
@@ -838,6 +842,15 @@ export async function approveWithdrawal(
      WHERE id = $1`,
     [withdrawalId],
   );
+
+  // For TRON/USDT withdrawals, enqueue a real on-chain payout job.
+  if (chain === 'tron' || token === 'USDT' || token === 'TRX') {
+    const { withdrawalPayoutQueue } = await import('./withdrawal-payout.worker');
+    await withdrawalPayoutQueue.add('payout-tron', { txId: withdrawalId }, {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 60000 },
+    });
+  }
   await query(
     `INSERT INTO audit_log (category, action, severity, user_id, details)
      VALUES ('withdrawal', 'withdrawal.approved', 'info', $1, $2)`,
