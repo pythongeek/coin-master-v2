@@ -26,6 +26,8 @@ const envSchema = z.object({
 
   // Tron / USDT deposit configuration
   TRON_FULL_NODE: z.string().default('https://api.trongrid.io'),
+  TRON_MCP_ENDPOINT: z.string().default('https://mcp.trongrid.io/mcp'),
+  TRON_MCP_MAX_RPS: z.string().default('10'),
   TRON_API_KEY: z.string().optional(),
   USDT_CONTRACT: z.string().default('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'),
   HOT_WALLET_ADDRESS: z.string().min(34).startsWith('T').optional(),
