@@ -21,6 +21,7 @@ import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
 import { tronDepositMonitor } from './services/tron-deposit-monitor';
+import { tronMcpService } from './services/tron-mcp.service';
 import docsRoutes from './routes/docs';
 import router from './routes/metrics';
 
@@ -242,7 +243,12 @@ async function start() {
   
   startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
   
-  // Start TronGrid deposit monitor to detect incoming USDT payments
+  // Start TronGrid MCP session and deposit monitor
+  try {
+    await tronMcpService.start();
+  } catch (err) {
+    console.error('Failed to start TronGrid MCP service; continuing without deposit monitoring', (err as Error).message);
+  }
   tronDepositMonitor.start();
 
   // Start periodic S3/local audit backup (every 1 hour)

@@ -1,14 +1,21 @@
 import { PrismaClient, DepositStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { logger } from '../config/logger';
-import { env } from '../config/env';
+import { tronMcpService } from './tron-mcp.service';
 import { depositService } from './deposit.service';
 
 const prisma = new PrismaClient();
-const USDT_CONTRACT = env.USDT_CONTRACT || 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
-const TRON_FULL_NODE = env.TRON_FULL_NODE || 'https://api.trongrid.io';
 const POLL_INTERVAL_MS = 30000; // 30 seconds
+const USDT_DECIMALS = 6;
 
+/**
+ * TronGrid MCP-powered deposit monitor.
+ *
+ * Replaces the old REST-API poller that was failing with 401s because the
+ * API key was missing. All on-chain reads now go through the MCP service,
+ * which is rate-limited to 10 req/sec to stay safely under the free-tier
+ * 15 req/sec cap.
+ */
 export class TronDepositMonitor {
   private interval: NodeJS.Timeout | null = null;
   private running = false;
@@ -16,13 +23,14 @@ export class TronDepositMonitor {
   start(): void {
     if (this.running) return;
     this.running = true;
-    logger.info('TronGrid deposit monitor started', { intervalMs: POLL_INTERVAL_MS });
+    logger.info('TronGrid MCP deposit monitor started', { intervalMs: POLL_INTERVAL_MS });
+
     this.interval = setInterval(() => {
       void this.poll().catch((err: unknown) => {
         logger.error('Deposit monitor poll failed', { error: (err as Error).message });
       });
     }, POLL_INTERVAL_MS);
-    // Run immediately once
+
     void this.poll().catch((err: unknown) => {
       logger.error('Deposit monitor initial poll failed', { error: (err as Error).message });
     });
@@ -34,7 +42,7 @@ export class TronDepositMonitor {
       this.interval = null;
     }
     this.running = false;
-    logger.info('TronGrid deposit monitor stopped');
+    logger.info('TronGrid MCP deposit monitor stopped');
   }
 
   private async poll(): Promise<void> {
@@ -48,22 +56,28 @@ export class TronDepositMonitor {
 
     if (pending.length === 0) return;
 
-    logger.info('Polling pending deposits', { count: pending.length });
+    logger.info('Polling pending deposits via TronGrid MCP', { count: pending.length });
 
     for (const deposit of pending) {
       try {
         if (!deposit.toAddress) continue;
-        const tx = await this.findLatestUsdtTransfer(deposit.toAddress, deposit.cryptoAmount, deposit.id);
-        if (!tx) continue;
+
+        const transfer = await this.findMatchingUsdtTransfer(deposit.toAddress, deposit.cryptoAmount, deposit.id);
+        if (!transfer) continue;
 
         logger.info('Deposit payment detected', {
           depositId: deposit.id,
-          txId: tx.txID,
-          amount: deposit.cryptoAmount.toString(),
+          txId: transfer.txHash,
+          amount: transfer.amount,
           toAddress: deposit.toAddress,
         });
 
-        await depositService.detectPayment(deposit.id, tx.txID, tx.fromAddress, deposit.cryptoAmount);
+        await depositService.detectPayment(
+          deposit.id,
+          transfer.txHash,
+          transfer.fromAddress,
+          new Decimal(transfer.amount)
+        );
       } catch (err) {
         logger.error('Error processing deposit', {
           depositId: deposit.id,
@@ -71,68 +85,72 @@ export class TronDepositMonitor {
         });
       }
     }
+
+    // After detecting payments, confirm any deposits that are confirming
+    await this.confirmDeposits().catch((err: unknown) => {
+      logger.error('Deposit confirmation poll failed', { error: (err as Error).message });
+    });
   }
 
-  private async findLatestUsdtTransfer(
+  private async findMatchingUsdtTransfer(
     expectedToAddress: string,
     expectedAmount: Decimal,
     depositId: string
-  ): Promise<{ txID: string; fromAddress: string } | null> {
+  ): Promise<{ txHash: string; fromAddress: string; amount: string } | null> {
     const to = expectedToAddress.toLowerCase().trim();
-    const amountSun = expectedAmount.mul(1000000).toNumber();
-    const minAmountSun = amountSun * 0.99;
-    const maxAmountSun = amountSun * 1.01;
+    const amountMajor = parseFloat(expectedAmount.toString());
 
-    const url = new URL(`${TRON_FULL_NODE}/v1/accounts/${expectedToAddress}/transactions/trc20`);
-    url.searchParams.set('limit', '20');
-    url.searchParams.set('contract_address', USDT_CONTRACT);
-    url.searchParams.set('only_confirmed', 'false');
-    url.searchParams.set('order_by', 'block_timestamp,desc');
+    // Fetch the latest incoming USDT transfers via MCP (rate-limited internally)
+    const transfers = await tronMcpService.getIncomingUsdt(expectedToAddress, { limit: 20 });
 
-    const headers: Record<string, string> = {};
-    if (env.TRON_API_KEY) headers['TRON-PRO-API-KEY'] = env.TRON_API_KEY;
+    for (const tx of transfers) {
+      if (!tx.txHash || !tx.fromAddress || !tx.toAddress) continue;
+      if (tx.toAddress.toLowerCase() !== to) continue;
 
-    const response = await fetch(url.toString(), { headers });
-    if (!response.ok) {
-      throw new Error(`TronGrid API error: ${response.status} ${await response.text()}`);
-    }
+      const txAmount = parseFloat(tx.amount);
+      const diff = Math.abs(txAmount - amountMajor);
+      if (diff > amountMajor * 0.01) continue; // 1% tolerance
 
-    const data = (await response.json()) as { data?: Array<any> };
-    if (!data.data || data.data.length === 0) return null;
-
-    for (const tx of data.data) {
-      if (!tx.transaction_id || !tx.from || !tx.to || !tx.value) continue;
-      const toAddress = this.normalizeAddress(tx.to);
-      const fromAddress = this.normalizeAddress(tx.from);
-      const value = parseFloat(tx.value);
-
-      if (toAddress.toLowerCase() !== to) continue;
-      if (value < minAmountSun || value > maxAmountSun) continue;
-
-      // Already processed?
+      // Prevent replay / double credit
       const existing = await prisma.depositTransaction.findFirst({
         where: {
-          blockchainTxId: tx.transaction_id,
+          blockchainTxId: tx.txHash,
           id: { not: depositId },
         },
       });
       if (existing) continue;
 
-      return { txID: tx.transaction_id, fromAddress };
+      return { txHash: tx.txHash, fromAddress: tx.fromAddress, amount: tx.amount };
     }
 
     return null;
   }
 
-  private normalizeAddress(addr: string): string {
-    if (!addr) return '';
-    if (addr.startsWith('T') && addr.length === 34) return addr;
-    try {
-      const { TronWeb } = require('tronweb');
-      const tw = new TronWeb({ fullHost: TRON_FULL_NODE });
-      return tw.address.fromHex(addr);
-    } catch {
-      return addr;
+  private async confirmDeposits(): Promise<void> {
+    const detecting = await prisma.depositTransaction.findMany({
+      where: {
+        status: { in: ['payment_detected', 'confirming'] },
+        blockchainTxId: { not: null },
+      },
+      take: 50,
+    });
+
+    for (const deposit of detecting) {
+      if (!deposit.blockchainTxId) continue;
+      try {
+        const confirmation = await tronMcpService.confirmTransaction(
+          deposit.blockchainTxId,
+          19
+        );
+
+        await depositService.confirmDeposit(deposit.id, confirmation.confirmations);
+      } catch (err) {
+        logger.error('Error confirming deposit', {
+          depositId: deposit.id,
+          txId: deposit.blockchainTxId,
+          error: (err as Error).message,
+        });
+      }
     }
   }
 }
