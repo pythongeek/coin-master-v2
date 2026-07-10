@@ -90,10 +90,11 @@ export class TronDepositMonitor {
           new Decimal(transfer.amount)
         );
 
-        // Persist on-chain metadata for audit and rollback checks
+        // Persist block number and chain meta for audit and rollback checks
         await prisma.depositTransaction.update({
           where: { id: deposit.id },
           data: {
+            blockNumber: transfer.blockNumber,
             statusHistory: {
               push: {
                 status: 'payment_detected_chain_meta',

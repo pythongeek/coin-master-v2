@@ -63,7 +63,7 @@ export class DepositService {
       ipAddress,
       deviceFingerprint
     );
-    const depositAddress = this.generateDepositAddress(userId);
+    const depositAddress = this.generateDepositAddress(userId, lock.lockId);
     const memo = this.generateMemo(userId, lock.lockId);
 
     const expiresAt = new Date(Date.now() + DEPOSIT_EXPIRY_MS);
@@ -382,12 +382,12 @@ export class DepositService {
     }));
   }
 
-  private generateDepositAddress(userId: string): string {
+  private generateDepositAddress(userId: string, lockId: string): string {
     const hot = env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
     if (env.DEPOSIT_ADDRESS_DERIVATION === 'per_user') {
-      // Derive a deterministic TRON address per user from a dedicated deposit
-      // derivation seed. This is separated from the hot wallet signing key so
-      // rotating the hot wallet does not change user deposit addresses.
+      // Derive a deterministic TRON address per deposit (per rate lock) from a
+      // dedicated deposit derivation seed. This prevents address reuse across
+      // deposits and separates deposit derivation from the hot wallet signing key.
       let seed = env.HOT_WALLET_ADDRESS;
       if (env.DEPOSIT_DERIVATION_SEED_ENCRYPTED) {
         const { decryptSecret } = require('./secret-vault');
@@ -399,7 +399,7 @@ export class DepositService {
         // derived addresses unchanged when the private key is rotated.
         seed = env.HOT_WALLET_ADDRESS;
       }
-      const fullSeed = `${seed}:${userId}`;
+      const fullSeed = `${seed}:${userId}:${lockId}`;
       const hash = crypto.createHash('sha256').update(fullSeed).digest('hex');
       const { TronWeb } = require('tronweb');
       const tw = new TronWeb({ fullHost: 'https://api.trongrid.io' });

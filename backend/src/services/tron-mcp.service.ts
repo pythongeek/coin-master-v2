@@ -207,12 +207,13 @@ export class TronMcpService {
     const confirmations = Number(parsed.confirmations ?? 0);
     const blockNumber = parsed.blockNumber || parsed.block_height || parsed.blockNumber;
     const success = parsed.receipt?.result === 'SUCCESS' || parsed.receipt?.result === 'success';
+    const isFinal = parsed.status === 'CONFIRMED' || parsed.status === 'confirmed';
 
     return {
-      confirmed: confirmations >= minConfirmations && success,
+      confirmed: confirmations >= minConfirmations && success && isFinal,
       confirmations,
       blockNumber,
-      status: parsed.receipt?.result,
+      status: `${parsed.status}:${parsed.receipt?.result}`,
     };
   }
 

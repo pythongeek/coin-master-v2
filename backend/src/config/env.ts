@@ -33,6 +33,8 @@ const envSchema = z.object({
   HOT_WALLET_ADDRESS: z.string().min(34).startsWith('T').optional(),
   HOT_WALLET_PRIVATE_KEY_ENCRYPTED: z.string().min(1).optional(),
   DEPOSIT_DERIVATION_SEED_ENCRYPTED: z.string().min(1).optional(),
+  HOT_WALLET_DAILY_WITHDRAWAL_LIMIT: z.coerce.number().positive().default(100000),
+  HOT_WALLET_MIN_BALANCE_USDT: z.coerce.number().positive().default(1000),
   DEPOSIT_ADDRESS_DERIVATION: z.enum(['static', 'per_user']).default('static'),
 
   // Rate / deposit settings

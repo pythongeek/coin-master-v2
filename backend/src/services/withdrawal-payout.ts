@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Decimal } from '@prisma/client/runtime/library';
 import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { db, query } from '../config/database';
@@ -6,6 +7,11 @@ import { tronMcpService } from './tron-mcp.service';
 import { decryptSecret } from './secret-vault';
 
 const REQUIRED_CONFIRMATIONS = 19;
+
+function hotWalletAddressFromKey(privateKey: string): string {
+  const { TronWeb } = require('tronweb');
+  return TronWeb.address.fromPrivateKey(privateKey);
+}
 
 export interface WithdrawalPayoutResult {
   success: boolean;
@@ -83,7 +89,30 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
     // Ensure MCP session is ready
     await tronMcpService.start();
 
-    // 1. Estimate energy cost before spending real funds
+    // 1. Hot wallet balance and daily limit checks to prevent drain
+    const hotWalletAddress = hotWalletAddressFromKey(privateKey);
+    const hotBalance = await tronMcpService.getUsdtBalance(hotWalletAddress);
+    if (new Decimal(hotBalance).lessThan(amount)) {
+      throw new Error(`Hot wallet USDT balance insufficient: ${hotBalance} available, ${amount} requested`);
+    }
+
+    const dailyLimit = parseFloat(String(env.HOT_WALLET_DAILY_WITHDRAWAL_LIMIT));
+    const dailyResult = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) as total
+       FROM transactions
+       WHERE type = 'withdrawal'
+         AND status = 'completed'
+         AND metadata->>'payout_chain' = 'tron'
+         AND completed_at >= NOW() - INTERVAL '24 hours'`,
+      []
+    );
+    const dailyTotal = parseFloat(dailyResult.rows[0].total);
+    if (dailyTotal + amount > dailyLimit) {
+      throw new Error(`Hot wallet daily withdrawal limit ${dailyLimit} USDT exceeded`);
+    }
+    logger.info('Hot wallet balance check passed', { txId, hotBalance, dailyTotal, dailyLimit });
+
+    // 2. Estimate energy cost before spending real funds
     logger.info('Estimating TRON withdrawal energy', { txId, toAddress, amount });
     const energyEstimate = await tronMcpService.estimateEnergy(toAddress, amount, privateKey);
     logger.info('Energy estimate', { txId, energy: energyEstimate.energy });
