@@ -42,7 +42,7 @@ COPY --chown=backend:nodejs migrations ./migrations
 COPY --chown=backend:nodejs prisma ./prisma
 COPY --chown=backend:nodejs tesseract-lang ./tesseract-lang
 RUN npx prisma generate
-RUN mkdir -p /app/logs && chown backend:nodejs /app/logs
+RUN mkdir -p /app/logs /app/backups/s3-mock && chown -R backend:nodejs /app/logs /app/backups
 
 USER backend
 EXPOSE 4000
