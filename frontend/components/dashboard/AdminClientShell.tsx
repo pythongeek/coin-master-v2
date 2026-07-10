@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, Trophy, Target, type LucideIcon } from 'lucide-react';
+import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, Trophy, Target, Coins, type LucideIcon } from 'lucide-react';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
 import AdminUserTable from '@/components/dashboard/AdminUserTable';
@@ -21,6 +21,8 @@ import AdminBonusPanel from '@/components/dashboard/AdminBonusPanel';
 import AdminAuditLogViewer from '@/components/dashboard/AdminAuditLogViewer';
 import AdminAccountSecurity from '@/components/dashboard/AdminAccountSecurity';
 import AdminHealthDashboard from '@/components/dashboard/AdminHealthDashboard';
+import AdminSecuritySettings from '@/components/dashboard/AdminSecuritySettings';
+import AdminCoinManagement from '@/components/dashboard/AdminCoinManagement';
 import AdminBannerControl from '@/components/dashboard/AdminBannerControl';
 import SeedRotationPanel from '@/components/dashboard/SeedRotationPanel';
 import AdminKycReviewPanel from '@/components/dashboard/AdminKycReviewPanel';
@@ -30,11 +32,12 @@ import AdminChallengesPanel from '@/components/dashboard/AdminChallengesPanel';
 import { useToast } from '@/components/providers/ToastProvider';
 import { clearToken } from '@/lib/socket';
 
-const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'health' | 'security' | 'kyc' | 'account'; label: string; Icon: LucideIcon }[] = [
+const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'health' | 'security' | 'kyc' | 'account' | 'coins'; label: string; Icon: LucideIcon }[] = [
   { id: 'live', label: 'Live Stats', Icon: BarChart3 },
   { id: 'config', label: 'Game Config', Icon: Settings },
   { id: 'users', label: 'Users', Icon: Users },
   { id: 'withdrawals', label: 'Withdrawals', Icon: Wallet },
+  { id: 'coins', label: 'Coin Management', Icon: Coins },
   { id: 'bonuses', label: 'Bonuses', Icon: Gift },
   { id: 'leaderboard', label: 'Leaderboard', Icon: Trophy },
   { id: 'challenges', label: 'Challenges', Icon: Target },
@@ -141,6 +144,7 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
         {activeTab === 'config' && <AdminConfigPanel />}
         {activeTab === 'users' && <AdminUserTable />}
         {activeTab === 'withdrawals' && <AdminWithdrawalQueue />}
+        {activeTab === 'coins' && <AdminCoinManagement />}
         {activeTab === 'bonuses' && <AdminBonusPanel />}
         {activeTab === 'leaderboard' && <AdminLeaderboardPanel />}
         {activeTab === 'challenges' && <AdminChallengesPanel />}
@@ -155,6 +159,7 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
         {activeTab === 'audit' && <AdminAuditLogViewer />}
         {activeTab === 'health' && <AdminHealthDashboard />}
         {activeTab === 'security' && <>
+          <AdminSecuritySettings />
           <SeedRotationPanel />
           <div className="mt-5">
             <AdminBannerControl />

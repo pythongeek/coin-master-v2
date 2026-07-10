@@ -10,6 +10,7 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaClient } from '@prisma/client';
 import {
@@ -31,6 +32,8 @@ import { getRakebackStatus, claimRakeback, getRakebackStats } from '../services/
 import { getUserChallengeProgress, claimChallengeReward, getChallengeStats, getChallengeDefinitions } from '../services/challenges';
 import { getWhitelistedIps, addIpToWhitelist, removeIpFromWhitelist } from '../services/ip-whitelist';
 import { ipWhitelistAddSchema } from '../schemas';
+
+const prisma = new PrismaClient();
 
 const router = Router();
 
@@ -688,7 +691,6 @@ router.get('/rates', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
 // GET /api/admin/deposits/queue — pending deposit queue
 router.get('/deposits/queue', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
-    const prisma = new PrismaClient();
     const queue = await prisma.depositTransaction.findMany({
       where: { status: { in: ['rate_locked', 'awaiting_payment', 'payment_detected', 'confirming'] } },
       orderBy: { createdAt: 'desc' },
@@ -764,5 +766,45 @@ router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['supe
     res.json({ success: true, message: 'Reverted to market rate' });
   } catch (err) {
     res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  ADMIN SETTINGS
+// ══════════════════════════════════════════════════════════════
+import { getAdminSettingBool, setAdminSetting } from '../services/admin-settings.service';
+
+// GET /api/admin/settings — list all admin settings
+router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const result = await query('SELECT key, value, description, updated_at FROM admin_settings ORDER BY key ASC');
+    res.json({ success: true, data: result.rows });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// PUT /api/admin/settings/:key — update a setting (super_admin only)
+router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({ value: z.string() })), async (req: Request, res: Response) => {
+  try {
+    const { key } = req.params;
+    const { value } = req.body;
+    await setAdminSetting(key as string, value as string);
+    res.json({ success: true, message: 'Setting updated' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// GET /api/admin/settings/admin-2fa-status — check if admin 2FA is required
+router.get('/settings/admin-2fa-status', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const required = await getAdminSettingBool('admin_2fa_required', false);
+    res.json({ success: true, required });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
   }
 });

@@ -22,7 +22,7 @@ import jwt from 'jsonwebtoken';
 import QRCode from 'qrcode';
 import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
-import { ADMIN_2FA_REQUIRED } from '../index';
+import { getAdminSettingBool } from '../services/admin-settings.service';
 import { validateBody } from '../middleware/validation';
 import { authLimiter } from '../middleware/rate-limiter';
 import {
@@ -188,23 +188,33 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       return res.status(401).json({ success: false, error: 'ইউজারনেম বা পাসওয়ার্ড ভুল।' });
     }
 
-    // ২এফএ চালু থাকলে টেম্পোরারি টোকেন রিটার্ন করো
-    if (user.two_factor_enabled) {
-      const tempToken = jwt.sign(
-        { userId: user.id, username: user.username, isAdmin: user.is_admin, role: user.role, isTemp: true },
-        JWT_SECRET,
-        { expiresIn: '5m' }
-      );
-      return res.json({
-        success: true,
-        require2FA: true,
-        tempToken,
-        message: '২এফএ যাচাইকরণ প্রয়োজন।',
-      });
+    // Determine whether 2FA is required for this user.
+    const admin2faRequired = await getAdminSettingBool('admin_2fa_required', false);
+    const isAdmin = (user as any).is_admin;
+    const require2FAForThisUser = user.two_factor_enabled || (isAdmin && admin2faRequired);
+
+    if (require2FAForThisUser) {
+      // If the admin 2FA toggle is off, an admin with 2FA already configured can still
+      // log in in one shot. The toggle only forces 2FA when on.
+      if (isAdmin && !admin2faRequired) {
+        // proceed to token below
+      } else {
+        const tempToken = jwt.sign(
+          { userId: user.id, username: user.username, isAdmin: user.is_admin, role: user.role, isTemp: true },
+          JWT_SECRET,
+          { expiresIn: '5m' }
+        );
+        return res.json({
+          success: true,
+          require2FA: true,
+          tempToken,
+          message: '২এফএ যাচাইকরণ প্রয়োজন।',
+        });
+      }
     }
 
-    // Admin accounts MUST have 2FA enabled when ADMIN_2FA_REQUIRED is true.
-    if (ADMIN_2FA_REQUIRED && user.is_admin) {
+    // Admin accounts MUST have 2FA enabled when admin_2fa_required is true.
+    if (admin2faRequired && isAdmin) {
       return res.status(403).json({
         success: false,
         require2FASetup: true,
@@ -340,23 +350,31 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
 
     const u = user.rows[0];
 
-    // ২এফএ চালু থাকলে টেম্পোরারি টোকেন রিটার্ন করো
-    if (u.two_factor_enabled) {
-      const tempToken = jwt.sign(
-        { userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role, isTemp: true },
-        JWT_SECRET,
-        { expiresIn: '5m' }
-      );
-      return res.json({
-        success: true,
-        require2FA: true,
-        tempToken,
-        message: '২এফএ যাচাইকরণ প্রয়োজন।',
-      });
+    // Determine whether 2FA is required for this user.
+    const admin2faRequired = await getAdminSettingBool('admin_2fa_required', false);
+    const isAdmin = (u as any).is_admin;
+    const require2FAForThisUser = u.two_factor_enabled || (isAdmin && admin2faRequired);
+
+    if (require2FAForThisUser) {
+      if (isAdmin && !admin2faRequired) {
+        // proceed to token below
+      } else {
+        const tempToken = jwt.sign(
+          { userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role, isTemp: true },
+          JWT_SECRET,
+          { expiresIn: '5m' }
+        );
+        return res.json({
+          success: true,
+          require2FA: true,
+          tempToken,
+          message: '২এফএ যাচাইকরণ প্রয়োজন।',
+        });
+      }
     }
 
-    // Admin accounts MUST have 2FA enabled when ADMIN_2FA_REQUIRED is true.
-    if (ADMIN_2FA_REQUIRED && u.is_admin) {
+    // Admin accounts MUST have 2FA enabled when admin_2fa_required is true.
+    if (admin2faRequired && isAdmin) {
       return res.status(403).json({
         success: false,
         require2FASetup: true,

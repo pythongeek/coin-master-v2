@@ -24,9 +24,11 @@ const API = '/api';
 export default function AdminLoginPage() {
   const router = useRouter();
   const { login } = useGameStore();
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: '', password: '', token: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [require2FA, setRequire2FA] = useState(false);
+  const [tempToken, setTempToken] = useState('');
 
   const handleLogin = async () => {
     setError('');
@@ -37,10 +39,29 @@ export default function AdminLoginPage() {
 
     setLoading(true);
     try {
+      // If 2FA step already triggered, verify the TOTP code.
+      if (require2FA && tempToken) {
+        const res = await fetch(`${API}/auth/2fa/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tempToken, token: form.token }),
+        });
+        const data = await res.json();
+
+        if (!data.success) {
+          setError(data.error || 'Invalid 2FA code.');
+          trackEvent('admin_login_failed', { error: data.error || '2FA invalid' });
+          return;
+        }
+
+        finalizeLogin(data.token, data.user);
+        return;
+      }
+
       const res = await fetch(`${API}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ username: form.username, password: form.password }),
       });
       const data = await res.json();
 
@@ -50,46 +71,19 @@ export default function AdminLoginPage() {
         return;
       }
 
+      if (data.require2FA) {
+        setTempToken(data.tempToken);
+        setRequire2FA(true);
+        return;
+      }
+
       if (!data.user?.isAdmin) {
         setError('This account is not authorized for admin access.');
         trackEvent('admin_login_failed', { error: 'not_admin' });
         return;
       }
 
-      // Store token the same way the game login modal does
-      storeToken(data.token);
-      localStorage.setItem('cf_token', data.token);
-      setTokenCookie(data.token);
-
-      login({
-        user: {
-          userId: data.user.userId,
-          username: data.user.username,
-          balance: data.user.balance ?? 0,
-          isAdmin: data.user.isAdmin,
-          walletAddress: data.user.walletAddress,
-          isFlagged: data.user.isFlagged ?? false,
-          email: data.user.email,
-        },
-        token: data.token,
-      });
-
-      reconnectWithToken(data.token);
-
-      identifyUser(data.user.userId, {
-        username: data.user.username,
-        email: data.user.email,
-        walletAddress: data.user.walletAddress,
-      });
-
-      trackEvent('admin_login_success');
-      // Use full browser navigation so the secret gateway path stays in
-      // the URL. Client-side router.push('/admin') would hit Next.js's
-      // internal /admin route, which the middleware blocks with 404.
-      const target = typeof window !== 'undefined'
-        ? window.location.pathname.replace(/\/?login$/, '')
-        : '/admin';
-      window.location.href = target;
+      finalizeLogin(data.token, data.user);
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
       setError('Network error. Please try again.');
@@ -97,6 +91,39 @@ export default function AdminLoginPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const finalizeLogin = (token: string, user: any) => {
+    storeToken(token);
+    localStorage.setItem('cf_token', token);
+    setTokenCookie(token);
+
+    login({
+      user: {
+        userId: user.userId,
+        username: user.username,
+        balance: user.balance ?? 0,
+        isAdmin: user.isAdmin,
+        walletAddress: user.walletAddress,
+        isFlagged: user.isFlagged ?? false,
+        email: user.email,
+      },
+      token,
+    });
+
+    reconnectWithToken(token);
+
+    identifyUser(user.userId, {
+      username: user.username,
+      email: user.email,
+      walletAddress: user.walletAddress,
+    });
+
+    trackEvent('admin_login_success');
+    const target = typeof window !== 'undefined'
+      ? window.location.pathname.replace(/\/?login$/, '')
+      : '/admin';
+    window.location.href = target;
   };
 
   return (
@@ -136,13 +163,26 @@ export default function AdminLoginPage() {
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
           />
 
+          {require2FA && (
+            <input
+              className="input-cyber w-full"
+              placeholder="2FA code (6 digits)"
+              value={form.token}
+              onChange={(e) => setForm(p => ({ ...p, token: e.target.value }))}
+              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+              maxLength={6}
+              inputMode="numeric"
+              autoFocus
+            />
+          )}
+
           <button
             onClick={handleLogin}
             disabled={loading}
             className="btn-brand w-full flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading && <Loader2 size={15} className="animate-spin" />}
-            {loading ? 'Signing in...' : 'Sign in to Admin'}
+            {loading ? 'Signing in...' : require2FA ? 'Verify 2FA' : 'Sign in to Admin'}
           </button>
 
           <Link

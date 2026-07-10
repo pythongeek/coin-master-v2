@@ -43,41 +43,22 @@ import depositRoutes from './routes/deposit';
 
 dotenv.config();
 
-// ─── Mandatory Security Configuration ────────────────────────
-// ADMIN_2FA_REQUIRED must be explicitly set. We refuse to start
-// if it's missing to prevent accidental production deployments
-// with disabled 2FA.
-//
-// Fail-closed: in development/admin mode (NODE_ENV != production) we
-// still require an explicit value. Use ADMIN_2FA_REQUIRED=false only
-// for local dev, never in staging/production.
+// ─── Admin 2FA Toggle ──────────────────────────────────────
+// The canonical source of truth is the admin_settings row
+// 'admin_2fa_required'. The env variable ADMIN_2FA_REQUIRED is kept
+// only as a fallback for existing deployments and is optional. Default
+// is false (off) until an admin turns it on from the dashboard.
 const admin2faRaw = process.env.ADMIN_2FA_REQUIRED;
-if (admin2faRaw === undefined || admin2faRaw === '') {
-  console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED is not set.');
-  console.error('   Set it explicitly in your .env file:');
-  console.error('     ADMIN_2FA_REQUIRED=true   # production / staging (enforces admin 2FA)');
-  console.error('     ADMIN_2FA_REQUIRED=false  # local dev ONLY');
-  process.exit(1);
-}
-const admin2faValid = admin2faRaw === 'true' || admin2faRaw === 'false';
-if (!admin2faValid) {
+if (admin2faRaw !== undefined && admin2faRaw !== '' && admin2faRaw !== 'true' && admin2faRaw !== 'false') {
   console.error(`\n❌ FATAL: ADMIN_2FA_REQUIRED="${admin2faRaw}" is invalid.`);
-  console.error('   Only "true" or "false" are accepted.');
+  console.error('   Only "true", "false", or unset are accepted.');
   process.exit(1);
 }
-// if (process.env.NODE_ENV === 'production' && admin2faRaw !== 'true') {
-//   console.error('\n❌ FATAL: ADMIN_2FA_REQUIRED must be "true" in production.');
-//   console.error('   Admin 2FA cannot be disabled in production mode.');
-//   process.exit(1);
-// }
-if (process.env.NODE_ENV === 'production' && admin2faRaw !== 'true') {
-  console.warn('⚠️  ADMIN_2FA_REQUIRED is false in production. Admin 2FA bypass is active — re-enable before going live.');
+if (admin2faRaw === 'true') {
+  console.log('🔐 ADMIN_2FA_REQUIRED=true: admin 2FA fallback enabled');
 }
-const ADMIN_2FA_REQUIRED = admin2faRaw === 'true';
-if (ADMIN_2FA_REQUIRED) {
-  console.log('🔐 ADMIN_2FA_REQUIRED=true: admin 2FA enforcement enabled');
-}
-export { ADMIN_2FA_REQUIRED };
+const ADMIN_2FA_REQUIRED_FALLBACK = admin2faRaw === 'true';
+export { ADMIN_2FA_REQUIRED_FALLBACK };
 
 // Build CORS allowlist from all configured frontend URLs.
 // NEXT_PUBLIC_APP_URL is the canonical frontend, and EXTRA_ALLOWED_ORIGINS is a
