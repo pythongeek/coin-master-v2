@@ -57,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_status ON payment_orders(status);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_merchant ON payment_orders(merchant_order_id);
 CREATE INDEX IF NOT EXISTS idx_payment_orders_created_at ON payment_orders(created_at DESC);
 
-CREATE TRIGGER payment_orders_updated_at
+CREATE OR REPLACE TRIGGER payment_orders_updated_at
   BEFORE UPDATE ON payment_orders
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
