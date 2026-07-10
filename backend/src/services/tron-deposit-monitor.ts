@@ -1,4 +1,4 @@
-import { PrismaClient, DepositStatus } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { logger } from '../config/logger';
 import { tronMcpService } from './tron-mcp.service';
@@ -6,7 +6,8 @@ import { depositService } from './deposit.service';
 
 const prisma = new PrismaClient();
 const POLL_INTERVAL_MS = 30000; // 30 seconds
-const USDT_DECIMALS = 6;
+const REQUIRED_CONFIRMATIONS = 19;
+const TOLERANCE_PERCENT = 0.01; // 1% amount tolerance
 
 /**
  * TronGrid MCP-powered deposit monitor.
@@ -46,6 +47,14 @@ export class TronDepositMonitor {
   }
 
   private async poll(): Promise<void> {
+    await this.detectPayments();
+    await this.confirmDeposits();
+  }
+
+  /**
+   * Stage 1: Detect incoming transfers for all pending deposits.
+   */
+  private async detectPayments(): Promise<void> {
     const pending = await prisma.depositTransaction.findMany({
       where: {
         status: { in: ['rate_locked', 'awaiting_payment'] },
@@ -69,6 +78,8 @@ export class TronDepositMonitor {
           depositId: deposit.id,
           txId: transfer.txHash,
           amount: transfer.amount,
+          blockTimestamp: transfer.blockTimestamp,
+          blockNumber: transfer.blockNumber,
           toAddress: deposit.toAddress,
         });
 
@@ -78,27 +89,36 @@ export class TronDepositMonitor {
           transfer.fromAddress,
           new Decimal(transfer.amount)
         );
+
+        // Persist on-chain metadata for audit and rollback checks
+        await prisma.depositTransaction.update({
+          where: { id: deposit.id },
+          data: {
+            statusHistory: {
+              push: {
+                status: 'payment_detected_chain_meta',
+                at: new Date().toISOString(),
+                blockTimestamp: transfer.blockTimestamp,
+                blockNumber: transfer.blockNumber,
+              },
+            },
+          },
+        });
       } catch (err) {
-        logger.error('Error processing deposit', {
+        logger.error('Error detecting deposit', {
           depositId: deposit.id,
           error: (err as Error).message,
         });
       }
     }
-
-    // After detecting payments, confirm any deposits that are confirming
-    await this.confirmDeposits().catch((err: unknown) => {
-      logger.error('Deposit confirmation poll failed', { error: (err as Error).message });
-    });
   }
 
   private async findMatchingUsdtTransfer(
     expectedToAddress: string,
     expectedAmount: Decimal,
     depositId: string
-  ): Promise<{ txHash: string; fromAddress: string; amount: string } | null> {
+  ): Promise<{ txHash: string; fromAddress: string; amount: string; blockTimestamp: number; blockNumber?: number } | null> {
     const to = expectedToAddress.toLowerCase().trim();
-    const amountMajor = parseFloat(expectedAmount.toString());
 
     // Fetch the latest incoming USDT transfers via MCP (rate-limited internally)
     const transfers = await tronMcpService.getIncomingUsdt(expectedToAddress, { limit: 20 });
@@ -107,9 +127,11 @@ export class TronDepositMonitor {
       if (!tx.txHash || !tx.fromAddress || !tx.toAddress) continue;
       if (tx.toAddress.toLowerCase() !== to) continue;
 
-      const txAmount = parseFloat(tx.amount);
-      const diff = Math.abs(txAmount - amountMajor);
-      if (diff > amountMajor * 0.01) continue; // 1% tolerance
+      // Verify amount against expected with 1% tolerance, using Decimal for precision
+      const txAmount = new Decimal(tx.amount);
+      const diff = txAmount.minus(expectedAmount).abs();
+      const tolerance = expectedAmount.mul(TOLERANCE_PERCENT);
+      if (diff.greaterThan(tolerance)) continue;
 
       // Prevent replay / double credit
       const existing = await prisma.depositTransaction.findFirst({
@@ -120,12 +142,22 @@ export class TronDepositMonitor {
       });
       if (existing) continue;
 
-      return { txHash: tx.txHash, fromAddress: tx.fromAddress, amount: tx.amount };
+      return {
+        txHash: tx.txHash,
+        fromAddress: tx.fromAddress,
+        amount: tx.amount,
+        blockTimestamp: tx.blockTimestamp,
+        blockNumber: tx.blockNumber,
+      };
     }
 
     return null;
   }
 
+  /**
+   * Stage 2: Confirm deposits already detected by the monitor.
+   * Uses getTransactionInfoById for real confirmation count and SUCCESS status.
+   */
   private async confirmDeposits(): Promise<void> {
     const detecting = await prisma.depositTransaction.findMany({
       where: {
@@ -140,8 +172,16 @@ export class TronDepositMonitor {
       try {
         const confirmation = await tronMcpService.confirmTransaction(
           deposit.blockchainTxId,
-          19
+          REQUIRED_CONFIRMATIONS
         );
+
+        logger.info('Deposit confirmation check', {
+          depositId: deposit.id,
+          txId: deposit.blockchainTxId,
+          confirmations: confirmation.confirmations,
+          confirmed: confirmation.confirmed,
+          blockNumber: confirmation.blockNumber,
+        });
 
         await depositService.confirmDeposit(deposit.id, confirmation.confirmations);
       } catch (err) {
