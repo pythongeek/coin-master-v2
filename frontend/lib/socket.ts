@@ -49,8 +49,13 @@ export function getSocket(token?: string): Socket {
       auth: targetToken ? { token: targetToken } : {},
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 10000,
+      randomizationFactor: 0.5,
+      timeout: 20000,
+      // Use same path the backend expects; path is automatically /socket.io
+      withCredentials: true,
     });
 
     socket.on('connect', () => {

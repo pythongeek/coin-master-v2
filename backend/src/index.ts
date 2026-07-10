@@ -114,6 +114,14 @@ const io = new SocketIOServer(httpServer, {
     credentials: true,
   },
   transports: ['websocket', 'polling'],
+  // Keep long-lived connections alive through nginx proxies and mobile networks
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  connectTimeout: 45000,
+  // Allow larger payloads for batched real-time events
+  maxHttpBufferSize: 1e6,
+  // Do not close on upgrade failure; gracefully fall back to polling
+  allowUpgrades: true,
 });
 
 // ─── Middleware ──────────────────────────────────────────────
