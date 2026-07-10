@@ -385,21 +385,28 @@ export class DepositService {
   private generateDepositAddress(userId: string): string {
     const hot = env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
     if (env.DEPOSIT_ADDRESS_DERIVATION === 'per_user') {
-      // Derive a deterministic TRON address for this user from the hot wallet
-      // private key. We hash userId + private key to produce a new key pair;
-      // the resulting address is unique per user but recoverable by the operator.
-      const pk = env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED || env.HOT_WALLET_ADDRESS;
-      const seed = `${pk}:${userId}`;
-      const hash = crypto.createHash('sha256').update(seed).digest('hex');
-      // Use the first 64 hex chars as a private key. TronWeb private keys are 64
-      // hex chars; this is a deterministic derivation, not a standard BIP-32 path.
+      // Derive a deterministic TRON address per user from a dedicated deposit
+      // derivation seed. This is separated from the hot wallet signing key so
+      // rotating the hot wallet does not change user deposit addresses.
+      let seed = env.HOT_WALLET_ADDRESS;
+      if (env.DEPOSIT_DERIVATION_SEED_ENCRYPTED) {
+        const { decryptSecret } = require('./secret-vault');
+        const seedValue = decryptSecret(env.DEPOSIT_DERIVATION_SEED_ENCRYPTED.replace('seed:', ''));
+        seed = seedValue;
+      } else if (env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED) {
+        // Legacy fallback: do not decrypt the real hot wallet key here; use the
+        // configured hot wallet address as the stable seed. This keeps existing
+        // derived addresses unchanged when the private key is rotated.
+        seed = env.HOT_WALLET_ADDRESS;
+      }
+      const fullSeed = `${seed}:${userId}`;
+      const hash = crypto.createHash('sha256').update(fullSeed).digest('hex');
       const { TronWeb } = require('tronweb');
-      const tw = new TronWeb({ fullHost: 'http://localhost:8090' });
+      const tw = new TronWeb({ fullHost: 'https://api.trongrid.io' });
       const account = tw.address.fromPrivateKey(hash);
       if (account && typeof account === 'string' && account.startsWith('T')) {
         return account;
       }
-      // Fall through to hot wallet if derivation somehow fails.
     }
     return hot;
   }
