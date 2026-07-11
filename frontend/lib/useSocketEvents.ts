@@ -10,115 +10,106 @@
 
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { getSocket } from './socket';
 import { useGameStore, BetResult, ChatMessage, ActiveRain, ScatterResult } from './store';
 import { useSound } from '@/hooks/useSound';
 
 export function useSocketEvents() {
   const { play } = useSound();
-  const {
-    token,
-    setGameStatus, setLastResult, addToBetHistory,
-    updateBalance, addChatMessage, setChatHistory,
-    setOnlineCount, setActiveRain, updateRainClaims,
-    addNotification, setActiveScatter, setPendingScatter,
-  } = useGameStore();
+  const store = useGameStore();
+  const storeRef = useRef(store);
+  storeRef.current = store;
 
-  // In a tab or cross-page navigation the token may be in localStorage
-  // but the active socket may still be a stale guest. Normalize by
-  // always creating the socket with the latest token whenever the
-  // token value changes (or on first mount).
+  // Subscribe once on mount. Token changes are pushed via refreshSocketToken(),
+  // so the socket singleton never disconnects/reconnects just because auth changes.
   useEffect(() => {
-    const socket = getSocket(token || undefined);
+    const socket = getSocket();
 
-    // ── সার্ভার থেকে ইনিশিয়াল ডেটা ─────────────────────────────
-    socket.on('init', (data: { onlineCount: number; chatHistory: ChatMessage[] }) => {
-      setOnlineCount(data.onlineCount);
-      setChatHistory(data.chatHistory);
-    });
-
-    // ── অনলাইন সংখ্যা আপডেট ─────────────────────────────────────
-    socket.on('online:count', (count: number) => {
-      setOnlineCount(count);
-    });
-
-    // ── কয়েন ঘুরছে ──────────────────────────────────────────────
-    socket.on('game:spinning', () => {
-      setGameStatus('spinning');
-    });
-
-    // ── গেম রেজাল্ট এসেছে ───────────────────────────────────────
-    socket.on('game:result', (result: BetResult) => {
-      setGameStatus('result');
-      setLastResult(result);
-      addToBetHistory(result);
-      updateBalance(result.newBalance);
-      addNotification(result.message, result.won ? 'win' : 'lose');
-      play(result.won ? 'win' : 'lose');
-
-      // If a scatter bonus was triggered, hold the result in pendingScatter
-      // so the Pick-a-Coin UI can show up.
-      if (result.scatter?.triggered) {
-        setPendingScatter(result);
-      }
-    });
-
-    // ── Scatter Bonus Result ─────────────────────────────────────
-    socket.on('scatter:result', (scatter: ScatterResult) => {
-      setActiveScatter(scatter);
-      setPendingScatter(null);
-      updateBalance(scatter.newBalance);
-      addNotification(scatter.message, 'win');
-      play('win');
-    });
-
-    // ── ব্যালেন্স আপডেট ──────────────────────────────────────────
-    socket.on('balance:update', (data: { balance: number }) => {
-      updateBalance(data.balance);
-    });
-
-    // ── এরর ───────────────────────────────────────────────────
-    socket.on('game:error', (data: { message: string }) => {
-      setGameStatus('idle');
-      addNotification(`❌ ${data.message}`, 'info');
-    });
-
-    // ── চ্যাট বার্তা ─────────────────────────────────────────────
-    socket.on('chat:message', (msg: ChatMessage) => {
-      addChatMessage(msg);
-    });
-
-    // ── Crypto Rain শুরু ──────────────────────────────────────────
-    socket.on('rain:started', (rain: ActiveRain) => {
-      setActiveRain(rain);
-      addNotification('🌧️ CRYPTO RAIN! দ্রুত ক্লেইম করুন!', 'rain');
-      play('rain');
-    });
-
-    // ── Rain আপডেট ───────────────────────────────────────────────
-    socket.on('rain:update', (data: { claimCount: number }) => {
-      updateRainClaims(data.claimCount);
-    });
-
-    // ── Rain ক্লেইম সফল ───────────────────────────────────────────
-    socket.on('rain:claimed', (data: { amount: number }) => {
-      addNotification(`💸 +$${data.amount.toFixed(2)} রেইন থেকে পেয়েছেন!`, 'rain');
-    });
-
-    // Cleanup: কম্পোনেন্ট আনমাউন্ট হলে ইভেন্ট সরাও
-    return () => {
-      socket.off('init');
-      socket.off('online:count');
-      socket.off('game:spinning');
-      socket.off('game:result');
-      socket.off('scatter:result');
-      socket.off('balance:update');
-      socket.off('game:error');
-      socket.off('chat:message');
-      socket.off('rain:started');
-      socket.off('rain:update');
-      socket.off('rain:claimed');
+    const onInit = (data: { onlineCount: number; chatHistory: ChatMessage[] }) => {
+      storeRef.current.setOnlineCount(data.onlineCount);
+      storeRef.current.setChatHistory(data.chatHistory);
     };
-  }, [token]);
+
+    const onOnlineCount = (count: number) => {
+      storeRef.current.setOnlineCount(count);
+    };
+
+    const onSpinning = () => {
+      storeRef.current.setGameStatus('spinning');
+    };
+
+    const onResult = (result: BetResult) => {
+      storeRef.current.setGameStatus('result');
+      storeRef.current.setLastResult(result);
+      storeRef.current.addToBetHistory(result);
+      storeRef.current.updateBalance(result.newBalance);
+      storeRef.current.addNotification(result.message, result.won ? 'win' : 'lose');
+      play(result.won ? 'win' : 'lose');
+      if (result.scatter?.triggered) {
+        storeRef.current.setPendingScatter(result);
+      }
+    };
+
+    const onScatterResult = (scatter: ScatterResult) => {
+      storeRef.current.setActiveScatter(scatter);
+      storeRef.current.setPendingScatter(null);
+      storeRef.current.updateBalance(scatter.newBalance);
+      storeRef.current.addNotification(scatter.message, 'win');
+      play('win');
+    };
+
+    const onBalanceUpdate = (data: { balance: number }) => {
+      storeRef.current.updateBalance(data.balance);
+    };
+
+    const onError = (data: { message: string }) => {
+      storeRef.current.setGameStatus('idle');
+      storeRef.current.addNotification(`❌ ${data.message}`, 'info');
+    };
+
+    const onChatMessage = (msg: ChatMessage) => {
+      storeRef.current.addChatMessage(msg);
+    };
+
+    const onRainStarted = (rain: ActiveRain) => {
+      storeRef.current.setActiveRain(rain);
+      storeRef.current.addNotification('🌧️ CRYPTO RAIN! দ্রুত ক্লেইম করুন!', 'rain');
+      play('rain');
+    };
+
+    const onRainUpdate = (data: { claimCount: number }) => {
+      storeRef.current.updateRainClaims(data.claimCount);
+    };
+
+    const onRainClaimed = (data: { amount: number }) => {
+      storeRef.current.addNotification(`💸 +$${data.amount.toFixed(2)} রেইন থেকে পেয়েছেন!`, 'rain');
+    };
+
+    socket.on('init', onInit);
+    socket.on('online:count', onOnlineCount);
+    socket.on('game:spinning', onSpinning);
+    socket.on('game:result', onResult);
+    socket.on('scatter:result', onScatterResult);
+    socket.on('balance:update', onBalanceUpdate);
+    socket.on('game:error', onError);
+    socket.on('chat:message', onChatMessage);
+    socket.on('rain:started', onRainStarted);
+    socket.on('rain:update', onRainUpdate);
+    socket.on('rain:claimed', onRainClaimed);
+
+    return () => {
+      socket.off('init', onInit);
+      socket.off('online:count', onOnlineCount);
+      socket.off('game:spinning', onSpinning);
+      socket.off('game:result', onResult);
+      socket.off('scatter:result', onScatterResult);
+      socket.off('balance:update', onBalanceUpdate);
+      socket.off('game:error', onError);
+      socket.off('chat:message', onChatMessage);
+      socket.off('rain:started', onRainStarted);
+      socket.off('rain:update', onRainUpdate);
+      socket.off('rain:claimed', onRainClaimed);
+    };
+  }, [play]);
 }

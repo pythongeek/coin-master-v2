@@ -1,111 +1,100 @@
+'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  SOCKET CLIENT — ফ্রন্টএন্ড সকেট কানেকশন ম্যানেজার
+ *  SOCKET CLIENT — true singleton, never recreated per token
  * ═══════════════════════════════════════════════════════════════
  *
- *  একটিমাত্র সকেট কানেকশন পুরো অ্যাপে শেয়ার হয়।
- *  কম্পোনেন্ট মাউন্ট/আনমাউন্টে কানেকশন নষ্ট হয় না।
+ *  1. One global Socket.IO instance for the whole browser session.
+ *  2. The token is sent on connect via `auth.token` and refreshed by
+ *     calling `refreshSocketToken()` without disconnecting.
+ *  3. Components never import getSocket() to attach ad-hoc listeners;
+ *     they use useSocketEvents() or the exported emit helpers.
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { io, Socket } from 'socket.io-client';
-import { setTokenCookie, clearTokenCookie } from './auth-cookies';
+import { getTokenFromStorage } from './store';
+
+let socket: Socket | null = null;
+let currentToken: string | undefined;
 
 function getSocketUrl(): string {
-  if (typeof window === 'undefined') {
-    if (!process.env.NEXT_PUBLIC_SOCKET_URL) {
-      throw new Error('NEXT_PUBLIC_SOCKET_URL is required for server-side socket URL resolution');
-    }
-    return process.env.NEXT_PUBLIC_SOCKET_URL;
-  }
-  // Allow NEXT_PUBLIC_SOCKET_URL to override (e.g. staging).
-  if (process.env.NEXT_PUBLIC_SOCKET_URL) return process.env.NEXT_PUBLIC_SOCKET_URL;
-  // Production: use same origin so nginx proxies /socket.io
-  return window.location.origin;
+  if (typeof window === 'undefined') return '';
+
+  // In production we use the same host (Next.js proxy handles /socket.io -> backend).
+  // In local dev we still talk to the backend directly on :4000.
+  const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  return isDev
+    ? (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000')
+    : '';
 }
 
-// সিঙ্গেলটন সকেট ইন্সট্যান্স — শুধু একটিই থাকবে
-let socket: Socket | null = null;
-let currentToken: string | null = null;
+function createSocket(): Socket {
+  const url = getSocketUrl();
+  currentToken = getTokenFromStorage() || undefined;
 
-/**
- * Return the singleton socket. If the socket doesn't exist, is disconnected,
- * or the requested token differs from the token used to create the current
- * connection, a new socket is created with the correct auth token.
- */
-export function getSocket(token?: string): Socket {
-  const targetToken = token ?? getStoredToken();
-  const tokenChanged = currentToken !== targetToken;
+  const instance = io(url, {
+    path: '/socket.io',
+    transports: ['websocket', 'polling'],
+    auth: { token: currentToken },
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 500,
+    reconnectionDelayMax: 10000,
+    randomizationFactor: 0.5,
+    timeout: 20000,
+    withCredentials: true,
+  });
 
-  if (!socket || !socket.connected || tokenChanged) {
-    if (socket) {
-      socket.disconnect();
-      socket = null;
-    }
+  instance.on('connect', () => {
+    console.log('✅ Socket connected:', instance.id);
+  });
 
-    currentToken = targetToken;
-    const socketUrl = getSocketUrl();
-    socket = io(socketUrl, {
-      auth: targetToken ? { token: targetToken } : {},
-      transports: ['websocket', 'polling'],
-      reconnection: true,
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 10000,
-      randomizationFactor: 0.5,
-      timeout: 20000,
-      // Use same path the backend expects; path is automatically /socket.io
-      withCredentials: true,
-    });
+  instance.on('disconnect', (reason) => {
+    console.log('❌ Socket disconnected:', reason);
+  });
 
-    socket.on('connect', () => {
-      const id = socket?.id ?? null;
-      console.log('✅ Socket কানেক্টেড:', id, 'authed:', !!targetToken);
-    });
+  instance.on('connect_error', (err) => {
+    console.error('Socket connect error:', err.message);
+  });
 
-    socket.on('disconnect', (reason) => {
-      console.log('❌ Socket ডিসকানেক্টেড:', reason);
-    });
+  return instance;
+}
 
-    socket.on('connect_error', (err) => {
-      console.error('🔌 Socket কানেক্ট এরর:', err.message);
-    });
+export function getSocket(): Socket {
+  if (!socket) {
+    socket = createSocket();
   }
-
   return socket;
 }
 
-export function disconnectSocket() {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-    currentToken = null;
+/** Update the auth token without tearing down the socket. */
+export function refreshSocketToken(token?: string) {
+  currentToken = token;
+  if (socket?.connected) {
+    socket.emit('auth:token', { token });
   }
 }
 
-export function reconnectWithToken(token: string) {
-  return getSocket(token);
+export function clearSocketToken() {
+  refreshSocketToken(undefined);
 }
 
-// LocalStorage থেকে token পড়ো
-function getStoredToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('cf_token');
+// Re-export a simple emit helper for components that only need to send events.
+export function emitSocket(event: string, ...args: any[]) {
+  getSocket().emit(event, ...args);
 }
 
-// Token সেভ করো (localStorage + cookie so SSR can read it)
-export function storeToken(token: string) {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('cf_token', token);
-    setTokenCookie(token);
-  }
+
+// Backward-compatible aliases for legacy imports.
+export function storeToken(_token: string) {
+  // Tokens are now refreshed via refreshSocketToken(); this alias is a no-op.
+}
+
+export function reconnectWithToken(token?: string) {
+  refreshSocketToken(token);
 }
 
 export function clearToken() {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('cf_token');
-    clearTokenCookie();
-  }
+  clearSocketToken();
 }
-
-

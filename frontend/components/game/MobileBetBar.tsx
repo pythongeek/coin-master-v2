@@ -8,7 +8,7 @@
 
 import { Coins, Loader2 } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
-import { getSocket } from '@/lib/socket';
+import { emitSocket } from '@/lib/socket';
 
 export default function MobileBetBar() {
   const user = useGameStore((s) => s.user);
@@ -26,7 +26,7 @@ export default function MobileBetBar() {
 
   const onFlip = () => {
     if (disabled) return;
-    getSocket(undefined).emit('game:bet', {
+    emitSocket('game:bet', {
       choice: currentChoice,
       amount: betAmount,
       multiplier: targetMultiplier,

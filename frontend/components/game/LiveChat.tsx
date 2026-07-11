@@ -12,7 +12,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Users, CloudRain, Check, Loader2, Send, CheckCheck, Trophy } from 'lucide-react';
 import { useGameStore, ChatMessage } from '@/lib/store';
-import { getSocket } from '@/lib/socket';
+import { emitSocket } from '@/lib/socket';
 
 export default function LiveChat() {
   const {
@@ -35,8 +35,7 @@ export default function LiveChat() {
   // ── বার্তা পাঠাও ───────────────────────────────────────────
   const sendMessage = () => {
     if (!message.trim()) return;
-    const socket = getSocket(undefined);
-    socket.emit('chat:message', { message: message.trim() });
+    emitSocket('chat:message', { message: message.trim() });
     setMessage('');
   };
 
@@ -45,8 +44,7 @@ export default function LiveChat() {
     if (!activeRain || hasClaimedRain || !user) return;
     setClaiming(true);
 
-    const socket = getSocket(undefined);
-    socket.emit('rain:claim', { rainId: activeRain.rainId });
+    emitSocket('rain:claim', { rainId: activeRain.rainId });
     setHasClaimedRain(true);
     setClaiming(false);
   };

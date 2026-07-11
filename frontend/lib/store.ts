@@ -4,6 +4,11 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
+export function getTokenFromStorage(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('cf_token');
+}
+
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
@@ -153,6 +158,7 @@ interface GameStore {
 }
 
 export const useGameStore = create<GameStore>()(
+
   persist(
     (set, get) => ({
       // ── অথ ──────────────────────────────────────────────────────
@@ -160,10 +166,15 @@ export const useGameStore = create<GameStore>()(
       token: null,
 
       setUser: (user) => set({ user }),
-      setToken: (token) => set({ token }),
+      setToken: (token) => {
+        set({ token });
+        import('@/lib/socket').then(({ refreshSocketToken }) => refreshSocketToken(token || undefined));
+      },
 
-      login: ({ user, token }: { user: User; token: string }) =>
-        set({ user, token }),
+      login: ({ user, token }: { user: User; token: string }) => {
+        set({ user, token });
+        import('@/lib/socket').then(({ refreshSocketToken }) => refreshSocketToken(token));
+      },
 
       updateBalance: (balance) =>
         set((state) => ({
