@@ -217,6 +217,21 @@ export async function recordDeviceUse(
     [row.user_ids ?? [], userId],
   );
 
+  // Phase 1.3: record graph edges so multi-account device use is
+  // visible to fraud cluster detection. Edges between the new user
+  // and every existing user on this device. Each edge is idempotent
+  // (UNIQUE constraint); only added when there's actually overlap.
+  if (otherUsers.length > 0) {
+    try {
+      const { addEdgesFromResource } = await import('./graph-fraud');
+      await addEdgesFromResource(userId, otherUsers, 'device', fpHash);
+    } catch (e) {
+      // Non-fatal — graph service is best-effort enrichment.
+      // eslint-disable-next-line no-console
+      console.error('[device-fingerprint] graph edge write failed:', e);
+    }
+  }
+
   return {
     fingerprintHash: fpHash,
     existingUserIds: otherUsers,
