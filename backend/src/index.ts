@@ -1,3 +1,4 @@
+
 /**
  * ═══════════════════════════════════════════════════════════════
  *  CRYPTOFLIP BACKEND — মূল সার্ভার এন্ট্রি পয়েন্ট
@@ -9,6 +10,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import { loadEnvFromDisk } from './utils/env-loader';
 
 import { connectDB, query } from './config/database';
 import { redis, redisHealthCheck } from './config/redis';
@@ -20,6 +22,11 @@ import { csrfMiddleware, helmetConfig } from './middleware/security';
 import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
+import adminPaymentsQrRoutes from './routes/admin-payments-qr';
+import adminEmailRoutes from './routes/admin-email';
+import adminKycRoutes from './routes/admin-kyc';
+import adminBalanceRoutes from './routes/admin-balance';
+import adminAuditRoutes from './routes/admin-audit';
 import { tronDepositMonitor } from './services/tron-deposit-monitor';
 import { tronMcpService } from './services/tron-mcp.service';
 import docsRoutes from './routes/docs';
@@ -28,11 +35,13 @@ import router from './routes/metrics';
 const metricsRoutes = router;
 
 import authRoutes  from './routes/auth';
+import auth2faRoutes from './routes/auth-2fa';
 import gameRoutes  from './routes/game';
 import adminRoutes from './routes/admin';
 import adminBonusRoutes from './routes/admin-bonus';
 import dashboardRoutes from './routes/dashboard';
 import walletRoutes from './routes/wallet';
+import walletDepositQrRoutes from './routes/wallet-deposit-qr';
 import kycRoutes from './routes/kyc';
 import leaderboardsRoutes from './routes/leaderboards';
 import affiliateRoutes from './routes/affiliate';
@@ -156,9 +165,11 @@ app.use('/api', csrfMiddleware);
 
 // ─── Routes ─────────────────────────────────────────────────
 app.use('/api/auth',  authRoutes);
+app.use('/api/auth/2fa',  auth2faRoutes);
 app.use('/api/game',  gameRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/wallet/deposit/qr', walletDepositQrRoutes);
 app.use('/api/wallet', affiliateRoutes);
 app.use('/api/wallet', promoRoutes);
 app.use('/api/kyc', kycRoutes);
@@ -170,14 +181,28 @@ app.use('/api/game/leaderboards', leaderboardsRoutes);
 // resolve to the right URLs when mounted at /api/payment).
 import paymentRoutes from './routes/payment';
 import adminPublicRoutes from './routes/admin-public';
+import publicFxRoutes from './routes/public-fx';
 import adminWithdrawalsRoutes from './routes/admin-withdrawals';
 // Public admin config — mounted BEFORE protected admin routes
+
+// Load any missing env vars from on-disk .env files (docker-compose env_file
+// may not contain all secrets; this picks up backend/.env at runtime)
+const _envLoadResult = loadEnvFromDisk();
+if (_envLoadResult.loaded > 0) {
+  console.log(`[env-loader] injected ${_envLoadResult.loaded} vars from: ${_envLoadResult.files.join(", ")}`);
+}
+
 app.use('/api/admin/config', adminPublicRoutes);
 // Protected admin routes (order matters: withdrawals before catch-all adminRoutes)
 app.use('/api/admin/withdrawals', adminWithdrawalsRoutes);
+app.use('/api/admin/kyc', adminKycRoutes);
+app.use('/api/admin/balance', adminBalanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminBonusRoutes);
 app.use('/api/admin', adminHealthRoutes);
+app.use('/api/admin/payments', adminPaymentsQrRoutes);
+app.use('/api/admin/email', adminEmailRoutes);
+app.use('/api/admin/audit', adminAuditRoutes);
 // OpenAPI / Swagger UI — public, no auth required
 app.use('/api', docsRoutes);
 // Prometheus metrics — public, scraped by Prometheus
@@ -185,6 +210,7 @@ app.use('/metrics', metricsRoutes);
 app.use('/api/payment', paymentRoutes);
 // Alternative public banner route (avoids /api/admin prefix collision)
 app.use('/api/public', adminPublicRoutes);
+app.use('/api/public', publicFxRoutes);
 app.use('/api/deposit', depositRoutes);
 
 
@@ -233,6 +259,7 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 // ─── Socket.io ──────────────────────────────────────────────
 setupSocketHandlers(io);
+  import('./services/payment-socket.service').then((m) => m.bindPaymentSocket(io));
 
 // ─── Start ──────────────────────────────────────────────────
 const PORT = process.env.BACKEND_PORT || 4000;
@@ -264,6 +291,38 @@ async function start() {
 
   // Start webhook dispatcher worker
   startWebhookWorker();
+
+  // Start Binance Pay QR background services
+  try {
+    const { startLedgerMonitorLoop } = await import('./services/binance-pay-ledger-monitor.service');
+    startLedgerMonitorLoop();
+  } catch (e) {
+    console.warn('[boot] ledger monitor failed to start:', e);
+  }
+  try {
+    const { startWeeklyFeedbackLoop } = await import('./services/llm-feedback-loop.service');
+    startWeeklyFeedbackLoop();
+  } catch (e) {
+    console.warn('[boot] LLM feedback loop failed to start:', e);
+  }
+
+  // Start email notification worker (drains email_queue every 10s)
+  try {
+    const { startEmailWorker } = await import('./services/notification.service');
+    startEmailWorker(10_000);
+  } catch (e) {
+    console.warn('[boot] email worker failed to start:', e);
+  }
+
+  // Start QR expiration worker (ticks every 60s, expires stale orders)
+  // Runs independently of the ledger-monitor loop so expired orders don't
+  // pile up when BINANCE_API_SECRET is not configured.
+  try {
+    const { startQrExpirationLoop } = await import('./services/binance-pay-qr.service');
+    startQrExpirationLoop(60_000);
+  } catch (e) {
+    console.warn('[boot] QR expiration loop failed to start:', e);
+  }
 
   httpServer.listen(PORT, () => {
     console.log('\n╔════════════════════════════════════╗');

@@ -145,27 +145,6 @@ export const verifySchema = z.object({
 //  WALLET SCHEMAS
 // ══════════════════════════════════════════════════════════════
 
-export const depositAddressSchema = z.object({
-  chain: z
-    .enum(['ethereum', 'solana', 'tron'], {
-      message: 'Invalid chain. Supported: ethereum, solana, tron'
-    }),
-});
-
-export const depositMerchantSchema = z.object({
-  amount: z.coerce
-    .number()
-    .positive('ডিপোজিট পরিমাণ অবশ্যই পজিটিভ হতে হবে।')
-    .min(0.01, 'সর্বনিম্ন ডিপোজিট $০.০১।'),
-  provider: z
-    .enum(['binance', 'redotpay'], {
-      message: 'Invalid provider. Supported: binance, redotpay'
-    }),
-  currency: z
-    .string()
-    .optional(),
-});
-
 export const withdrawSchema = z.object({
   walletId: z
     .string()
@@ -177,6 +156,11 @@ export const withdrawSchema = z.object({
     .number()
     .positive('উত্তোলনের পরিমাণ পজিটিভ সংখ্যা হতে হবে।')
     .min(0.01, 'সর্বনিম্ন উত্তোলন পরিমাণ $০.০১।'),
+  // Optional note (P2-B): visible to admin in the transactions table.
+  memo: z
+    .string()
+    .max(200, 'Memo max 200 characters.')
+    .optional(),
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -402,6 +386,22 @@ export const walletSwapSchema = z.object({
 // ══════════════════════════════════════════════════════════════
 //  PAYMENT / BNPL SCHEMAS
 // ══════════════════════════════════════════════════════════════
+
+export const initiateQrDepositSchema = z.object({
+  amountUsdt: z.coerce
+    .number()
+    .positive('amountUsdt must be positive.')
+    .min(10, 'Minimum QR deposit is $10 USDT.')
+    .max(10000, 'Maximum QR deposit is $10,000 USDT.'),
+  chainKey: z.enum(['BSC', 'TRC20', 'ERC20']).optional(),
+});
+
+export const qrReceiptUploadSchema = z.object({
+  orderId: z.string().min(10, 'orderId required'),
+  imageBase64: z.string().min(100, 'imageBase64 required'),
+  originalName: z.string().max(255).optional(),
+  mimeType: z.string().max(100).optional(),
+});
 
 export const paymentOrderSchema = z.object({
   gateway: z

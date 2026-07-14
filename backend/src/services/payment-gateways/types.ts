@@ -32,7 +32,7 @@
 
 // ── Common types ──────────────────────────────────────────────
 
-export type PaymentGateway = 'binance_pay' | 'redot_pay';
+export type PaymentGateway = 'binance_pay' | 'redot_pay' | 'binance_pay_qr';
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired' | 'refunded';
 

@@ -35,6 +35,7 @@ import { PaymentGateway, PaymentStatus } from './payment-gateways/types';
 const PROVIDER_NAMES: Record<PaymentGateway, string> = {
   binance_pay: 'Binance Pay',
   redot_pay: 'Redot Pay',
+  binance_pay_qr: 'Binance Pay QR',
 };
 
 // ── Create payment order ──────────────────────────────────────
@@ -191,11 +192,13 @@ export async function handlePaymentWebhook(
   // Status is PAID — credit user's wallet atomically
   if (payload.status === 'paid') {
     await withTransaction(async (txQuery) => {
-      // 1. Credit wallet (update both wallet_balance_coins and balance for compat)
+      // 1. Credit withdrawable_balance_coins (trigger sync_user_balance
+      //    derives users.balance = bonus_balance_coins + withdrawable_balance_coins).
+      //    wallet_balance_coins is the legacy column; keeping it in sync for compat.
       await txQuery(
         `UPDATE users
-         SET wallet_balance_coins = wallet_balance_coins + $1,
-             balance = balance + $1,
+         SET withdrawable_balance_coins = withdrawable_balance_coins + $1,
+             wallet_balance_coins = wallet_balance_coins + $1,
              updated_at = NOW()
          WHERE id = $2`,
         [order.amount_coins, order.user_id],
