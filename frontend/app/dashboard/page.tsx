@@ -16,6 +16,7 @@ import { DailyWheelCard } from '@/components/dashboard/DailyWheelCard';
 import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard';
 import { RakebackCard } from '@/components/dashboard/RakebackCard';
 import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
+import RecentQrDeposits from '@/components/dashboard/RecentQrDeposits';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getApiBase } from '@/lib/api/base';
 
@@ -188,6 +189,42 @@ export default function DashboardPage() {
 
         {/* Stats cards */}
         <StatsCards stats={stats} loading={loading} />
+
+        {/* Quick wallet actions - deposit + withdraw entry points */}
+        <div className="grid grid-cols-2 gap-3">
+          <Link href="/wallet/deposit" className="glass-card p-4 rounded-xl hover:bg-bg-elevated/30 transition flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-brand-green/20 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5 text-brand-green" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+            </div>
+            <div>
+              <div className="text-text-primary font-mono text-sm font-bold">Deposit</div>
+              <div className="text-text-muted text-[10px] font-mono">Top up via QR</div>
+            </div>
+          </Link>
+          <Link href="/wallet/withdraw" className="glass-card p-4 rounded-xl hover:bg-bg-elevated/30 transition flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+            </div>
+            <div>
+              <div className="text-text-primary font-mono text-sm font-bold">Withdraw</div>
+              <div className="text-text-muted text-[10px] font-mono">Send to external wallet</div>
+            </div>
+          </Link>
+        </div>
+
+        <RecentQrDeposits />
+
+        {/* Transaction history link */}
+        <Link href="/wallet/transactions" className="glass-card p-4 rounded-xl hover:bg-bg-elevated/30 transition flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+          </div>
+          <div className="flex-1">
+            <div className="text-text-primary font-mono text-sm font-bold">Transaction history</div>
+            <div className="text-text-muted text-[10px] font-mono">All deposits, withdrawals, bets</div>
+          </div>
+          <svg className="w-4 h-4 text-text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+        </Link>
 
         {/* P&L chart */}
         <ProfitChart data={chart} loading={loading} />
