@@ -11,6 +11,22 @@ export async function getAdminSettingBool(key: string, defaultValue: boolean): P
   return value === 'true' || value === '1' || value === 'yes';
 }
 
+/**
+ * Numeric admin setting parser. Returns default if missing or non-numeric.
+ * Accepts decimal strings ("1.5"); integer-clamped to floor when isInt=true.
+ */
+export async function getAdminSettingNumber(
+  key: string,
+  defaultValue: number,
+  isInt = false,
+): Promise<number> {
+  const raw = await getAdminSetting(key, String(defaultValue));
+  if (raw === undefined) return defaultValue;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return defaultValue;
+  return isInt ? Math.floor(n) : n;
+}
+
 export async function setAdminSetting(key: string, value: string, description?: string): Promise<void> {
   await query(
     `INSERT INTO admin_settings (key, value, description, updated_at)

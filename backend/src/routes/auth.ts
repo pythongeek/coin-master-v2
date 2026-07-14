@@ -32,6 +32,8 @@ import {
 import { grantWelcomeBonus } from '../services/bonus';
 import { verifyWalletSignature, buildSignMessage, detectWalletType } from '../utils/wallet-signature';
 import { isIpWhitelisted } from '../services/ip-whitelist';
+import { isBlockedEmailDomain } from '../config/blocked-email-domains';
+import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
 
 const router = Router();
 
@@ -47,6 +49,22 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     const exists = await query('SELECT id FROM users WHERE username = $1', [username]);
     if (exists.rows.length > 0) {
       return res.status(400).json({ success: false, error: 'এই ইউজারনেম ইতিমধ্যে ব্যবহৃত।' });
+    }
+
+    // ── P0-2: Disposable-email domain blocklist ──
+    // Throws away throwaway accounts that exist purely to claim the
+    // welcome bonus. Block at signup so the user exists and never
+    // gets a chance to claim. The fingerprint check below still applies.
+    if (email && isBlockedEmailDomain(email)) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, details)
+         VALUES ('fraud', 'signup.blocked.disposable_email', 'warn', $1)`,
+        [JSON.stringify({ email, ip: ipAddress })],
+      );
+      return res.status(400).json({
+        success: false,
+        error: 'Please use a permanent email address. Disposable / temporary mail providers are not allowed.',
+      });
     }
 
     let referredById: string | null = null;
@@ -87,16 +105,34 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     }
 
     // 2. Check registration IP count in past 24 hours
-    //    (skip if IP is in admin whitelist)
+    //    P0-3 hardening: at `fraud_max_accounts_per_ip_24h` accounts from
+    //    this IP in the last 24h, the signup is BLOCKED outright (not just
+    //    flagged) so the bonus never lands. The admin can relax the cap
+    //    by editing admin_settings.fraud_max_accounts_per_ip_24h.
     const ipWhitelisted = await isIpWhitelisted(ipAddress);
     if (!ipWhitelisted && ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+      const ipCap = await getAdminSettingInt('fraud_max_accounts_per_ip_24h', 3, true);
       const dupIpCount = await query(
         "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
         [ipAddress]
       );
-      if (parseInt(dupIpCount.rows[0].count || '0') >= 3) {
+      const ipCount = parseInt(dupIpCount.rows[0].count || '0');
+      if (ipCount >= ipCap) {
+        // BLOCK outright (vs. existing flag-only behavior).
+        await query(
+          `INSERT INTO audit_log (category, action, severity, details)
+           VALUES ('fraud', 'signup.blocked.ip_rate_limit', 'error', $1)`,
+          [JSON.stringify({ ip: ipAddress, count: ipCount, cap: ipCap })],
+        );
+        return res.status(429).json({
+          success: false,
+          error: `Too many accounts created from this network recently (${ipCount} in last 24h). Please try again later or contact support.`,
+        });
+      }
+      if (ipCount >= ipCap - 1) {
+        // One away from cap — flag so withdrawal is gated.
         shouldFlag = true;
-        fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ৩টির বেশি অ্যাকাউন্ট তৈরি করার চেষ্টা করা হয়েছে।`);
+        fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ${ipCount}টি অ্যাকাউন্ট তৈরি করা হয়েছে (ক্যাপ ${ipCap}) — নজরে রাখা হচ্ছে।`);
       }
     }
 

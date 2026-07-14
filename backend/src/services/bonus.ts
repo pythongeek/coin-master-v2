@@ -36,6 +36,8 @@
 import { v4 as uuidv4 } from 'uuid';
 import { query, withTransaction } from '../config/database';
 import { getConfig } from './admin-config';
+import { enforceStacking, BonusStackingError } from './bonus-stacking';
+import { enforceVelocity, VelocityLimitError, recordClaim } from './bonus-velocity';
 
 // ── Public types ──────────────────────────────────────────────
 
@@ -147,6 +149,36 @@ export async function grantWelcomeBonus(
   );
   if (existing.rows.length) return null;
 
+  // P0-4: Stacking rule — welcome must always be alone. By the time a
+  // user is at the welcome stage they can't have any other claim, but
+  // this is belt-and-suspenders in case an admin manually creates a
+  // competing claim before the user lands.
+  await enforceStacking(userId, 'welcome');
+
+  // P0-5: Velocity — first welcome claim is always allowed (no prior
+  // record) but a re-attempt within velocity window is blocked.
+  // Idempotency above already returns null for a repeat, so this only
+  // runs on the FIRST claim — which always passes (empty counter).
+  // Still: defensively catch a velocity error from any future caller.
+  try {
+    await enforceVelocity(userId);
+  } catch (e) {
+    if (e instanceof VelocityLimitError) {
+      await q(txClient)(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('bonus', 'bonus.velocity_blocked', 'warn', $1, $2)`,
+        [userId, JSON.stringify({
+          attempted: 'welcome',
+          reason: e.decision.reason,
+          counts: e.decision.counts,
+          limits: e.decision.limits,
+        })],
+      );
+      return null;
+    }
+    throw e;
+  }
+
   const amount = await getBonusCfgNumber('bonusWelcomeAmount', 10);
   const mult  = await getBonusCfgNumber('bonusWagerMultiplier', 30);
   const maxMul = await getBonusCfgNumber('bonusMaxWithdrawalMultiplier', 3);
@@ -219,6 +251,11 @@ export async function grantWelcomeBonus(
     ],
   );
 
+  // P0-5: Record this claim so future calls respect the sliding-window
+  // velocity limit. Wrapped in try/catch — a Redis blip must NEVER
+  // roll back a successful bonus grant.
+  try { await recordClaim(userId); } catch { /* velocity accounting, non-fatal */ }
+
   return {
     id, userId, bonusType: 'welcome', amountCoins: amount,
     wageringRequired, wageringCompleted: 0,
@@ -239,6 +276,51 @@ export async function claimDepositMatchBonus(
   depositCoins: number,
   txClient?: QueryFn,
 ): Promise<BonusClaim | null> {
+  // P0-4: Stacking rule — deposit_match can only run alongside an active
+  // 'vip' claim. Reject (null) instead of throwing so the webhook handler
+  // doesn't 500 — the deposit succeeds, but the bonus is skipped.
+  try {
+    await enforceStacking(userId, 'deposit_match');
+  } catch (e) {
+    if (e instanceof BonusStackingError) {
+      await q(txClient)(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('bonus', 'bonus.stack_skipped', 'info', $1, $2)`,
+        [userId, JSON.stringify({
+          attempted: 'deposit_match',
+          blocked_by: e.blockedBy,
+          deposit_coins: depositCoins,
+        })],
+      );
+      return null;
+    }
+    throw e;
+  }
+
+  // P0-5: Velocity check — blocks bonus-storm / micro-deposit farming.
+  // `deposit_match` is the top target (deposit 1 Coin × 50 to claim
+  // 50 deposit_match bonuses). The 24h cap (default 3) makes this
+  // unprofitable.
+  try {
+    await enforceVelocity(userId);
+  } catch (e) {
+    if (e instanceof VelocityLimitError) {
+      await q(txClient)(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('bonus', 'bonus.velocity_blocked', 'warn', $1, $2)`,
+        [userId, JSON.stringify({
+          attempted: 'deposit_match',
+          reason: e.decision.reason,
+          counts: e.decision.counts,
+          limits: e.decision.limits,
+          deposit_coins: depositCoins,
+        })],
+      );
+      return null;
+    }
+    throw e;
+  }
+
   const pct = await getBonusCfgNumber('bonusDepositMatchPct', 50);
   if (pct <= 0) return null; // disabled
   const cap = await getBonusCfgNumber('bonusDepositMatchCap', 100);
@@ -288,6 +370,10 @@ export async function claimDepositMatchBonus(
       }),
     ],
   );
+
+  // P0-5: Record this claim so future calls respect the sliding-window
+  // velocity limit. Non-fatal — see welcome bonus above.
+  try { await recordClaim(userId); } catch { /* velocity accounting, non-fatal */ }
 
   return {
     id, userId, bonusType: 'deposit_match', amountCoins: amount,
