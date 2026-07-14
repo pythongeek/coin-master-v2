@@ -35,6 +35,7 @@ import { isIpWhitelisted } from '../services/ip-whitelist';
 import { isBlockedEmailDomain } from '../config/blocked-email-domains';
 import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
 import { recordDeviceUse } from '../services/device-fingerprint';
+import { detectSelfReferral, recordSelfReferralVerdict } from '../services/affiliate-guard';
 
 const router = Router();
 
@@ -69,12 +70,40 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     }
 
     let referredById: string | null = null;
+    let selfReferralVerdict: { action: 'allow' | 'flag' | 'block'; reason: string | null } | null = null;
+    let shouldFlag = false;
+    let fraudDetails: string[] = [];
     if (referralCode && referralCode.trim() !== '') {
       const referrer = await query('SELECT id FROM users WHERE referral_code = $1', [referralCode]);
       if (referrer.rows.length === 0) {
-        return res.status(400).json({ success: false, error: 'প্রদত্ত রেফারেল কোডটি সঠিক নয়।' });
+        return res.status(400).json({ success: false, error: 'প্রদত্ত রেফারেল কোডটি সঠিক নয়।' });
       }
       referredById = referrer.rows[0].id;
+
+      // Phase 1.4: Self-referral detection. If the referee and referrer
+      // share device or IP, suspect self-referral. 'block' → drop the
+      // commission link; 'flag' → keep link but flag the referee.
+      try {
+        if (referredById) {
+          selfReferralVerdict = await detectSelfReferral(referredById, fingerprint, ipAddress);
+          if (selfReferralVerdict.action === 'block') {
+            // Drop the commission link silently — the referrer still has
+            // a valid code; we just don't pay out for this self-link.
+            referredById = null;
+          }
+          if (selfReferralVerdict.action === 'flag' || selfReferralVerdict.action === 'block') {
+            shouldFlag = true;
+            const detailBn = selfReferralVerdict.action === 'block'
+              ? `সেলফ-রেফারেল সন্দেহ (${selfReferralVerdict.reason}) — কমিশন লিংক বাতিল।`
+              : `সেলফ-রেফারেল সন্দেহ (${selfReferralVerdict.reason}) — নজরে রাখা হচ্ছে।`;
+            fraudDetails.push(detailBn);
+          }
+        }
+      } catch (e) {
+        // Non-fatal — best-effort detection.
+        // eslint-disable-next-line no-console
+        console.error('[signup] self-referral detect failed:', e);
+      }
     }
 
     // Generate unique referral code
@@ -89,10 +118,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       }
     }
 
-    // Fraud check parameters
-    let shouldFlag = false;
-    let fraudDetails: string[] = [];
-
+    // Fraud check parameters (already declared above for self-referral)
     // 1. Check duplicate fingerprint
     if (fingerprint && fingerprint.trim() !== '') {
       const dupFingerprint = await query(
@@ -190,6 +216,17 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
         // Non-fatal — the legacy users.fingerprint column still flags.
         // eslint-disable-next-line no-console
         console.error('[signup] device-fingerprint record failed:', e);
+      }
+    }
+
+    // Phase 1.4: drop a fraud_signals row if self-referral was detected
+    // (so Phase 1.2 risk engine can score this user up). Best-effort.
+    if (selfReferralVerdict && selfReferralVerdict.action !== 'allow') {
+      try {
+        await recordSelfReferralVerdict(userId, selfReferralVerdict as Parameters<typeof recordSelfReferralVerdict>[1]);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[signup] recordSelfReferralVerdict failed:', e);
       }
     }
 
