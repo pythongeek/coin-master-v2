@@ -253,4 +253,127 @@ router.get(
   },
 );
 
+// ── Phase 1.6: per-user bonus audit trail ──────────────────────
+// One-shot endpoint for the admin "Bonus Audit" panel. Returns the
+// full timeline for a user: bonus claims, wagering state, recent
+// withdrawals (from transactions table), fraud signals, and current
+// risk score + tier. Single query group, no N+1.
+router.get(
+  '/bonus/user/:userId/audit',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'finance', 'support', 'auditor']),
+  async (req: Request, res: Response) => {
+    try {
+      const { query } = await import('../config/database');
+      const userId = String(req.params.userId);
+
+      // 1. User base + risk state.
+      // NOTE: suspicious_reason column doesn't exist in this DB
+      // (skipped from v2.0 spec — flagged via is_flagged + audit_log instead).
+      const userRow = await query(
+        `SELECT id, username, email, created_at, is_flagged,
+                risk_score, risk_tier,
+                bonus_balance_coins, withdrawable_balance_coins,
+                wagering_required_coins, wagering_completed_coins,
+                total_bonus_claimed_coins, total_deposited_coins,
+                kyc_status, kyc_country, self_excluded_until
+           FROM users WHERE id = $1::uuid`,
+        [userId],
+      );
+      if (userRow.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'User not found' });
+      }
+
+      // 2. Bonus claims timeline.
+      // bonus_claims has no per-claim wagering_completed column — it's
+      // tracked at the user level. Show wagering_required + status only.
+      const claims = await query(
+        `SELECT id, bonus_type, amount_coins, wagering_required,
+                max_withdrawal_allowed, expires_at, claimed_at, completed_at,
+                status, metadata
+           FROM bonus_claims
+          WHERE user_id = $1::uuid
+          ORDER BY claimed_at DESC`,
+        [userId],
+      );
+
+      // 3. Recent withdrawals (from transactions table).
+      const withdrawals = await query(
+        `SELECT id, amount, status, created_at, completed_at, metadata
+           FROM transactions
+          WHERE user_id = $1::uuid AND type = 'withdrawal'
+          ORDER BY created_at DESC
+          LIMIT 20`,
+        [userId],
+      );
+
+      // 4. Recent deposits (for context — does the user actually fund?).
+      const deposits = await query(
+        `SELECT id, amount, status, created_at, completed_at
+           FROM transactions
+          WHERE user_id = $1::uuid AND type = 'deposit'
+          ORDER BY created_at DESC
+          LIMIT 20`,
+        [userId],
+      );
+
+      // 5. Fraud signals (last 90 days).
+      const signals = await query(
+        `SELECT id, signal_type, severity, status, detected_at, resolved_at, metadata
+           FROM fraud_signals
+          WHERE user_id = $1::uuid
+            AND detected_at > NOW() - INTERVAL '90 days'
+          ORDER BY detected_at DESC`,
+        [userId],
+      );
+
+      // 6. Risk score breakdown.
+      const risk = await query(
+        `SELECT current_score, tier, score_breakdown, last_calculated, calculated_by
+           FROM user_risk_scores WHERE user_id = $1::uuid`,
+        [userId],
+      );
+
+      // 7. Devices this user has touched (Phase 1.1).
+      const { getDevicesForUser } = await import('../services/device-fingerprint');
+      const devices = await getDevicesForUser(userId);
+
+      // 8. Fraud clusters (Phase 1.3).
+      const { getClustersForUser } = await import('../services/graph-fraud');
+      const clusters = await getClustersForUser(userId);
+
+      // 9. Lifetime stats summary.
+      const lifetime = await query(
+        `SELECT
+           COUNT(*) FILTER (WHERE type = 'bet')::int AS total_bets,
+           COUNT(*) FILTER (WHERE type = 'win')::int AS total_wins,
+           COALESCE(SUM(amount) FILTER (WHERE type = 'bet'), 0)::float AS total_wagered,
+           COALESCE(SUM(amount) FILTER (WHERE type = 'win'), 0)::float AS total_won,
+           COUNT(*) FILTER (WHERE type = 'bonus')::int AS bonus_credits_count,
+           COALESCE(SUM(amount) FILTER (WHERE type = 'bonus'), 0)::float AS bonus_credits_total
+           FROM transactions
+          WHERE user_id = $1::uuid`,
+        [userId],
+      );
+
+      res.json({
+        success: true,
+        user: userRow.rows[0],
+        claims: claims.rows,
+        withdrawals: withdrawals.rows,
+        deposits: deposits.rows,
+        signals: signals.rows,
+        risk: risk.rows[0] ?? null,
+        devices,
+        clusters,
+        lifetime: lifetime.rows[0],
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  },
+);
+
 export default router;
