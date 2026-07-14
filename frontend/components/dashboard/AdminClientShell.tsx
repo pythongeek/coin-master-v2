@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, Trophy, Target, Coins, QrCode, Mail, type LucideIcon } from 'lucide-react';
+import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, AlertOctagon, Trophy, Target, Coins, QrCode, Mail, type LucideIcon } from 'lucide-react';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
 import AdminUserTable from '@/components/dashboard/AdminUserTable';
@@ -20,6 +20,7 @@ import AdminWithdrawalQueue from '@/components/dashboard/AdminWithdrawalQueue';
 import AdminEmail from '@/components/dashboard/AdminEmail';
 import AdminKycOverrides from '@/components/dashboard/AdminKycOverrides';
 import AdminBonusPanel from '@/components/dashboard/AdminBonusPanel';
+import AdminFraudPanel from '@/components/dashboard/AdminFraudPanel';
 import AdminAuditLogViewer from '@/components/dashboard/AdminAuditLogViewer';
 import AdminSystemLogs from '@/components/dashboard/AdminSystemLogs';
 import AdminAccountSecurity from '@/components/dashboard/AdminAccountSecurity';
@@ -36,7 +37,7 @@ import AdminChallengesPanel from '@/components/dashboard/AdminChallengesPanel';
 import { useToast } from '@/components/providers/ToastProvider';
 import { clearToken } from '@/lib/socket';
 
-const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'system_logs' | 'health' | 'email' | 'security' | 'kyc' | 'kyc_admin' | 'account' | 'coins'; label: string; Icon: LucideIcon }[] = [
+const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'system_logs' | 'health' | 'email' | 'security' | 'kyc' | 'kyc_admin' | 'account' | 'coins' | 'fraud'; label: string; Icon: LucideIcon }[] = [
   { id: 'live', label: 'Live Stats', Icon: BarChart3 },
   { id: 'config', label: 'Game Config', Icon: Settings },
   { id: 'users', label: 'Users', Icon: Users },
@@ -44,6 +45,7 @@ const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bo
   { id: 'deposits', label: 'Deposit Review', Icon: QrCode },
   { id: 'coins', label: 'Balance Adjustment', Icon: Coins },
   { id: 'bonuses', label: 'Bonuses', Icon: Gift },
+  { id: 'fraud', label: 'Fraud Center', Icon: AlertOctagon },
   { id: 'leaderboard', label: 'Leaderboard', Icon: Trophy },
   { id: 'challenges', label: 'Challenges', Icon: Target },
   { id: 'kyc', label: 'KYC Review', Icon: ShieldCheck },
@@ -165,6 +167,7 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
             {activeTab === 'deposits' && <AdminDepositDashboard />}
             {activeTab === 'coins' && <AdminBalanceAdjustment />}
             {activeTab === 'bonuses' && <AdminBonusPanel />}
+            {activeTab === 'fraud' && <AdminFraudPanel />}
             {activeTab === 'leaderboard' && <AdminLeaderboardPanel />}
             {activeTab === 'challenges' && <AdminChallengesPanel />}
             {activeTab === 'kyc' && isSuperAdmin && (
