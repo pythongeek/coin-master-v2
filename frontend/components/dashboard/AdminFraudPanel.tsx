@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { api } from '@/lib/api';
+import CopyableUid from '@/components/dashboard/CopyableUid';
 
 interface RiskUserRow {
   id: string;
@@ -240,7 +241,7 @@ export default function AdminFraudPanel() {
                       <tr key={u.id} className="border-t border-border hover:bg-surface-2/50">
                         <td className="p-2">
                           <div className="text-text-primary font-medium">{u.username}</div>
-                          <div className="text-text-muted font-mono text-[10px]">{u.id.slice(0, 8)}…</div>
+                          <CopyableUid id={u.id} truncate={8} />
                         </td>
                         <td className="p-2">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] border ${TIER_STYLES[u.risk_tier] || TIER_STYLES.safe}`}>
@@ -308,14 +309,16 @@ export default function AdminFraudPanel() {
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
                   {c.member_user_ids.slice(0, 6).map((uid) => (
-                    <button
-                      key={uid}
-                      onClick={() => openUserDrill(uid)}
-                      className="px-2 py-0.5 rounded bg-surface-2 text-[10px] font-mono text-text-muted hover:text-brand-gold"
-                      title={uid}
-                    >
-                      {uid.slice(0, 8)}…
-                    </button>
+                    <span key={uid} className="inline-flex items-center gap-1">
+                      <CopyableUid id={uid} truncate={8} />
+                      <button
+                        onClick={() => openUserDrill(uid)}
+                        title={`Open risk profile for ${uid}`}
+                        className="text-[10px] text-text-muted hover:text-brand-gold"
+                      >
+                        →
+                      </button>
+                    </span>
                   ))}
                   {c.member_user_ids.length > 6 && (
                     <span className="px-2 py-0.5 text-[10px] text-text-muted">+{c.member_user_ids.length - 6} more</span>
@@ -372,15 +375,19 @@ export default function AdminFraudPanel() {
                   </div>
                 )}
                 {a.affected_user_ids.length > 0 && (
-                  <div className="mt-2 text-text-muted text-[10px]">
-                    Affected: {a.affected_user_ids.map((uid) => (
-                      <button
-                        key={uid}
-                        onClick={() => openUserDrill(uid)}
-                        className="ml-1 px-1.5 py-0.5 rounded bg-surface-2 font-mono hover:text-brand-gold"
-                      >
-                        {uid.slice(0, 8)}…
-                      </button>
+                  <div className="mt-2 flex items-center gap-1 flex-wrap text-text-muted text-[10px]">
+                    <span>Affected:</span>
+                    {a.affected_user_ids.map((uid) => (
+                      <span key={uid} className="inline-flex items-center gap-1">
+                        <CopyableUid id={uid} truncate={8} />
+                        <button
+                          onClick={() => openUserDrill(uid)}
+                          title={`Open risk profile for ${uid}`}
+                          className="text-text-muted hover:text-brand-gold"
+                        >
+                          →
+                        </button>
+                      </span>
                     ))}
                   </div>
                 )}
@@ -411,7 +418,7 @@ export default function AdminFraudPanel() {
               <div className="space-y-3 text-sm">
                 <div>
                   <div className="text-text-primary font-medium">{drillUser.user?.username}</div>
-                  <div className="text-text-muted font-mono text-xs">{drillUser.user?.id}</div>
+                  <CopyableUid id={drillUser.user?.id} />
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   <span className={`px-2 py-1 rounded text-xs border ${TIER_STYLES[drillUser.user?.risk_tier] || TIER_STYLES.safe}`}>

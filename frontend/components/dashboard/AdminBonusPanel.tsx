@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useGameStore } from '@/lib/store';
 import { Gift, Plus, Edit2, Trash2, Users, TrendingUp, CheckCircle, AlertCircle, Search, X, Save } from 'lucide-react';
 import { api } from '@/lib/api';
+import CopyableUid from '@/components/dashboard/CopyableUid';
 
 const BONUS_TYPES = [
   'welcome', 'deposit_match', 'cashback', 'free_spin', 'reload',
@@ -580,7 +581,7 @@ export default function AdminBonusPanel() {
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <div className="text-text-primary font-medium">{audit.user?.username ?? '?'}</div>
-                  <div className="text-text-muted text-xs font-mono">{audit.user?.id}</div>
+                  <CopyableUid id={audit.user?.id} />
                   <div className="text-text-muted text-xs">{audit.user?.email ?? ''}</div>
                 </div>
                 <div className="flex gap-2 flex-wrap">
