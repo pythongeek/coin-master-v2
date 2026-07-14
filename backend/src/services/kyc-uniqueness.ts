@@ -218,6 +218,13 @@ async function flagDuplicateAttempt(
         }),
       ],
     );
+
+    // Phase 1.5: emit alert. KYC duplicates are the strongest fraud
+    // signal we have — always critical.
+    try {
+      const { alertKycDuplicate } = await import('./fraud-alerts');
+      await alertKycDuplicate(userId, otherUserId ?? userId, column as 'national_id_hash' | 'passport_hash');
+    } catch { /* best-effort */ }
   } catch (e) {
     // Never let the audit/flag chain break the KYC insert path.
     // Log and continue — uniqueness is the primary defense.

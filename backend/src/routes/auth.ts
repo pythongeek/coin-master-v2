@@ -35,7 +35,8 @@ import { isIpWhitelisted } from '../services/ip-whitelist';
 import { isBlockedEmailDomain } from '../config/blocked-email-domains';
 import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
 import { recordDeviceUse } from '../services/device-fingerprint';
-import { detectSelfReferral, recordSelfReferralVerdict } from '../services/affiliate-guard';
+import { detectSelfReferral, recordSelfReferralVerdict, SelfReferralCheck } from '../services/affiliate-guard';
+import { alertDeviceCluster, alertSelfReferral } from '../services/fraud-alerts';
 
 const router = Router();
 
@@ -70,7 +71,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     }
 
     let referredById: string | null = null;
-    let selfReferralVerdict: { action: 'allow' | 'flag' | 'block'; reason: string | null } | null = null;
+    let selfReferralVerdict: SelfReferralCheck | null = null;
     let shouldFlag = false;
     let fraudDetails: string[] = [];
     if (referralCode && referralCode.trim() !== '') {
@@ -211,6 +212,10 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
               reason: decision.reason,
             })],
           );
+          // Phase 1.5: emit fraud alert (severity scales with cluster size).
+          try {
+            await alertDeviceCluster(userId, decision.fingerprintHash, decision.accountCount);
+          } catch { /* alert fan-out is best-effort */ }
         }
       } catch (e) {
         // Non-fatal — the legacy users.fingerprint column still flags.
@@ -223,7 +228,18 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     // (so Phase 1.2 risk engine can score this user up). Best-effort.
     if (selfReferralVerdict && selfReferralVerdict.action !== 'allow') {
       try {
-        await recordSelfReferralVerdict(userId, selfReferralVerdict as Parameters<typeof recordSelfReferralVerdict>[1]);
+        await recordSelfReferralVerdict(userId, selfReferralVerdict);
+        // Phase 1.5: emit alert (only on block; flag is informational only).
+        if (selfReferralVerdict.action === 'block') {
+          const matchedSignals = [
+            selfReferralVerdict.signals.sameDevice && 'same_device',
+            selfReferralVerdict.signals.sameIp && 'same_ip',
+            selfReferralVerdict.signals.sameKyc && 'same_kyc',
+          ].filter(Boolean) as string[];
+          try {
+            await alertSelfReferral(userId, selfReferralVerdict.referrerId, matchedSignals);
+          } catch { /* alert fan-out is best-effort */ }
+        }
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error('[signup] recordSelfReferralVerdict failed:', e);
