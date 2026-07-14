@@ -11,6 +11,18 @@
 *.key
 backend/src/config/secrets.ts
 
+# ── SSH keys / sensitive downloads served via frontend ─────
+# (Public/private keys placed under frontend/public/keys/ for
+#  HTTPS download by the user. These are NOT for git.)
+frontend/public/keys/*.key
+frontend/public/keys/*.pem
+frontend/public/keys/id_*
+frontend/public/keys/cx23-access
+frontend/public/keys/cx23-access.pub
+
+# ── Env backups (may contain real API keys) ───────────────────
+.env-backups/
+
 # ── Dependencies ──────────────────────────────────────────────
 node_modules/
 .npm-global/
