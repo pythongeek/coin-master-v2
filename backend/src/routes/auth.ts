@@ -34,6 +34,7 @@ import { verifyWalletSignature, buildSignMessage, detectWalletType } from '../ut
 import { isIpWhitelisted } from '../services/ip-whitelist';
 import { isBlockedEmailDomain } from '../config/blocked-email-domains';
 import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
+import { recordDeviceUse } from '../services/device-fingerprint';
 
 const router = Router();
 
@@ -158,6 +159,39 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       );
       return grantWelcomeBonus(userId, tx as unknown as (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>);
     });
+
+    // ── Phase 1.1: Device fingerprint registry ──
+    // Record this user on the device. If the device is already linked
+    // to other accounts, flag + audit. Runs after user insert because
+    // the registry needs a userId.
+    if (fingerprint && fingerprint.trim() !== '') {
+      try {
+        const decision = await recordDeviceUse(userId, fingerprint, {
+          ua: req.headers['user-agent'] ?? null,
+          ip: ipAddress,
+        });
+        if (decision && decision.shouldFlag) {
+          shouldFlag = true;
+          fraudDetails.push(
+            `ডিভাইস ফিঙ্গারপ্রিন্ট অন্য ${decision.accountCount - 1}টি অ্যাকাউন্টের সাথে শেয়ার করা হয়েছে (trust=${decision.trustLevel})`,
+          );
+          await query(
+            `INSERT INTO audit_log (category, action, severity, user_id, details)
+             VALUES ('fraud', 'signup.flagged.device_shared', 'warn', $1, $2)`,
+            [userId, JSON.stringify({
+              device_account_count: decision.accountCount,
+              existing_user_ids: decision.existingUserIds,
+              trust_level: decision.trustLevel,
+              reason: decision.reason,
+            })],
+          );
+        }
+      } catch (e) {
+        // Non-fatal — the legacy users.fingerprint column still flags.
+        // eslint-disable-next-line no-console
+        console.error('[signup] device-fingerprint record failed:', e);
+      }
+    }
 
     // Record fraud flags
     if (shouldFlag) {
