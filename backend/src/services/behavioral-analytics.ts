@@ -213,3 +213,132 @@ export async function getBehavioralContext(userId: string): Promise<{
     botLikeClickTiming: s.botClickTiming,
   };
 }
+
+/**
+ * Phase 2.2 — Bet-pattern anomaly detector (L10).
+ *
+ * Analyzes recent bet placement to identify automated/bot behavior.
+ * Two patterns trigger a `bot_click_timing` fraud_signal:
+ *   (a) Uniform amount: 30+ bets with stddev/mean < 0.01 (i.e. every
+ *       bet the same amount to the cent).
+ *   (b) Mechanical timing: 20+ bets whose click-to-click intervals
+ *       have stddev < 250ms — humans have variable timing; bots don't.
+ *
+ * Idempotency: a single `status='open'` row per user per 24h. If
+ * the user already has one, we update its metadata + last_calculated
+ * timestamp but don't add a duplicate row. This keeps the
+ * fraud_signals table small and the signal visible to admins.
+ *
+ * Returns: { triggered: boolean, pattern: 'uniform_amount'|'mechanical_timing'|null,
+ *            stats: { bet_count, amount_variance, interval_stddev_ms } }
+ */
+export interface BotDetectionResult {
+  triggered: boolean;
+  pattern: 'uniform_amount' | 'mechanical_timing' | null;
+  stats: {
+    betCount: number;
+    amountVariance: number | null;
+    intervalStddevMs: number | null;
+  };
+}
+
+export const UNIFORM_AMOUNT_THRESHOLD = 0.01;
+export const MECHANICAL_TIMING_STDDEV_MS = 250;
+export const MIN_BETS_FOR_DETECTION = 20;
+
+export async function detectBotPattern(userId: string): Promise<BotDetectionResult> {
+  // 1. Load recent bets (last 60) with timestamps + amounts.
+  const betsRes = await query(
+    `SELECT EXTRACT(EPOCH FROM created_at) AS ts_epoch, amount::float8 AS amount
+       FROM transactions
+      WHERE user_id = $1::uuid AND type = 'bet'
+      ORDER BY created_at DESC
+      LIMIT 60`,
+    [userId],
+  );
+  const bets = betsRes.rows as Array<{ ts_epoch: number; amount: number }>;
+  if (bets.length < MIN_BETS_FOR_DETECTION) {
+    return { triggered: false, pattern: null, stats: { betCount: bets.length, amountVariance: null, intervalStddevMs: null } };
+  }
+
+  // 2. Compute amount variance (stddev / mean).
+  const amounts = bets.map((b) => b.amount);
+  const mean = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+  const variance = mean > 0
+    ? Math.sqrt(amounts.reduce((a, b) => a + (b - mean) ** 2, 0) / amounts.length) / mean
+    : 0;
+
+  // 3. Compute click-interval stddev. ts_epoch descending means
+  //    interval = newer_ts - older_ts.
+  let intervalStddevMs: number | null = null;
+  if (bets.length >= 2) {
+    const intervals: number[] = [];
+    for (let i = 0; i < bets.length - 1; i++) {
+      // pg rows are DESC, so bets[i] is newer than bets[i+1]
+      const dt = bets[i].ts_epoch - bets[i + 1].ts_epoch;
+      if (dt > 0 && dt < 600) intervals.push(dt * 1000); // ignore > 10 min gaps
+    }
+    if (intervals.length >= 10) {
+      const im = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      intervalStddevMs = Math.sqrt(
+        intervals.reduce((a, b) => a + (b - im) ** 2, 0) / intervals.length,
+      );
+    }
+  }
+
+  // 3. Decide.
+  let triggered = false;
+  let pattern: BotDetectionResult['pattern'] = null;
+  if (variance < UNIFORM_AMOUNT_THRESHOLD) {
+    triggered = true;
+    pattern = 'uniform_amount';
+  } else if (intervalStddevMs !== null && intervalStddevMs < MECHANICAL_TIMING_STDDEV_MS) {
+    triggered = true;
+    pattern = 'mechanical_timing';
+  }
+
+  if (!triggered || !pattern) {
+    return { triggered: false, pattern: null, stats: { betCount: bets.length, amountVariance: variance, intervalStddevMs } };
+  }
+
+  // 4. Write (or update) the fraud_signals row. Idempotency:
+  //    fraud_signals has no UNIQUE constraint, so we use a check-then-
+  //    write pattern: if an open row exists in the last 24h, update
+  //    its metadata; else insert.
+  const existing = await query(
+    `SELECT id FROM fraud_signals
+      WHERE user_id = $1::uuid
+        AND signal_type = 'bot_click_timing'
+        AND status = 'open'
+        AND detected_at > NOW() - INTERVAL '24 hours'
+      ORDER BY detected_at DESC LIMIT 1`,
+    [userId],
+  );
+  const metadata = JSON.stringify({
+    pattern,
+    bet_count: bets.length,
+    amount_variance: variance,
+    interval_stddev_ms: intervalStddevMs,
+    source: 'phase_2_2_bot_detector',
+  });
+  if (existing.rows.length > 0) {
+    await query(
+      `UPDATE fraud_signals
+          SET metadata = $2::jsonb,
+              severity = $3,
+              detected_at = NOW()
+        WHERE id = $1::uuid`,
+      [String((existing.rows[0] as { id: string }).id), metadata,
+       pattern === 'uniform_amount' ? 'high' : 'medium'],
+    );
+  } else {
+    await query(
+      `INSERT INTO fraud_signals
+         (user_id, signal_type, severity, status, metadata, detected_at)
+       VALUES ($1::uuid, 'bot_click_timing', $2, 'open', $3::jsonb, NOW())`,
+      [userId, pattern === 'uniform_amount' ? 'high' : 'medium', metadata],
+    );
+  }
+
+  return { triggered: true, pattern, stats: { betCount: bets.length, amountVariance: variance, intervalStddevMs } };
+}

@@ -338,7 +338,20 @@ export function signalsFromContext(ctx: UserContext): RiskSignal[] {
  */
 export async function recalculateRisk(userId: string): Promise<RiskScore> {
   const ctx = await loadUserContext(userId);
-  const signals = signalsFromContext(ctx);
+
+  // Phase 2.2: run the bot-pattern detector before mapping signals.
+  // The detector writes a fraud_signals row if it triggers, which
+  // loadUserContext() will pick up on the next call (it reads
+  // fraud_signals for `botLikeClickTiming`). Best-effort — detector
+  // failure must never break risk recompute.
+  try {
+    const { detectBotPattern } = await import('./behavioral-analytics');
+    await detectBotPattern(userId);
+  } catch { /* best-effort enrichment */ }
+
+  // Re-load context so the freshly-written bot signal is in scope.
+  const ctxFresh = await loadUserContext(userId);
+  const signals = signalsFromContext(ctxFresh);
   const result = buildRiskScore(userId, signals, 'rule_engine');
 
   // Persist: upsert history table + flip users.risk_score
