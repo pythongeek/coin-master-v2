@@ -258,6 +258,19 @@ export async function loadUserContext(userId: string): Promise<UserContext> {
     }
   } catch { /* withdrawal latency only relevant if user has history */ }
 
+  // Phase 2.1: behavioral-analytics fills the previously-stub fields
+  // (depositToClaimLatencySec, betAmountVariance, botLikeClickTiming,
+  // onlyBonusBets) from real transactions data. Best-effort — if the
+  // behavioral service fails, we keep the stub defaults (null/false).
+  try {
+    const { getBehavioralContext } = await import('./behavioral-analytics');
+    const beh = await getBehavioralContext(userId);
+    if (beh.depositToClaimLatencySec !== null) ctx.depositToClaimLatencySec = beh.depositToClaimLatencySec;
+    if (beh.betAmountVariance !== null) ctx.betAmountVariance = beh.betAmountVariance;
+    ctx.onlyBonusBets = beh.onlyBonusBets;
+    ctx.botLikeClickTiming = beh.botLikeClickTiming;
+  } catch { /* behavioral service unavailable — keep stub defaults */ }
+
   return ctx;
 }
 
