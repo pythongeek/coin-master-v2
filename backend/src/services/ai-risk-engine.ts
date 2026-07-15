@@ -339,9 +339,16 @@ export function signalsFromContext(ctx: UserContext): RiskSignal[] {
 export interface RecalculateOptions {
   /** When provided, the IP is run through ip-reputation BEFORE
    *  loading context. Any non-clean flags (tor, datacenter,
-   *  known_fraud, proxy) write fraud_signals rows that loadUserContext
-   *  picks up. The score reflects the IP risk. */
+   *   known_fraud, proxy) write fraud_signals rows that loadUserContext
+   *   picks up. The score reflects the IP risk. */
   ip?: string;
+  /** Phase 3 / P3-1c: explicitly opt this call into ML enrichment.
+   *  - `true`  → always run ML (if ml_enabled).
+   *  - `false` → never run ML.
+   *  - `undefined` → roll the dice per admin_settings.ml_ab_traffic_pct.
+   *  ML never blocks: any failure silently falls back to the pure rule-engine
+   *  score so callers don't break. */
+  ml?: boolean;
 }
 
 export async function recalculateRisk(userId: string, opts: RecalculateOptions = {}): Promise<RiskScore> {
@@ -372,14 +379,60 @@ export async function recalculateRisk(userId: string, opts: RecalculateOptions =
   const signals = signalsFromContext(ctxFresh);
   const result = buildRiskScore(userId, signals, 'rule_engine');
 
+  // Phase 3 / P3-1c: ML enrichment. Opt-in via opts.ml. Best-effort:
+  // on any failure (provider missing, feature extract error, model
+  // file gone) we silently keep the pure rule-engine score. The
+  // caller can override by passing opts.ml = false to skip entirely.
+  let mlExtras:
+    | { score: number; tier: RiskTier; prob: number; threshold: number;
+        predictedFraud: boolean; flagAction: 'observe' | 'flag' | 'block';
+        modelId: string | null; modelName: string | null; modelVersion: string | null }
+    | null = null;
+  try {
+    const { blendWithRuleScore } = await import('./ml-pipeline');
+    const blend = await blendWithRuleScore(userId, result.score, opts.ml);
+    if (blend.prediction) {
+      const blendedScore = Math.max(0, Math.min(100, blend.score));
+      mlExtras = {
+        score: blendedScore,
+        tier: scoreToTier(blendedScore),
+        prob: blend.prediction.prob,
+        threshold: blend.prediction.threshold,
+        predictedFraud: blend.prediction.predictedFraud,
+        flagAction: blend.prediction.flagAction,
+        modelId: blend.prediction.modelId,
+        modelName: blend.prediction.modelName,
+        modelVersion: blend.prediction.modelVersion,
+      };
+    }
+  } catch { /* ML is optional — fall back to pure rule-engine result */ }
+
   // Persist: upsert history table + flip users.risk_score
   // PostgreSQL needs an explicit type for $2 wherever it's used inside
   // JSON-construction expressions — pass it twice (once typed int, once
   // typed text) so the planner never has to guess.
-  const scoreInt = Number(result.score);
-  const scoreText = String(result.score);
-  const tierText = String(result.tier);
-  const breakdown = JSON.stringify({ signals });
+  // Phase 3 / P3-1c: when ML enrichment fired we persist the BLENDED
+  // score (mlExtras) instead of the pure rule-engine score, and tag
+  // calculated_by = 'rule_engine+ml' so admins can A/B compare. The
+  // breakdown JSON gains an ml_prob field so the audit trail records
+  // exactly how the blend was produced.
+  const finalScore = mlExtras ? mlExtras.score : result.score;
+  const finalTier = mlExtras ? mlExtras.tier : result.tier;
+  const calculatedBy: 'rule_engine' | 'ml_model' = mlExtras ? 'ml_model' : 'rule_engine';
+  const scoreInt = Number(finalScore);
+  const scoreText = String(finalScore);
+  const tierText = String(finalTier);
+  const breakdown = JSON.stringify(
+    mlExtras
+      ? {
+          signals,
+          ml_prob: mlExtras.prob,
+          ml_threshold: mlExtras.threshold,
+          ml_flag_action: mlExtras.flagAction,
+          ml_model: mlExtras.modelName ? `${mlExtras.modelName}@${mlExtras.modelVersion}` : null,
+        }
+      : { signals },
+  );
   await query(
     `INSERT INTO user_risk_scores
        (user_id, current_score, tier, score_breakdown, last_calculated, calculated_by, history)
@@ -389,13 +442,13 @@ export async function recalculateRisk(userId: string, opts: RecalculateOptions =
        current_score   = EXCLUDED.current_score,
        tier            = EXCLUDED.tier,
        score_breakdown = EXCLUDED.score_breakdown,
-       last_calculated = EXCLUDED.last_calculated,
+       last_calculated = NOW(),
        calculated_by   = EXCLUDED.calculated_by,
        history         = (
          (SELECT history FROM user_risk_scores WHERE user_id = $1) ||
          jsonb_build_array(jsonb_build_object('score', $6::text, 'tier', $7::text, 'at', NOW()))
        )::jsonb`,
-    [userId, scoreInt, tierText, breakdown, 'rule_engine', scoreText, tierText],
+    [userId, scoreInt, tierText, breakdown, calculatedBy, scoreText, tierText],
   );
 
   // Cap history at 10
@@ -417,9 +470,41 @@ export async function recalculateRisk(userId: string, opts: RecalculateOptions =
   // Mirror onto users row
   await query(
     `UPDATE users SET risk_score = $2::int, risk_tier = $3 WHERE id = $1`,
-    [userId, result.score, result.tier],
+    [userId, finalScore, finalTier],
   );
 
+  // Phase 3 / P3-1c: emit fraud_alerts row when ML flags/block the user
+  // so audit/UI dashboards surface high-confidence ML predictions.
+  if (mlExtras && (mlExtras.flagAction === 'flag' || mlExtras.flagAction === 'block')) {
+    try {
+      const { sendFraudAlert } = await import('./fraud-alerts');
+      await sendFraudAlert({
+        alertType: 'ML_001',
+        severity: mlExtras.flagAction === 'block' ? 'critical' : 'high',
+        title: `ML ${mlExtras.flagAction}: ${mlExtras.prob.toFixed(3)} ≥ ${mlExtras.threshold.toFixed(3)}`,
+        body: `User ${userId} scored ${(mlExtras.prob * 100).toFixed(1)}% fraud by ` +
+          `${mlExtras.modelName || 'ml'}@${mlExtras.modelVersion || '?'} ` +
+          `(blended into ${finalScore}/100 from rule-engine ${result.score}).`,
+        affectedUserIds: [userId],
+        riskScore: finalScore,
+        signals: [
+          `ml_prob=${mlExtras.prob.toFixed(3)}`,
+          `threshold=${mlExtras.threshold}`,
+          `model=${mlExtras.modelName}@${mlExtras.modelVersion}`,
+        ],
+        recommendedAction: mlExtras.flagAction === 'block'
+          ? 'review-block-auto-flag, escalate to compliance'
+          : 'review risk profile, consider step-up 2FA on next deposit',
+      });
+    } catch { /* alerts are best-effort */ }
+  }
+
+  // Return the score that the caller actually cares about: blended
+  // if ML fired, otherwise the pure rule-engine value.
+  if (mlExtras) {
+    result.score = mlExtras.score;
+    result.tier = mlExtras.tier;
+  }
   return result;
 }
 
