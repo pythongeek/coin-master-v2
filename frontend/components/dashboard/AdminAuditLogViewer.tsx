@@ -1,29 +1,29 @@
 'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
- *  ADMIN AUDIT LOG VIEWER — /api/admin/audit-logs + /api/admin/fraud-logs
+ *  ADMIN AUDIT LOG VIEWER — /api/admin/audit/logs + /export
+ *  Phase 2.6 — added filter controls + CSV export button.
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ScrollText, AlertTriangle, RefreshCw, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
+import { ScrollText, AlertTriangle, RefreshCw, Loader2, ChevronLeft, ChevronRight, Search, Download, X } from 'lucide-react';
+import { useGameStore } from '@/lib/store';
+import { api } from '@/lib/api';
 
 type Tab = 'audit' | 'fraud';
 
 interface AuditLog {
   id: string;
-  table_name: string;
-  record_id: string;
+  user_id: string | null;
+  username: string | null;
+  email: string | null;
+  category: string;
   action: string;
-  old_data: any;
-  new_data: any;
-  changed_by: string;
-  changed_by_username: string;
-  ip_address: string;
-  user_agent: string;
+  severity: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  details: any;
   created_at: string;
 }
 
@@ -39,8 +39,19 @@ interface FraudLog {
 }
 
 const PAGE_SIZE = 25;
+const SEVERITIES = ['debug', 'info', 'warn', 'error', 'critical'] as const;
+const CATEGORIES = ['admin', 'bonus', 'fraud', 'kyc', 'withdrawal', 'wagering',
+  'rain', 'payment', 'affiliate', 'support', 'security', 'system', 'config', 'auth'];
+const SEVERITY_COLOR: Record<string, string> = {
+  debug: 'bg-text-muted/20 text-text-muted',
+  info: 'bg-blue-500/20 text-blue-300',
+  warn: 'bg-brand-orange/20 text-brand-orange',
+  error: 'bg-brand-red/20 text-brand-red',
+  critical: 'bg-brand-red/40 text-brand-red',
+};
 
 export default function AdminAuditLogViewer() {
+  const token = useGameStore((s) => s.token);
   const [tab, setTab] = useState<Tab>('audit');
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [fraudLogs, setFraudLogs] = useState<FraudLog[]>([]);
@@ -49,29 +60,79 @@ export default function AdminAuditLogViewer() {
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
+  // Phase 2.6 — filter state.
+  const [q, setQ] = useState('');
+  const [category, setCategory] = useState<string>('');
+  const [severity, setSeverity] = useState<string>('');
+  const [from, setFrom] = useState<string>('');
+  const [to, setTo] = useState<string>('');
 
   const fetchLogs = useCallback(async (t: Tab = tab, o: number = offset) => {
     setLoading(true);
     setError(null);
     try {
-      const endpoint = t === 'audit' ? 'audit-logs' : 'fraud-logs';
-      const res = await fetch(`${API}/admin/${endpoint}?limit=${PAGE_SIZE}&offset=${o}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (data.success) {
-        if (t === 'audit') setAuditLogs(data.logs || []);
-        else setFraudLogs(data.logs || []);
-        setTotal(data.pagination?.total || 0);
+      if (t === 'fraud') {
+        // Existing fraud_logs endpoint — left as-is (no new filters here, surgical scope).
+        const res = await fetch(`/api/admin/fraud-logs?limit=${PAGE_SIZE}&offset=${o}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (data.success) {
+          setFraudLogs(data.logs || []);
+          setTotal(data.pagination?.total || 0);
+        } else {
+          setError(data.error || 'Failed to load logs');
+        }
       } else {
-        setError(data.error || 'Failed to load logs');
+        // Audit logs — Phase 2.6: filter params forwarded to backend.
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          offset: String(o),
+        });
+        if (q) params.set('q', q);
+        if (category) params.set('category', category);
+        if (severity) params.set('severity', severity);
+        if (from) params.set('from', from);
+        if (to) params.set('to', to);
+        const r: any = await api.get(`/admin/audit/logs?${params.toString()}`, token);
+        if (r.success) {
+          setAuditLogs(r.logs || []);
+          setTotal(r.total || 0);
+        } else {
+          setError(r.error || 'Failed to load logs');
+        }
       }
     } catch (e) {
       setError('Cannot connect to backend');
     }
     setLoading(false);
-  }, [token, tab, offset]);
+  }, [token, tab, offset, q, category, severity, from, to]);
+
+  // Phase 2.6 — rebuild CSV from current page (or first 1000 filtered rows).
+  const exportCsv = async () => {
+    if (!token) return;
+    try {
+      const params = new URLSearchParams({ limit: '1000', offset: '0' });
+      if (q) params.set('q', q);
+      if (category) params.set('category', category);
+      if (severity) params.set('severity', severity);
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const res = await fetch(`/api/admin/audit/export?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { setError(`CSV export failed: HTTP ${res.status}`); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit-${tab}-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError('CSV export failed');
+    }
+  };
 
   useEffect(() => {
     setOffset(0);
@@ -115,13 +176,66 @@ export default function AdminAuditLogViewer() {
             </button>
           </div>
         </div>
-        <button
-          onClick={() => fetchLogs(tab, offset)}
-          className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary"
-        >
-          <RefreshCw size={13} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {tab === 'audit' && (
+            <button
+              onClick={exportCsv}
+              className="flex items-center gap-1.5 px-2 py-1 rounded border border-border text-xs text-text-secondary hover:text-brand-gold"
+              title="Export filtered rows as CSV"
+            >
+              <Download size={13} /> CSV
+            </button>
+          )}
+          <button
+            onClick={() => fetchLogs(tab, offset)}
+            className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary"
+          >
+            <RefreshCw size={13} /> Refresh
+          </button>
+        </div>
       </div>
+
+      {/* ── Phase 2.6 filter row (audit tab only) ─────────── */}
+      {tab === 'audit' && (
+        <div className="px-4 py-2 border-b border-border bg-surface-2/30 flex flex-wrap gap-2 items-center text-xs">
+          <div className="relative flex-1 min-w-[120px]">
+            <Search size={12} className="absolute left-2 top-2.5 text-text-muted" />
+            <input
+              placeholder="Free text (action / details / IP / user)"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="w-full bg-surface border border-border rounded pl-7 pr-2 py-1.5 text-xs text-text-primary placeholder:text-text-muted"
+            />
+          </div>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}
+            className="bg-surface border border-border rounded px-2 py-1.5 text-xs">
+            <option value="">All categories</option>
+            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select value={severity} onChange={(e) => setSeverity(e.target.value)}
+            className="bg-surface border border-border rounded px-2 py-1.5 text-xs">
+            <option value="">All severities</option>
+            {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+            className="bg-surface border border-border rounded px-2 py-1.5 text-xs" title="From date" />
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+            className="bg-surface border border-border rounded px-2 py-1.5 text-xs" title="To date" />
+          <button
+            onClick={() => { setOffset(0); fetchLogs(tab, 0); }}
+            className="px-3 py-1.5 bg-brand-gold text-black rounded text-xs font-medium"
+          >
+            Apply
+          </button>
+          <button
+            onClick={() => { setQ(''); setCategory(''); setSeverity(''); setFrom(''); setTo(''); setOffset(0); fetchLogs(tab, 0); }}
+            className="flex items-center gap-1 px-2 py-1.5 text-text-muted hover:text-text-primary text-xs"
+            title="Clear filters"
+          >
+            <X size={11} /> Clear
+          </button>
+        </div>
+      )}
 
       {/* Table */}
       <div className="overflow-x-auto">
@@ -131,10 +245,11 @@ export default function AdminAuditLogViewer() {
               {tab === 'audit' ? (
                 <>
                   <th className="px-4 py-2 font-normal">Time</th>
-                  <th className="px-4 py-2 font-normal">Admin</th>
+                  <th className="px-4 py-2 font-normal">Category</th>
+                  <th className="px-4 py-2 font-normal">Severity</th>
                   <th className="px-4 py-2 font-normal">Action</th>
-                  <th className="px-4 py-2 font-normal">Table</th>
-                  <th className="px-4 py-2 font-normal">Changes</th>
+                  <th className="px-4 py-2 font-normal">User / Admin</th>
+                  <th className="px-4 py-2 font-normal">Details</th>
                   <th className="px-4 py-2 font-normal">IP</th>
                 </>
               ) : (
@@ -162,13 +277,21 @@ export default function AdminAuditLogViewer() {
               tab === 'audit' ? auditLogs.map((log) => (
                 <tr key={log.id} className="border-b border-border/50 hover:bg-white/2">
                   <td className="px-4 py-2.5 text-text-muted">{new Date(log.created_at).toLocaleString()}</td>
-                  <td className="px-4 py-2.5 text-text-primary">{log.changed_by_username || log.changed_by}</td>
-                  <td className="px-4 py-2.5 text-text-primary">{log.action}</td>
-                  <td className="px-4 py-2.5 text-text-muted">{log.table_name}</td>
-                  <td className="px-4 py-2.5 text-text-muted max-w-xs truncate" title={formatJson({ old: log.old_data, new: log.new_data })}>
-                    {formatJson({ old: log.old_data, new: log.new_data })}
+                  <td className="px-4 py-2.5"><span className="px-1.5 py-0.5 rounded bg-surface-2 text-[10px]">{log.category}</span></td>
+                  <td className="px-4 py-2.5">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${SEVERITY_COLOR[log.severity] || 'bg-surface-2 text-text-muted'}`}>
+                      {log.severity}
+                    </span>
                   </td>
-                  <td className="px-4 py-2.5 text-text-muted">{log.ip_address}</td>
+                  <td className="px-4 py-2.5 text-text-primary">{log.action}</td>
+                  <td className="px-4 py-2.5 text-text-primary">
+                    {log.username ?? <span className="text-text-muted">system</span>}
+                    {log.email && <div className="text-text-muted text-[10px]">{log.email}</div>}
+                  </td>
+                  <td className="px-4 py-2.5 text-text-muted max-w-xs truncate" title={formatJson(log.details)}>
+                    {formatJson(log.details)}
+                  </td>
+                  <td className="px-4 py-2.5 text-text-muted">{log.ip_address ?? '—'}</td>
                 </tr>
               )) : fraudLogs.map((log) => (
                 <tr key={log.id} className="border-b border-border/50 hover:bg-white/2">
