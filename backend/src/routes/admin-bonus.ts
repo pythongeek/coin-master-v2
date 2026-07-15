@@ -376,4 +376,94 @@ router.get(
   },
 );
 
+// Phase 2.7 — bonus analytics dashboard
+// Returns: daily claims (last 30d), top bonus types, conversion-to-withdrawal
+// rate, average wagering completion, current payout liability.
+router.get(
+  '/analytics',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
+  async (_req: Request, res: Response) => {
+    try {
+      const { query } = await import('../config/database');
+
+      // 1. Daily claims — last 30 days.
+      const daily = (await query(
+        `SELECT date_trunc('day', claimed_at)::date AS day,
+                count(*)::int                                          AS claims,
+                sum(amount_coins)::float8                              AS coins_granted,
+                sum(amount_coins * wagering_required)::float8         AS wagering_required
+           FROM bonus_claims
+          WHERE claimed_at > NOW() - INTERVAL '30 days'
+          GROUP BY day ORDER BY day ASC`,
+      )).rows as Array<{ day: string; claims: number; coins_granted: number; wagering_required: number }>;
+
+      // 2. Top bonus types — all-time counts + conversion.
+      const topTypes = (await query(
+        `SELECT bc.bonus_type,
+                count(*)::int                                         AS claims,
+                sum(bc.amount_coins)::float8                          AS coins_granted,
+                count(*) FILTER (WHERE bc.status='completed')::int    AS completed,
+                count(*) FILTER (WHERE bc.status='expired')::int      AS expired,
+                avg(EXTRACT(EPOCH FROM (bc.completed_at - bc.claimed_at)))::float8
+                  AS avg_completion_seconds
+           FROM bonus_claims bc
+          WHERE bc.claimed_at > NOW() - INTERVAL '30 days'
+          GROUP BY bc.bonus_type ORDER BY claims DESC LIMIT 10`,
+      )).rows as Array<{
+        bonus_type: string; claims: number; coins_granted: number;
+        completed: number; expired: number; avg_completion_seconds: number | null;
+      }>;
+
+      // 3. Conversion rate (% of bonus claims followed by at least one withdrawal).
+      const conversion = (await query(
+        `WITH bc AS (
+           SELECT DISTINCT ON (user_id, bonus_type) user_id, bonus_type
+             FROM bonus_claims
+            WHERE claimed_at > NOW() - INTERVAL '30 days'
+         ),
+         wd AS (
+           SELECT DISTINCT user_id FROM transactions
+            WHERE type = 'withdrawal' AND completed_at IS NOT NULL
+              AND created_at > NOW() - INTERVAL '60 days'
+         )
+         SELECT count(*)::int AS claim_users,
+                count(*) FILTER (WHERE u.id IN (SELECT user_id FROM wd))::int AS withdrew_users
+           FROM bc JOIN users u ON u.id = bc.user_id`,
+      )).rows[0] as { claim_users: number; withdrew_users: number };
+
+      // 4. Payout liability: active (un-completed, un-expired) bonus coins + wagering left.
+      const liability = (await query(
+        `SELECT sum(amount_coins)::float8                                             AS active_coins,
+                count(*)::int                                                        AS active_claims
+           FROM bonus_claims
+          WHERE status IN ('pending','active') AND expires_at > NOW()`,
+      )).rows[0] as { active_coins: number; active_claims: number };
+
+      res.json({
+        success: true,
+        analytics: {
+          dailyClaims: daily,
+          topTypes,
+          conversion: {
+            claimUsers30d: conversion.claim_users,
+            withdrewUsers30d: conversion.withdrew_users,
+            rate: conversion.claim_users > 0
+              ? conversion.withdrew_users / conversion.claim_users : 0,
+          },
+          liability: {
+            activeCoins: Number(liability.active_coins) || 0,
+            activeClaims: liability.active_claims,
+          },
+          generatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  },
+);
+
 export default router;

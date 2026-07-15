@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useGameStore } from '@/lib/store';
 import { Gift, Plus, Edit2, Trash2, Users, TrendingUp, CheckCircle, AlertCircle, Search, X, Save } from 'lucide-react';
 import { api } from '@/lib/api';
+import AdminBonusAnalytics from '@/components/dashboard/AdminBonusAnalytics';
 import CopyableUid from '@/components/dashboard/CopyableUid';
 
 const BONUS_TYPES = [
@@ -317,6 +318,9 @@ export default function AdminBonusPanel() {
           {notice.message}
         </div>
       )}
+
+      {/* ── Phase 2.7: Bonus Analytics ── */}
+      <AdminBonusAnalytics />
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
