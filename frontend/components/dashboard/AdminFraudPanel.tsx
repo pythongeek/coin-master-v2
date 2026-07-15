@@ -13,10 +13,11 @@
  *  layout, navigation, or other panels.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight } from 'lucide-react';
+import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight, Network } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { api } from '@/lib/api';
 import CopyableUid from '@/components/dashboard/CopyableUid';
+import ClusterGraphViewer from '@/components/dashboard/ClusterGraphViewer';
 
 interface RiskUserRow {
   id: string;
@@ -90,6 +91,21 @@ export default function AdminFraudPanel() {
   const [drillUser, setDrillUser] = useState<any | null>(null);
   const [drillLoading, setDrillLoading] = useState(false);
   const [drillError, setDrillError] = useState<string | null>(null);
+
+  // Phase 2.5 — graph viewer state
+  const [graphClusterId, setGraphClusterId] = useState<string | null>(null);
+  const [graph, setGraph] = useState<any | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const openClusterGraph = async (clusterId: string) => {
+    setGraphClusterId(clusterId);
+    setGraph(null);
+    setGraphLoading(true);
+    try {
+      const r: any = await api.get(`/admin/fraud/clusters/${clusterId}/graph`, token);
+      if (r.success) setGraph(r.graph);
+      else setDrillError(r.error || 'Graph load failed');
+    } finally { setGraphLoading(false); }
+  };
 
   const loadFeed = useCallback(async () => {
     if (!token) return;
@@ -327,6 +343,14 @@ export default function AdminFraudPanel() {
                 <div className="text-text-muted text-[10px] mt-2">
                   detected: {new Date(c.detected_at).toLocaleString()}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => openClusterGraph(c.id)}
+                  className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 bg-surface-2 border border-border rounded text-xs text-text-secondary hover:text-brand-gold"
+                >
+                  <Network size={12} />
+                  View Graph
+                </button>
               </div>
             ))
           )}
@@ -399,6 +423,31 @@ export default function AdminFraudPanel() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* ── PHASE 2.5: CLUSTER GRAPH MODAL ── */}
+      {graphClusterId && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-surface border border-brand-orange/40 rounded-lg max-w-2xl w-full p-5 my-8">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-text-primary font-medium flex items-center gap-2">
+                <Network size={16} className="text-brand-orange" /> Cluster Graph
+                <code className="text-xs text-text-muted ml-1">{graphClusterId.slice(0, 8)}…</code>
+              </h3>
+              <button onClick={() => { setGraphClusterId(null); setGraph(null); }} className="text-text-muted hover:text-text-primary">
+                <X size={18} />
+              </button>
+            </div>
+            {graphLoading && <p className="text-text-muted text-sm">Loading graph…</p>}
+            {graph && (
+              <ClusterGraphViewer
+                nodes={graph.nodes}
+                edges={graph.edges}
+                onNodeClick={(uid) => { setGraphClusterId(null); setGraph(null); openUserDrill(uid); }}
+              />
+            )}
+          </div>
         </div>
       )}
 

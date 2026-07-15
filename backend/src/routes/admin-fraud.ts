@@ -340,4 +340,32 @@ router.get(
   },
 );
 
+// Phase 2.5 — full node+edge graph for a fraud cluster (D3-style visualization)
+router.get(
+  '/fraud/clusters/:id/graph',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
+  async (req: Request, res: Response) => {
+    try {
+      const { query } = await import('../config/database');
+      const { buildClusterGraph } = await import('../services/graph-fraud');
+      const id = String(req.params.id);
+      const r = await query(
+        `SELECT member_user_ids FROM fraud_clusters WHERE id = $1::uuid`,
+        [id],
+      );
+      if (r.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Cluster not found' });
+      }
+      const members = (r.rows[0] as { member_user_ids: string[] }).member_user_ids || [];
+      const graph = await buildClusterGraph(members);
+      res.json({ success: true, clusterId: id, graph });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ success: false, error: message });
+    }
+  },
+);
+
 export default router;

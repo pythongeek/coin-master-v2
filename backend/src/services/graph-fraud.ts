@@ -373,6 +373,67 @@ export async function getClustersForUser(userId: string): Promise<FraudCluster[]
  * Find what other users are connected to `userId` via any shared
  * resource. Returns a map of otherUserId → list of edge types.
  */
+export interface ClusterGraph {
+  nodes: Array<{
+    id: string;
+    username: string;
+    riskScore: number;
+    riskTier: string;
+    isFlagged: boolean;
+    createdAt: Date;
+  }>;
+  edges: Array<{
+    id: string;
+    a: string;
+    b: string;
+    resourceType: ResourceType;
+    resourceHash: string;
+    strength: number;
+  }>;
+}
+
+/**
+ * Build the full node+edge graph for a fraud cluster. Walks the
+ * connected component of every member so the visualization shows
+ * indirect edges (A-B via C) too.
+ */
+export async function buildClusterGraph(memberUserIds: string[]): Promise<ClusterGraph> {
+  if (memberUserIds.length === 0) return { nodes: [], edges: [] };
+
+  // Use ANY($1) so the query stays simple regardless of count.
+  const userRows = await query(
+    `SELECT id, username, risk_score, risk_tier, is_flagged, created_at
+       FROM users
+      WHERE id = ANY($1::uuid[])`,
+    [memberUserIds],
+  );
+  const nodes = (userRows.rows as Array<{
+    id: string; username: string; risk_score: number; risk_tier: string;
+    is_flagged: boolean; created_at: Date;
+  }>).map((r) => ({
+    id: r.id, username: r.username, riskScore: r.risk_score, riskTier: r.risk_tier,
+    isFlagged: r.is_flagged, createdAt: new Date(r.created_at),
+  }));
+
+  const edgeRows = await query(
+    `SELECT id, account_a, account_b, resource_type, resource_hash, strength
+       FROM account_resource_links
+      WHERE account_a = ANY($1::uuid[]) AND account_b = ANY($1::uuid[])`,
+    [memberUserIds],
+  );
+  const edges = (edgeRows.rows as Array<{
+    id: string; account_a: string; account_b: string;
+    resource_type: ResourceType; resource_hash: string; strength: string | number;
+  }>).map((r) => ({
+    id: r.id, a: r.account_a, b: r.account_b,
+    resourceType: r.resource_type,
+    resourceHash: r.resource_hash.slice(0, 8) + '…',
+    strength: Number(r.strength),
+  }));
+
+  return { nodes, edges };
+}
+
 export async function getConnectedUsers(userId: string): Promise<Map<string, ResourceType[]>> {
   const r = await query(
     `SELECT
