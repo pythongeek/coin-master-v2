@@ -37,6 +37,7 @@ import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-s
 import { recordDeviceUse } from '../services/device-fingerprint';
 import { detectSelfReferral, recordSelfReferralVerdict, SelfReferralCheck } from '../services/affiliate-guard';
 import { alertDeviceCluster, alertSelfReferral } from '../services/fraud-alerts';
+import { recalculateRisk } from '../services/ai-risk-engine';
 
 const router = Router();
 
@@ -222,6 +223,17 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
         // eslint-disable-next-line no-console
         console.error('[signup] device-fingerprint record failed:', e);
       }
+    }
+
+    // Phase 2.3: IP reputation + initial risk score. The IP
+    // reputation service writes fraud_signals rows (tor / datacenter
+    // / known_fraud / proxy) that the risk engine then aggregates.
+    // Best-effort — risk computation failure must never break signup.
+    try {
+      await recalculateRisk(userId, { ip: ipAddress });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[signup] recalculateRisk failed:', e);
     }
 
     // Phase 1.4: drop a fraud_signals row if self-referral was detected

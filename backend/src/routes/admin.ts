@@ -773,6 +773,11 @@ router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['supe
 //  ADMIN SETTINGS
 // ══════════════════════════════════════════════════════════════
 import { getAdminSettingBool, setAdminSetting } from '../services/admin-settings.service';
+import { creditCoins, ensureTestingWallet, TESTING_TOKEN } from '../services/testing-balance';
+import {
+  checkIpReputation, getIpReputationReport,
+  addToBlocklist, removeFromBlocklist, listBlocklist,
+} from '../services/ip-reputation';
 
 // GET /api/admin/settings — list all admin settings
 router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
@@ -803,6 +808,181 @@ router.get('/settings/admin-2fa-status', adminLimiter, authMiddleware, roleMiddl
   try {
     const required = await getAdminSettingBool('admin_2fa_required', false);
     res.json({ success: true, required });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  TESTING BALANCE — quick credit for admin / smoke tests
+// ══════════════════════════════════════════════════════════════
+//
+//  POST /api/admin/testing/credit-coins
+//    body: { userId, amount, reason }
+//  POST /api/admin/testing/ensure-wallet
+//    body: { userId }
+//  GET  /api/admin/testing/wallet/:userId
+//
+//  These are explicitly for testing. They use an "INTERNAL" chain
+//  wallet (no real on-chain address, no deposit monitor) so admins
+//  can give themselves coins to smoke-test the game without needing
+//  real Binance Pay deposits. Production deposits still flow through
+//  wallet-derivation + deposit-monitor + reconciliation.
+
+router.post('/testing/credit-coins', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const body = req.body as { userId?: string; amount?: number; reason?: string };
+    if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
+    if (typeof body.amount !== 'number' || !Number.isFinite(body.amount) || body.amount <= 0) {
+      return res.status(400).json({ success: false, error: 'amount must be a positive number' });
+    }
+    if (!body.reason || body.reason.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'reason must be at least 5 characters' });
+    }
+    const result = await creditCoins(body.userId, body.amount, body.reason.trim(), adminId);
+    res.json({ success: true, result });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === 'USER_NOT_FOUND') return res.status(404).json({ success: false, error: 'User not found' });
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.post('/testing/ensure-wallet', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const body = req.body as { userId?: string };
+    if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
+    const w = await ensureTestingWallet(body.userId);
+    res.json({ success: true, walletId: w.walletId, currency: w.currency });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.get('/testing/wallet/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const userId = String(req.params.userId);
+    const user = await query(
+      `SELECT id, username, balance::float8 AS balance,
+              withdrawable_balance_coins::float8 AS withdrawable,
+              bonus_balance_coins::float8 AS bonus
+         FROM users WHERE id = $1::uuid`,
+      [userId],
+    );
+    if (user.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+    const w = await ensureTestingWallet(userId);
+    const wallet = await query(
+      `SELECT id, chain, token_symbol, balance::float8 AS balance,
+              locked_balance::float8 AS locked
+         FROM wallets WHERE id = $1::uuid`,
+      [w.walletId],
+    );
+    res.json({
+      success: true,
+      user: user.rows[0],
+      wallet: wallet.rows[0] ?? null,
+      currency: TESTING_TOKEN,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  IP REPUTATION (Phase 2.3) — provider-agnostic IP risk lookup
+// ══════════════════════════════════════════════════════════════
+//
+//  GET  /api/admin/ip/check?ip=X     — live lookup, cached
+//  GET  /api/admin/ip/blocklist      — list admin-managed entries
+//  POST /api/admin/ip/blocklist      — add an IP to deny/allow
+//  DELETE /api/admin/ip/blocklist    — remove an IP entry
+//  GET  /api/admin/ip/reports        — aggregate report (cache stats,
+//                                      top abusive, recent lookups)
+
+router.get('/ip/check', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (req: Request, res: Response) => {
+  try {
+    const ip = String(req.query.ip || '').trim();
+    if (!ip) return res.status(400).json({ success: false, error: 'ip query param required' });
+    const result = await checkIpReputation(ip);
+    res.json({ success: true, result });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.get('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response) => {
+  try {
+    const rows = await listBlocklist();
+    res.json({ success: true, entries: rows, total: rows.length });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.post('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const body = req.body as { ip?: string; listType?: 'deny' | 'allow'; reason?: string; expiresAt?: string };
+    if (!body.ip) return res.status(400).json({ success: false, error: 'ip required' });
+    if (!body.listType || !['deny', 'allow'].includes(body.listType)) {
+      return res.status(400).json({ success: false, error: 'listType must be deny|allow' });
+    }
+    if (!body.reason || body.reason.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'reason must be at least 5 characters' });
+    }
+    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    if (expiresAt && isNaN(expiresAt.getTime())) {
+      return res.status(400).json({ success: false, error: 'expiresAt invalid' });
+    }
+    const r = await addToBlocklist(body.ip, body.listType, body.reason.trim(), adminId, expiresAt);
+    await query(
+      `INSERT INTO audit_log (category, action, severity, user_id, details)
+       VALUES ('admin', 'ip.blocklist_add', 'info', $1::uuid, $2::jsonb)`,
+      [adminId, JSON.stringify({ ip: body.ip, listType: body.listType, reason: body.reason.trim() })],
+    );
+    res.json({ success: true, id: r.id });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.delete('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    const ip = String(req.query.ip || '').trim();
+    const listType = (req.query.listType as 'deny' | 'allow') || 'deny';
+    if (!ip) return res.status(400).json({ success: false, error: 'ip query param required' });
+    if (!['deny', 'allow'].includes(listType)) {
+      return res.status(400).json({ success: false, error: 'listType must be deny|allow' });
+    }
+    await removeFromBlocklist(ip, listType);
+    if (adminId) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('admin', 'ip.blocklist_remove', 'info', $1::uuid, $2::jsonb)`,
+        [adminId, JSON.stringify({ ip, listType })],
+      );
+    }
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.get('/ip/reports', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response) => {
+  try {
+    const report = await getIpReputationReport();
+    res.json({ success: true, report });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });

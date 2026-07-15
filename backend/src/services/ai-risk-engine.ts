@@ -336,7 +336,25 @@ export function signalsFromContext(ctx: UserContext): RiskSignal[] {
  * Recompute a user's risk score, persist, and update users.risk_score/tier.
  * Cheap enough to call from signup, deposit, withdrawal handlers.
  */
-export async function recalculateRisk(userId: string): Promise<RiskScore> {
+export interface RecalculateOptions {
+  /** When provided, the IP is run through ip-reputation BEFORE
+   *  loading context. Any non-clean flags (tor, datacenter,
+   *  known_fraud, proxy) write fraud_signals rows that loadUserContext
+   *  picks up. The score reflects the IP risk. */
+  ip?: string;
+}
+
+export async function recalculateRisk(userId: string, opts: RecalculateOptions = {}): Promise<RiskScore> {
+  // Phase 2.3: IP reputation. If an IP is provided, look it up first
+  // so any non-clean flags (tor, datacenter, known_fraud, proxy)
+  // become fraud_signals rows. loadUserContext() then picks them up.
+  if (opts.ip) {
+    try {
+      const { checkIpReputation } = await import('./ip-reputation');
+      await checkIpReputation(opts.ip);
+    } catch { /* best-effort — IP check failure must not break risk */ }
+  }
+
   const ctx = await loadUserContext(userId);
 
   // Phase 2.2: run the bot-pattern detector before mapping signals.
