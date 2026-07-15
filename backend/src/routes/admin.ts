@@ -790,6 +790,37 @@ router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_adm
   }
 });
 
+// PUT /api/admin/settings/bulk — update many settings in one shot.
+// Body: { updates: [{ key, value, description? }, ...] }
+// NOTE: Must come BEFORE PUT /settings/:key so Express matches the
+// literal "bulk" segment instead of treating it as a :key parameter.
+router.put('/settings/bulk', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({
+  updates: z.array(z.object({
+    key: z.string().min(1).max(120),
+    value: z.string().max(4000),
+    description: z.string().max(500).optional(),
+  })).min(1).max(50),
+})), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    const { updates } = req.body as { updates: Array<{ key: string; value: string; description?: string }> };
+    for (const u of updates) {
+      await setAdminSetting(u.key, u.value, u.description);
+    }
+    if (adminId) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('admin', 'settings.bulk_update', 'info', $1::uuid, $2::jsonb)`,
+        [adminId, JSON.stringify({ count: updates.length, keys: updates.map((u) => u.key) })],
+      );
+    }
+    res.json({ success: true, updated: updates.length });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
 // PUT /api/admin/settings/:key — update a setting (super_admin only)
 router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({ value: z.string() })), async (req: Request, res: Response) => {
   try {
@@ -797,6 +828,39 @@ router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['supe
     const { value } = req.body;
     await setAdminSetting(key as string, value as string);
     res.json({ success: true, message: 'Setting updated' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// GET /api/admin/settings/groups — curated grouping for the UI
+// (avoids dumping every row of admin_settings into a single table).
+router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    // Pull every key and group by prefix.
+    const r = await query('SELECT key, value, description, updated_at FROM admin_settings ORDER BY key ASC');
+    const groups: Record<string, Array<{ key: string; value: string; description: string | null; updated_at: Date | null }>> = {
+      'Bonus & Wagering': [],
+      'Fraud Detection': [],
+      'IP Reputation': [],
+      'Safety & Limits': [],
+      'Admin & Auth': [],
+      'Other': [],
+    };
+    const bucket = (k: string): string => {
+      if (k.startsWith('bonus_') || k.startsWith('wagering_')) return 'Bonus & Wagering';
+      if (k.startsWith('fraud_') || k.startsWith('velocity_') || k.startsWith('affiliate_')) return 'Fraud Detection';
+      if (k.startsWith('ip_reputation') || k.startsWith('abuseipdb') || k.startsWith('fraud_ip_')) return 'IP Reputation';
+      if (k.startsWith('admin_') || k.startsWith('security_') || k.startsWith('kyc_')) return 'Admin & Auth';
+      if (k.startsWith('alert_')) return 'Fraud Detection';
+      if (k.includes('self_excl') || k.includes('limit')) return 'Safety & Limits';
+      return 'Other';
+    };
+    for (const row of r.rows as Array<{ key: string; value: string; description: string | null; updated_at: Date | null }>) {
+      groups[bucket(row.key)]!.push(row);
+    }
+    res.json({ success: true, groups });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });
