@@ -28,6 +28,7 @@ import adminKycRoutes from './routes/admin-kyc';
 import adminBalanceRoutes from './routes/admin-balance';
 import adminAuditRoutes from './routes/admin-audit';
 import adminFraudRoutes from './routes/admin-fraud';
+import mlRoutes from './routes/ml-routes';
 import { tronDepositMonitor } from './services/tron-deposit-monitor';
 import { tronMcpService } from './services/tron-mcp.service';
 import docsRoutes from './routes/docs';
@@ -205,6 +206,7 @@ app.use('/api/admin/payments', adminPaymentsQrRoutes);
 app.use('/api/admin/email', adminEmailRoutes);
 app.use('/api/admin/audit', adminAuditRoutes);
 app.use('/api/admin', adminFraudRoutes);
+app.use('/api/admin/ml', mlRoutes);
 // OpenAPI / Swagger UI — public, no auth required
 app.use('/api', docsRoutes);
 // Prometheus metrics — public, scraped by Prometheus
