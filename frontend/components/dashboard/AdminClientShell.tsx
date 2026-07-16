@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { BarChart3, Settings, Users, ShieldCheck, Gift, Wallet, FileText, Key, Activity, LogOut, AlertCircle, AlertOctagon, Trophy, Target, Coins, QrCode, Mail, FlaskConical, SlidersHorizontal, Brain, type LucideIcon } from 'lucide-react';
+import AdminAudienceGraphs from '@/components/dashboard/AdminAudienceGraphs';
 import AdminLiveStats from '@/components/dashboard/AdminLiveStats';
 import AdminConfigPanel from '@/components/game/AdminConfig';
 import AdminUserTable from '@/components/dashboard/AdminUserTable';
@@ -40,7 +41,7 @@ import AdminChallengesPanel from '@/components/dashboard/AdminChallengesPanel';
 import { useToast } from '@/components/providers/ToastProvider';
 import { clearToken } from '@/lib/socket';
 
-const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'system_logs' | 'health' | 'email' | 'security' | 'kyc' | 'kyc_admin' | 'account' | 'coins' | 'fraud' | 'testing' | 'settings' | 'ml'; label: string; Icon: LucideIcon }[] = [
+const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'system_logs' | 'health' | 'email' | 'security' | 'kyc' | 'kyc_admin' | 'account' | 'coins' | 'fraud' | 'testing' | 'settings' | 'ml' | 'audience'; label: string; Icon: LucideIcon }[] = [
   { id: 'live', label: 'Live Stats', Icon: BarChart3 },
   { id: 'config', label: 'Game Config', Icon: Settings },
   { id: 'users', label: 'Users', Icon: Users },
@@ -52,6 +53,7 @@ const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bo
   { id: 'testing', label: 'Test Coins', Icon: FlaskConical },
   { id: 'settings', label: 'Admin Settings', Icon: SlidersHorizontal },
   { id: 'ml', label: 'ML Risk Center', Icon: Brain },
+  { id: 'audience', label: 'Audience Graphs', Icon: Users },
   { id: 'leaderboard', label: 'Leaderboard', Icon: Trophy },
   { id: 'challenges', label: 'Challenges', Icon: Target },
   { id: 'kyc', label: 'KYC Review', Icon: ShieldCheck },
@@ -177,6 +179,7 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
             {activeTab === 'testing' && <AdminTestingPanel />}
             {activeTab === 'settings' && <AdminSettingsPanel />}
             {activeTab === 'ml' && <AdminMlPanel />}
+            {activeTab === 'audience' && <AdminAudienceGraphs />}
             {activeTab === 'leaderboard' && <AdminLeaderboardPanel />}
             {activeTab === 'challenges' && <AdminChallengesPanel />}
             {activeTab === 'kyc' && isSuperAdmin && (
