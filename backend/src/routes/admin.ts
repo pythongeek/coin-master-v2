@@ -778,6 +778,7 @@ import {
   checkIpReputation, getIpReputationReport,
   addToBlocklist, removeFromBlocklist, listBlocklist,
 } from '../services/ip-reputation';
+import mlRoutes from './ml-routes';
 
 // GET /api/admin/settings — list all admin settings
 router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
@@ -844,6 +845,7 @@ router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['su
       'Bonus & Wagering': [],
       'Fraud Detection': [],
       'IP Reputation': [],
+      'Deepfake KYC': [],
       'Safety & Limits': [],
       'Admin & Auth': [],
       'Other': [],
@@ -852,6 +854,7 @@ router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['su
       if (k.startsWith('bonus_') || k.startsWith('wagering_')) return 'Bonus & Wagering';
       if (k.startsWith('fraud_') || k.startsWith('velocity_') || k.startsWith('affiliate_')) return 'Fraud Detection';
       if (k.startsWith('ip_reputation') || k.startsWith('abuseipdb') || k.startsWith('fraud_ip_')) return 'IP Reputation';
+      if (k.startsWith('kyc_deepfake_')) return 'Deepfake KYC';
       if (k.startsWith('admin_') || k.startsWith('security_') || k.startsWith('kyc_')) return 'Admin & Auth';
       if (k.startsWith('alert_')) return 'Fraud Detection';
       if (k.includes('self_excl') || k.includes('limit')) return 'Safety & Limits';
