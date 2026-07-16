@@ -138,9 +138,54 @@ router.get('/admin/list', authMiddleware, roleMiddleware(['super_admin', 'suppor
     );
     const total = parseInt(countResult.rows[0].total);
 
+    // P3-2e: enrich each row with the latest deepfake signal for that user.
+    // Cheap — one indexed lookup on users.id for each row in the page.
+    let deepfakeEnabled = false;
+    let deepfakeThreshold = 0.70;
+    try {
+      const e = await query("SELECT value FROM admin_settings WHERE key='kyc_deepfake_enabled'");
+      deepfakeEnabled = (e.rows[0] as { value: string } | undefined)?.value === 'true';
+      const t = await query("SELECT value FROM admin_settings WHERE key='kyc_deepfake_score_threshold'");
+      const tn = parseFloat((t.rows[0] as { value: string } | undefined)?.value || '0.70');
+      if (Number.isFinite(tn)) deepfakeThreshold = tn;
+    } catch { /* keep defaults */ }
+
+    if (sessions.length > 0) {
+      const userIds = (sessions as Array<{ user_id: string }>).map((s) => s.user_id).filter(Boolean);
+      if (userIds.length > 0) {
+        try {
+          const df = await query(
+            `SELECT id::text AS user_id, deepfake_score, deepfake_checked_at,
+                    deepfake_check_status
+               FROM users
+              WHERE id = ANY($1::uuid[])`,
+            [userIds],
+          );
+          const map = new Map<string, any>();
+          for (const r of df.rows as Array<{ user_id: string }>) map.set(r.user_id, r);
+          for (const s of sessions as Array<{ user_id: string; deepfake?: any }>) {
+            const d = map.get(s.user_id);
+            s.deepfake = d
+              ? {
+                  score: d.deepfake_score ?? null,
+                  checked_at: d.deepfake_checked_at,
+                  status: d.deepfake_check_status ?? 'not_run',
+                  threshold: deepfakeThreshold,
+                  enabled: deepfakeEnabled,
+                }
+              : null;
+          }
+        } catch { /* deepfake columns may not exist on older migrations */ }
+      }
+    }
+
     res.json({
       success: true,
       data: sessions,
+      deepfake: {
+        enabled: deepfakeEnabled,
+        threshold: deepfakeThreshold,
+      },
       pagination: {
         total,
         page,
@@ -256,6 +301,38 @@ router.post('/admin/review/:sessionId', authMiddleware, roleMiddleware(['super_a
     await reviewKycSession(sessionId, reviewerId, finalDecision, note);
 
     res.json({ success: true, message: `KYC session ${decision}.` });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// P3-2e: deepfake audit history for one user.
+router.get('/admin/deepfake-audit/:userId', authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const userId = String(req.params.userId);
+    const limit = Math.min(50, parseInt(req.query.limit as string) || 20);
+    const r = await query(
+      `SELECT id, source_url, status, score, endpoint_url, duration_ms,
+              response_body, error_message, created_at
+         FROM kyc_deepfake_audit
+        WHERE user_id = $1::uuid
+        ORDER BY created_at DESC
+        LIMIT $2::int`,
+      [userId, limit],
+    );
+    // Current values on the user row
+    const user = await query(
+      `SELECT deepfake_score, deepfake_checked_at, deepfake_check_status
+         FROM users WHERE id = $1::uuid`,
+      [userId],
+    );
+    res.json({
+      success: true,
+      current: user.rows[0] ?? null,
+      audit: r.rows,
+      total: r.rows.length,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: msg });

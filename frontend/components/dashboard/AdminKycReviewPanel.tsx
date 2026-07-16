@@ -34,6 +34,14 @@ interface KycSession {
   reviewed_at: string | null;
   created_at: string;
   completed_at: string | null;
+  // P3-2e: deepfake risk signal (enriched server-side in /kyc/admin/list)
+  deepfake?: {
+    score: number | null;
+    checked_at: string | null;
+    status: 'not_run' | 'ok' | 'error' | 'skipped' | 'timeout';
+    threshold: number;
+    enabled: boolean;
+  } | null;
 }
 
 export default function AdminKycReviewPanel() {
@@ -142,20 +150,20 @@ export default function AdminKycReviewPanel() {
         <table className="w-full text-xs font-mono">
           <thead>
             <tr className="border-b border-border text-text-muted text-left">
-              {['Session', 'Status', 'Risk', 'Face', 'Liveness', 'Submitted', 'Actions'].map(h => (
+              {['Session', 'Status', 'Risk', 'Face', 'Liveness', 'Deepfake', 'Submitted', 'Actions'].map(h => (
                 <th key={h} className="px-4 py-2 font-mono font-normal">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-text-muted">
                 <Loader2 className="inline animate-spin mr-2" size={14} />Loading…
               </td></tr>
             ) : error ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-brand-red">{error}</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-brand-red">{error}</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-text-muted">No KYC submissions.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-text-muted">No KYC submissions.</td></tr>
             ) : (
               items.map((k) => (
                 <tr key={k.id} className="border-b border-border/50 hover:bg-white/2">
@@ -164,6 +172,9 @@ export default function AdminKycReviewPanel() {
                   <td className="px-4 py-2.5 text-text-secondary">{k.risk_score ?? '—'} <span className="text-text-muted">{k.risk_tier ?? ''}</span></td>
                   <td className="px-4 py-2.5 text-text-secondary">{k.face_match === null ? '—' : k.face_match ? '✅' : '❌'} {k.face_similarity ? `(${(k.face_similarity * 100).toFixed(0)}%)` : ''}</td>
                   <td className="px-4 py-2.5 text-text-secondary">{k.liveness_passed === null ? '—' : k.liveness_passed ? '✅' : '❌'}</td>
+                  <td className="px-4 py-2.5">
+                    <DeepfakeCell s={k.deepfake ?? null} />
+                  </td>
                   <td className="px-4 py-2.5 text-text-muted">
                     {k.created_at ? new Date(k.created_at).toLocaleString() : '—'}
                   </td>
@@ -283,5 +294,47 @@ export default function AdminKycReviewPanel() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * P3-2e — Deepfake cell rendering.
+ * Color codes: green (clean), red (above threshold), muted (no check yet
+ * or error). Tooltip explains the threshold source.
+ */
+function DeepfakeCell({
+  s,
+}: {
+  s: {
+    score: number | null;
+    checked_at: string | null;
+    status: string;
+    threshold: number;
+    enabled: boolean;
+  } | null;
+}) {
+  if (!s || !s.enabled) {
+    return <span className="text-text-muted text-[10px]">—</span>;
+  }
+  if (s.status !== 'ok' || s.score === null) {
+    return (
+      <span className="text-text-muted text-[10px]" title={`status=${s.status}`}>
+        {s.status}
+      </span>
+    );
+  }
+  const above = s.score >= s.threshold;
+  const ageStr = s.checked_at
+    ? new Date(s.checked_at).toLocaleDateString()
+    : '—';
+  return (
+    <span
+      className={`px-1.5 py-0.5 rounded text-[10px] ${
+        above ? 'bg-brand-red/20 text-brand-red' : 'bg-brand-green/20 text-brand-green'
+      }`}
+      title={`score=${s.score.toFixed(2)} threshold=${s.threshold} checked=${ageStr}`}
+    >
+      {s.score.toFixed(2)} {above ? '⚠' : '✓'}
+    </span>
   );
 }
