@@ -6,6 +6,7 @@ import { runOcr } from './kyc-ocr';
 import { checkImageQuality, normalizeImage } from './kyc-quality';
 import { screenAgainstSanctions } from './kyc-sanctions';
 import { calculateKycRisk, KycRiskResult } from './kyc-risk';
+import { checkImageForDeepfake } from './deepfake-detector';
 
 /**
  * ═══════════════════════════════════════════════════════════════
@@ -168,6 +169,22 @@ export async function submitKycVerification(
      WHERE id = $2`,
     [status, userId]
   );
+
+  // Phase 3 / P3-2c: best-effort deepfake risk-signal on the selfie.
+  // NEVER throws — failures get logged via the service's own audit row.
+  // The kyc_session PK here is stored only in metadata; the deepfake
+  // audit FK points at kyc_submissions which isn't created here.
+  try {
+    await checkImageForDeepfake({
+      userId,
+      imageUrl: normalizedSelfie,
+      kycSubmissionId: undefined,
+    });
+  } catch {
+    // Defensive: the service is contractually best-effort, but keep
+    // the KYC submit itself robust even if a future change introduces
+    // an exception path.
+  }
 
   return {
     sessionId,
