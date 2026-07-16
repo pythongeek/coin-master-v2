@@ -31,6 +31,7 @@
  */
 
 import { query } from '../config/database';
+import { getAdminSetting } from './admin-settings.service';
 
 export const FEATURE_COLUMNS: string[] = [
   // user (3)
@@ -50,6 +51,11 @@ export const FEATURE_COLUMNS: string[] = [
   'only_bonus_bets', 'bot_like_click_timing', 'session_duration_avg_minutes',
   // ip reputation (2)
   'ip_abuse_score', 'ip_is_blocklisted',
+  // P3-2d: deepfake risk signal (3) — NULL→0 until admin enables the
+  // detector. Adding to the END keeps backward-compat with any model
+  // trained on the 32-column version (feature_columns JSONB on
+  // ml_models controls which subset the model actually uses).
+  'deepfake_score', 'deepfake_check_recent', 'kyc_deepfake_strictness',
 ];
 
 const HIGH_RISK_COUNTRIES = new Set([
@@ -94,6 +100,7 @@ export function buildFeatureVectorFromRows(
     bot_like_click_timing: boolean; session_duration_avg_minutes: number | null;
   },
   ipRep: { abuse_score: number; is_blocklisted: 0 | 1 },
+  deepfake: { score: number | null; check_recent: boolean; strictness: number },
 ): number[] {
   // user-side
   const createdAt = userRow?.created_at ? new Date(userRow.created_at).getTime() : Date.now();
@@ -141,6 +148,13 @@ export function buildFeatureVectorFromRows(
     // ip reputation (2)
     ipRep.abuse_score,
     ipRep.is_blocklisted,
+    // P3-2d: deepfake (3). Until the detector is enabled these all
+    // resolve to 0 via NUM(), so existing trained models see a
+    // neutral feature vector and the new columns are inert until the
+    // operator opts in + retrains.
+    deepfake.score ?? 0,
+    deepfake.check_recent ? 1 : 0,
+    deepfake.strictness,
   ];
 
   // Sanity: must match FEATURE_COLUMNS length exactly.
@@ -288,6 +302,28 @@ export async function extractFeatureVector(userId: string): Promise<FeatureVecto
       ipRep.is_blocklisted = blRes.rows.length > 0 ? 1 : 0;
     } catch { /* ip_reputation_cache may not exist yet */ }
 
+    // 8. P3-2d: deepfake risk signal. NULL until admin enables the
+    // detector; the strictness column is the admin's current threshold
+    // normalised, so the model can learn per-deploy calibration.
+    let deepfake = { score: 0, check_recent: false, strictness: 0.70 };
+    try {
+      const df = await query(
+        `SELECT deepfake_score, deepfake_checked_at FROM users WHERE id = $1::uuid`,
+        [userId],
+      );
+      const row = (df.rows[0] as { deepfake_score: number | null; deepfake_checked_at: Date | null }) ?? null;
+      if (row) {
+        deepfake.score = row.deepfake_score ?? 0;
+        const checkedAt = row.deepfake_checked_at
+          ? new Date(row.deepfake_checked_at).getTime() : 0;
+        // Within last 7 days = recent enough to trust.
+        deepfake.check_recent = checkedAt > Date.now() - 7 * 86400000;
+      }
+      const strictStr = (await getAdminSetting('kyc_deepfake_score_threshold', '0.70')) ?? '0.70';
+      const parsed = parseFloat(strictStr);
+      if (Number.isFinite(parsed)) deepfake.strictness = parsed;
+    } catch { /* deepfake columns may not exist yet on older migrations */ }
+
     const velocityRows = {
       tx_total_1h: velRow.tx_total_1h ?? 0,
       tx_total_24h: velRow.tx_total_24h ?? 0,
@@ -301,7 +337,7 @@ export async function extractFeatureVector(userId: string): Promise<FeatureVecto
     };
 
     const vector = buildFeatureVectorFromRows(
-      userId, userRow, kycRow, velocityRows, signalCounts, behavioral, ipRep,
+      userId, userRow, kycRow, velocityRows, signalCounts, behavioral, ipRep, deepfake,
     );
 
     return {

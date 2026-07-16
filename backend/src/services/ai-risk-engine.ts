@@ -134,6 +134,10 @@ interface UserContext {
   voipPhone: boolean;
   impossibleTravel: boolean;
   withdrawalPatternMatch: boolean;
+  // P3-2d: deepfake risk signal
+  deepfakeScore: number | null;
+  deepfakeCheckRecent: boolean;
+  deepfakeStrictness: number;
 }
 
 /**
@@ -163,6 +167,10 @@ export async function loadUserContext(userId: string): Promise<UserContext> {
     voipPhone: false,
     impossibleTravel: false,
     withdrawalPatternMatch: false,
+    // P3-2d: deepfake defaults
+    deepfakeScore: null,
+    deepfakeCheckRecent: false,
+    deepfakeStrictness: 0.70,
   };
 
   // 1. User base + KYC + account age
@@ -271,6 +279,29 @@ export async function loadUserContext(userId: string): Promise<UserContext> {
     ctx.botLikeClickTiming = beh.botLikeClickTiming;
   } catch { /* behavioral service unavailable — keep stub defaults */ }
 
+  // P3-2d: pull deepfake score + freshness from users row.
+  // strictness is loaded separately below (admin_settings).
+  try {
+    const dfr = await query(
+      `SELECT deepfake_score, deepfake_checked_at FROM users WHERE id = $1::uuid`,
+      [userId],
+    );
+    if (dfr.rows.length > 0) {
+      const r = dfr.rows[0] as { deepfake_score: number | null; deepfake_checked_at: Date | null };
+      ctx.deepfakeScore = r.deepfake_score;
+      const checkedAt = r.deepfake_checked_at ? new Date(r.deepfake_checked_at).getTime() : 0;
+      ctx.deepfakeCheckRecent = checkedAt > Date.now() - 7 * 86400000;
+    }
+  } catch { /* deepfake columns may not exist yet on older migrations */ }
+
+  // Pull admin's deepfake threshold from settings (best-effort).
+  try {
+    const { getAdminSetting } = await import('./admin-settings.service');
+    const s = (await getAdminSetting('kyc_deepfake_score_threshold', '0.70')) ?? '0.70';
+    const n = parseFloat(s);
+    if (Number.isFinite(n)) ctx.deepfakeStrictness = n;
+  } catch { /* keep default */ }
+
   return ctx;
 }
 
@@ -296,6 +327,18 @@ export function signalsFromContext(ctx: UserContext): RiskSignal[] {
   if (ctx.deviceAccountCount >= 3) s.push({ code: 'device_3plus', weight: SIGNAL_WEIGHTS.device3plus, detail: `Device linked to ${ctx.deviceAccountCount} accounts` });
   if (ctx.kycDuplicate) s.push({ code: 'kyc_duplicate', weight: SIGNAL_WEIGHTS.kycDup, detail: 'Same KYC ID on another approved account' });
   if (ctx.ipIsKnownFraudster) s.push({ code: 'same_ip_fraudster', weight: SIGNAL_WEIGHTS.sameIpFraudster, detail: 'IP matches a known fraudster' });
+  // P3-2d: deepfake synthetic signal — fires only when (a) the detector
+  // has been enabled AND (b) the score is recent (within 7 days) AND
+  // (c) the score is above the admin's current threshold. Light weight
+  // (5) until block_above=true; documented as a risk-signal only.
+  if (ctx.deepfakeCheckRecent && ctx.deepfakeScore !== null &&
+      ctx.deepfakeScore >= ctx.deepfakeStrictness) {
+    s.push({
+      code: 'deepfake_score_high',
+      weight: 5,
+      detail: `kyc_deepfake_score=${ctx.deepfakeScore.toFixed(2)} ≥ threshold=${ctx.deepfakeStrictness.toFixed(2)}`,
+    });
+  }
   if (ctx.depositToClaimLatencySec !== null && ctx.depositToClaimLatencySec < 30)
     s.push({ code: 'fast_deposit_claim', weight: SIGNAL_WEIGHTS.fastDepositClaim, detail: `Deposit→claim latency ${ctx.depositToClaimLatencySec}s (<30s)` });
   if (ctx.wageringCompletionMinutes !== null && ctx.wageringCompletionMinutes < 10)
