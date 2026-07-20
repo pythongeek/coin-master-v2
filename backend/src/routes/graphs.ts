@@ -210,7 +210,7 @@ async function runMetric(metric: Metric, limit: number): Promise<AudienceMetricR
               u.risk_score, u.risk_tier, u.is_flagged
          FROM users u
          JOIN fraud_signals fs ON fs.user_id = u.id
-        WHERE fs.created_at >= $1
+        WHERE fs.detected_at >= $1
         GROUP BY u.id, u.username, u.risk_score, u.risk_tier, u.is_flagged
         ORDER BY cnt DESC
         LIMIT $2::int`,
