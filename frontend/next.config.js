@@ -3,7 +3,17 @@ const { withSentryConfig } = require('@sentry/nextjs');
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // ... existing config ...
-  output: 'standalone',
+  // P3-3a: was `output: 'standalone'` until P3-3a. Standalone uses
+  // @vercel/nft to trace which node_modules entries are imported
+  // from the static import graph, then tree-shakes the rest into a
+  // tiny image. That breaks ANY client component that is reachable
+  // only from an admin route (like d3 from the fraud panel), because
+  // the trace from app/dashboard/page.tsx stops at AdminClientShell
+  // and never reaches AdminFraudPanel -> ClusterGraphViewer -> d3.
+  // Switching to default output keeps the full node_modules shipped
+  // to the container at the cost of ~960MB image bloat — acceptable
+  // here because the existing image was already 1.4GB.
+  // output: 'standalone',
   skipTrailingSlashRedirect: true,
   transpilePackages: ['three'],
 

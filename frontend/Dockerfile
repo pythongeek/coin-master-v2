@@ -43,12 +43,19 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 # Fix permissions: write_file() creates 0600 files; non-root nextjs can't read them.
 RUN chmod -R a+rX /app/public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# P3-3a: switched from `output: 'standalone'` to default output
+# (see next.config.js comment). The standalone COPY below is now
+# replaced by copying the whole .next + node_modules + public.
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
 
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+# P3-3a: was `node server.js` for standalone build. Now we run the
+# default Next.js production server (no standalone). next start serves
+# the .next output directly from /app.
+CMD ["npx", "next", "start"]
