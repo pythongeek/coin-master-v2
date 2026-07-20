@@ -291,11 +291,34 @@ export async function scoreWithdrawalRisk(withdrawal: WithdrawalRow): Promise<Ri
     getWithdrawalHistory(withdrawal.user_id),
   ]);
 
-  // Extract IP country from metadata if stored, else use ip_address country lookup
-  const ipCountry: string | null =
+  // Extract IP country. P3-4a: prefer the live MaxMind lookup over
+  // the metadata cache so a stale cache (older than 7 days) doesn't
+  // silently mask a country change. The cache fill in is a no-op
+  // when the metadata already has a value.
+  let ipCountry: string | null =
     withdrawal.metadata?.ipCountry ||
     withdrawal.metadata?.country ||
     null;
+  if (!ipCountry && withdrawal.ip_address) {
+    try {
+      const { lookupCountry } = await import('./maxmind');
+      const rec = await lookupCountry(withdrawal.ip_address);
+      if (rec.countryCode) {
+        ipCountry = rec.countryCode;
+        // Best-effort: annotate the withdrawal metadata so future
+        // scoreWithdrawalRisk calls hit the fast path. Failure is
+        // non-fatal — the live lookup will just run again next time.
+        try {
+          await query(
+            `UPDATE transactions SET metadata = metadata || $1::jsonb
+              WHERE id = $2::uuid AND metadata IS NOT NULL`,
+            [JSON.stringify({ ipCountry: rec.countryCode, geo_provider: rec.provider }),
+             withdrawal.id],
+          );
+        } catch { /* best-effort */ }
+      }
+    } catch { /* geo lookup failure must not break withdrawal scoring */ }
+  }
 
   // Each scorer returns its own signal with weight + value
   const amount = parseFloat(String(withdrawal.amount));

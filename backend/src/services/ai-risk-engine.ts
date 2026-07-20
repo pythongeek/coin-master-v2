@@ -403,6 +403,15 @@ export async function recalculateRisk(userId: string, opts: RecalculateOptions =
       const { checkIpReputation } = await import('./ip-reputation');
       await checkIpReputation(opts.ip);
     } catch { /* best-effort — IP check failure must not break risk */ }
+
+    // P3-4a: MaxMind GeoIP2 country + KYC-mismatch signals.
+    // Writes fraud_signals rows that the existing loadUserContext()
+    // loop already knows how to ingest. Best-effort: any failure here
+    // falls through and the rule engine still scores.
+    try {
+      const { persistIpGeoSignals } = await import('./maxmind');
+      await persistIpGeoSignals(userId, opts.ip);
+    } catch { /* best-effort — geo lookup failure must not break risk */ }
   }
 
   const ctx = await loadUserContext(userId);
