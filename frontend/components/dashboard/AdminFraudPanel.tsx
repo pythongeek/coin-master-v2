@@ -13,12 +13,13 @@
  *  layout, navigation, or other panels.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight, Network, Mail } from 'lucide-react';
+import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight, Network, Mail, Activity } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { api } from '@/lib/api';
 import CopyableUid from '@/components/dashboard/CopyableUid';
 import ClusterGraphViewer from '@/components/dashboard/ClusterGraphViewer';
 import AdminFraudDigest from '@/components/dashboard/AdminFraudDigest';
+import AdminCohorts from '@/components/dashboard/AdminCohorts';
 
 interface RiskUserRow {
   id: string;
@@ -80,7 +81,7 @@ const SEVERITY_STYLES: Record<string, string> = {
 
 export default function AdminFraudPanel() {
   const token = useGameStore((s) => s.token);
-  const [activeView, setActiveView] = useState<'feed' | 'clusters' | 'alerts' | 'digest'>('feed');
+  const [activeView, setActiveView] = useState<'feed' | 'clusters' | 'alerts' | 'digest' | 'cohorts'>('feed');
   const [tierFilter, setTierFilter] = useState<string>('all');
 
   const [users, setUsers] = useState<RiskUserRow[]>([]);
@@ -209,6 +210,13 @@ export default function AdminFraudPanel() {
           className={`px-3 py-1.5 rounded-t text-sm font-mono flex items-center gap-2 ${activeView === 'digest' ? 'bg-brand-maroon text-white' : 'text-text-muted hover:text-text-primary'}`}
         >
           <Mail size={14} /> Daily Digest
+        </button>
+        {/* P3-6: Cohort Comparison sub-view */}
+        <button
+          onClick={() => setActiveView('cohorts')}
+          className={`px-3 py-1.5 rounded-t text-sm font-mono flex items-center gap-2 ${activeView === 'cohorts' ? 'bg-brand-maroon text-white' : 'text-text-muted hover:text-text-primary'}`}
+        >
+          <Activity size={14} /> Cohorts
         </button>
       </div>
 
@@ -437,6 +445,11 @@ export default function AdminFraudPanel() {
       {/* P3-5: DAILY FRAUD DIGEST SUB-VIEW */}
       {activeView === 'digest' && (
         <AdminFraudDigest />
+      )}
+
+      {/* P3-6: BEHAVIORAL COHORT COMPARISON SUB-VIEW */}
+      {activeView === 'cohorts' && (
+        <AdminCohorts />
       )}
 
       {/* ── PHASE 2.5: CLUSTER GRAPH MODAL ── */}
