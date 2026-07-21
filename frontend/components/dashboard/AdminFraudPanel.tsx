@@ -13,11 +13,12 @@
  *  layout, navigation, or other panels.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight, Network } from 'lucide-react';
+import { AlertOctagon, RefreshCw, Users, Layers, Bell, X, ChevronRight, Network, Mail } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { api } from '@/lib/api';
 import CopyableUid from '@/components/dashboard/CopyableUid';
 import ClusterGraphViewer from '@/components/dashboard/ClusterGraphViewer';
+import AdminFraudDigest from '@/components/dashboard/AdminFraudDigest';
 
 interface RiskUserRow {
   id: string;
@@ -79,7 +80,7 @@ const SEVERITY_STYLES: Record<string, string> = {
 
 export default function AdminFraudPanel() {
   const token = useGameStore((s) => s.token);
-  const [activeView, setActiveView] = useState<'feed' | 'clusters' | 'alerts'>('feed');
+  const [activeView, setActiveView] = useState<'feed' | 'clusters' | 'alerts' | 'digest'>('feed');
   const [tierFilter, setTierFilter] = useState<string>('all');
 
   const [users, setUsers] = useState<RiskUserRow[]>([]);
@@ -201,6 +202,13 @@ export default function AdminFraudPanel() {
           {severityCounts.critical > 0 && activeView !== 'alerts' && (
             <span className="px-1.5 py-0.5 rounded-full bg-brand-red/30 text-brand-red text-[10px]">{severityCounts.critical}</span>
           )}
+        </button>
+        {/* P3-5: Daily Fraud Digest sub-view */}
+        <button
+          onClick={() => setActiveView('digest')}
+          className={`px-3 py-1.5 rounded-t text-sm font-mono flex items-center gap-2 ${activeView === 'digest' ? 'bg-brand-maroon text-white' : 'text-text-muted hover:text-text-primary'}`}
+        >
+          <Mail size={14} /> Daily Digest
         </button>
       </div>
 
@@ -424,6 +432,11 @@ export default function AdminFraudPanel() {
             ))
           )}
         </div>
+      )}
+
+      {/* P3-5: DAILY FRAUD DIGEST SUB-VIEW */}
+      {activeView === 'digest' && (
+        <AdminFraudDigest />
       )}
 
       {/* ── PHASE 2.5: CLUSTER GRAPH MODAL ── */}

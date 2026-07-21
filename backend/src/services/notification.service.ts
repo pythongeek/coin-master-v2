@@ -187,11 +187,11 @@ export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailResu
     const r = await query(
       `INSERT INTO email_queue
         (recipient, recipient_kind, user_id, event_type, subject, body_html, body_text, context_json, next_attempt_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
+       VALUES ($1, $2::varchar(20), $3::uuid, $4, $5, $6, $7, $8::jsonb, NOW())
        RETURNING id`,
       [
         input.recipient,
-        input.recipient_kind || 'admin',
+        input.recipient_kind || 'admin',    // P3-5 fix: cast in SQL below; the literal is text by default
         input.user_id || null,
         input.event_type,
         subject,
@@ -200,6 +200,11 @@ export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailResu
         JSON.stringify(input.context),
       ]
     );
+    // Force the recipient_kind parameter type to match the column
+    // (varchar(20)). Without this explicit cast, Postgres infers the
+    // first argument ('admin') as text and the parameter as varchar,
+    // returning "inconsistent types deduced for parameter $2".
+    // See daily-fraud-report.ts P3-5 verification on a live stack.
     return { queued: true, queueId: r.rows[0].id };
   } catch (err: unknown) {
     // Never fail the calling code path because of an email problem

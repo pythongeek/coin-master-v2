@@ -31,6 +31,7 @@ import adminFraudRoutes from './routes/admin-fraud';
 import graphRoutes from './routes/graphs';
 import mlRoutes from './routes/ml-routes';
 import adminGeoipRoutes from './routes/admin-geoip';
+import adminFraudReportsRoutes from './routes/admin-fraud-reports';
 import { tronDepositMonitor } from './services/tron-deposit-monitor';
 import { tronMcpService } from './services/tron-mcp.service';
 import docsRoutes from './routes/docs';
@@ -211,6 +212,7 @@ app.use('/api/admin', adminFraudRoutes);
 app.use('/api/admin/graphs', graphRoutes);
 app.use('/api/admin/ml', mlRoutes);
 app.use('/api/admin/geoip', adminGeoipRoutes);
+app.use('/api/admin/fraud', adminFraudReportsRoutes);
 // OpenAPI / Swagger UI — public, no auth required
 app.use('/api', docsRoutes);
 // Prometheus metrics — public, scraped by Prometheus
@@ -320,6 +322,18 @@ async function start() {
     startEmailWorker(10_000);
   } catch (e) {
     console.warn('[boot] email worker failed to start:', e);
+  }
+
+  // Start P3-5 daily fraud digest worker. Ticks once per hour and
+  // fires sendDailyReport() if the configured send hour (default
+  // 08:00 UTC) matches the current hour. Idempotent: re-runs
+  // within the same hour hit the (report_date, report_kind) unique
+  // constraint and short-circuit.
+  try {
+    const { startDailyFraudReportWorker } = await import('./services/daily-fraud-report');
+    startDailyFraudReportWorker(60 * 60 * 1000);
+  } catch (e) {
+    console.warn('[boot] daily fraud report worker failed to start:', e);
   }
 
   // Start QR expiration worker (ticks every 60s, expires stale orders)
