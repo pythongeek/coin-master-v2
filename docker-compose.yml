@@ -91,6 +91,12 @@ services:
     #   # Uncomment for local development with hot-reload only.
     #   - ./backend:/app
     #   - /app/node_modules
+    # P3-4b: bind-mount the geoip/ directory so the MaxMind .mmdb
+    # file (downloaded by scripts/download-geoip.sh) is available
+    # inside the container. The :ro is important — we never want the
+    # container to mutate the host's geoip/ dir.
+    volumes:
+      - ./geoip:/app/geoip:ro
     depends_on:
       postgres:
         condition: service_healthy

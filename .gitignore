@@ -116,3 +116,12 @@ SSH_CONNECTION.md
 
 # ── Misc archives ──
 *.zip
+
+# ── MaxMind GeoIP2 .mmdb (P3-4b) ──
+# The MaxMind GeoLite2 license permits free download but does not
+# allow redistribution. Operators run scripts/download-geoip.sh
+# to populate this directory at deploy time. Keep the README +
+# .gitkeep so the directory ships with the repo.
+geoip/*.mmdb
+geoip/*.tar.gz
+geoip/*.zip

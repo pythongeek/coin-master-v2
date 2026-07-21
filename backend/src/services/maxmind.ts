@@ -141,6 +141,41 @@ function maybeLogOpenError(msg: string): void {
   console.warn(`[maxmind] ${msg} — falling back to geoip_lite`);
 }
 
+/**
+ * Force the in-process MaxMind reader to be re-opened on the next
+ * lookup. Used by the admin "switch provider" endpoint after it
+ * changes `geoip_mmdb_path`. Safe to call at any time; subsequent
+ * `lookupCountry()` calls will simply re-attempt `maxmind.open()`
+ * if the new path is configured.
+ *
+ * Also resets `lastOpenError` so a freshly-mounted .mmdb file is
+ * not silently hidden behind the rate-limited warning.
+ */
+export function invalidateReader(): void {
+  cachedReader = null;
+  cachedReaderPath = null;
+  lastOpenError = null;
+  lastOpenErrorLoggedAt = 0;
+}
+
+/**
+ * Read-only snapshot of the in-process cache state. Used by the
+ * admin "GeoIP status" endpoint to surface whether a real MaxMind
+ * file is loaded and whether the in-process memo is stale.
+ */
+export interface ReaderState {
+  loaded: boolean;
+  path: string | null;
+  lastError: string | null;
+}
+export function getReaderState(): ReaderState {
+  return {
+    loaded: cachedReader !== null,
+    path: cachedReaderPath,
+    lastError: lastOpenError,
+  };
+}
+
 // Default country high-risk list. Admin can override per the plan
 // (P3-4b will replace this with a DB-backed table). Codes follow
 // ISO 3166-1 alpha-2, uppercase. Source: FATF high-risk + AML
