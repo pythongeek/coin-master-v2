@@ -21,26 +21,23 @@ import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
-import { ADMIN_2FA_REQUIRED } from '../index';
+import { getAdminSettingBool } from '../services/admin-settings.service';
 import { validateBody } from '../middleware/validation';
 import { authLimiter } from '../middleware/rate-limiter';
 import {
   registerSchema,
   loginSchema,
   walletAuthSchema,
-  twoFactorVerifySchema,
-  twoFactorDisableSchema,
-  twoFactorLoginSchema,
 } from '../schemas';
-import {
-  encryptSecret,
-  decryptSecret,
-  verifyTotp,
-  generateTotpSecret,
-} from '../utils/totp';
 import { grantWelcomeBonus } from '../services/bonus';
 import { verifyWalletSignature, buildSignMessage, detectWalletType } from '../utils/wallet-signature';
 import { isIpWhitelisted } from '../services/ip-whitelist';
+import { isBlockedEmailDomain } from '../config/blocked-email-domains';
+import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
+import { recordDeviceUse } from '../services/device-fingerprint';
+import { detectSelfReferral, recordSelfReferralVerdict, SelfReferralCheck } from '../services/affiliate-guard';
+import { alertDeviceCluster, alertSelfReferral } from '../services/fraud-alerts';
+import { recalculateRisk } from '../services/ai-risk-engine';
 
 const router = Router();
 
@@ -58,13 +55,57 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       return res.status(400).json({ success: false, error: 'এই ইউজারনেম ইতিমধ্যে ব্যবহৃত।' });
     }
 
+    // ── P0-2: Disposable-email domain blocklist ──
+    // Throws away throwaway accounts that exist purely to claim the
+    // welcome bonus. Block at signup so the user exists and never
+    // gets a chance to claim. The fingerprint check below still applies.
+    if (email && isBlockedEmailDomain(email)) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, details)
+         VALUES ('fraud', 'signup.blocked.disposable_email', 'warn', $1)`,
+        [JSON.stringify({ email, ip: ipAddress })],
+      );
+      return res.status(400).json({
+        success: false,
+        error: 'Please use a permanent email address. Disposable / temporary mail providers are not allowed.',
+      });
+    }
+
     let referredById: string | null = null;
+    let selfReferralVerdict: SelfReferralCheck | null = null;
+    let shouldFlag = false;
+    let fraudDetails: string[] = [];
     if (referralCode && referralCode.trim() !== '') {
       const referrer = await query('SELECT id FROM users WHERE referral_code = $1', [referralCode]);
       if (referrer.rows.length === 0) {
-        return res.status(400).json({ success: false, error: 'প্রদত্ত রেফারেল কোডটি সঠিক নয়।' });
+        return res.status(400).json({ success: false, error: 'প্রদত্ত রেফারেল কোডটি সঠিক নয়।' });
       }
       referredById = referrer.rows[0].id;
+
+      // Phase 1.4: Self-referral detection. If the referee and referrer
+      // share device or IP, suspect self-referral. 'block' → drop the
+      // commission link; 'flag' → keep link but flag the referee.
+      try {
+        if (referredById) {
+          selfReferralVerdict = await detectSelfReferral(referredById, fingerprint, ipAddress);
+          if (selfReferralVerdict.action === 'block') {
+            // Drop the commission link silently — the referrer still has
+            // a valid code; we just don't pay out for this self-link.
+            referredById = null;
+          }
+          if (selfReferralVerdict.action === 'flag' || selfReferralVerdict.action === 'block') {
+            shouldFlag = true;
+            const detailBn = selfReferralVerdict.action === 'block'
+              ? `সেলফ-রেফারেল সন্দেহ (${selfReferralVerdict.reason}) — কমিশন লিংক বাতিল।`
+              : `সেলফ-রেফারেল সন্দেহ (${selfReferralVerdict.reason}) — নজরে রাখা হচ্ছে।`;
+            fraudDetails.push(detailBn);
+          }
+        }
+      } catch (e) {
+        // Non-fatal — best-effort detection.
+        // eslint-disable-next-line no-console
+        console.error('[signup] self-referral detect failed:', e);
+      }
     }
 
     // Generate unique referral code
@@ -79,10 +120,7 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       }
     }
 
-    // Fraud check parameters
-    let shouldFlag = false;
-    let fraudDetails: string[] = [];
-
+    // Fraud check parameters (already declared above for self-referral)
     // 1. Check duplicate fingerprint
     if (fingerprint && fingerprint.trim() !== '') {
       const dupFingerprint = await query(
@@ -96,16 +134,34 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
     }
 
     // 2. Check registration IP count in past 24 hours
-    //    (skip if IP is in admin whitelist)
+    //    P0-3 hardening: at `fraud_max_accounts_per_ip_24h` accounts from
+    //    this IP in the last 24h, the signup is BLOCKED outright (not just
+    //    flagged) so the bonus never lands. The admin can relax the cap
+    //    by editing admin_settings.fraud_max_accounts_per_ip_24h.
     const ipWhitelisted = await isIpWhitelisted(ipAddress);
     if (!ipWhitelisted && ipAddress && ipAddress !== '127.0.0.1' && ipAddress !== '::1') {
+      const ipCap = await getAdminSettingInt('fraud_max_accounts_per_ip_24h', 3, true);
       const dupIpCount = await query(
         "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
         [ipAddress]
       );
-      if (parseInt(dupIpCount.rows[0].count || '0') >= 3) {
+      const ipCount = parseInt(dupIpCount.rows[0].count || '0');
+      if (ipCount >= ipCap) {
+        // BLOCK outright (vs. existing flag-only behavior).
+        await query(
+          `INSERT INTO audit_log (category, action, severity, details)
+           VALUES ('fraud', 'signup.blocked.ip_rate_limit', 'error', $1)`,
+          [JSON.stringify({ ip: ipAddress, count: ipCount, cap: ipCap })],
+        );
+        return res.status(429).json({
+          success: false,
+          error: `Too many accounts created from this network recently (${ipCount} in last 24h). Please try again later or contact support.`,
+        });
+      }
+      if (ipCount >= ipCap - 1) {
+        // One away from cap — flag so withdrawal is gated.
         shouldFlag = true;
-        fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ৩টির বেশি অ্যাকাউন্ট তৈরি করার চেষ্টা করা হয়েছে।`);
+        fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ${ipCount}টি অ্যাকাউন্ট তৈরি করা হয়েছে (ক্যাপ ${ipCap}) — নজরে রাখা হচ্ছে।`);
       }
     }
 
@@ -131,6 +187,76 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
       );
       return grantWelcomeBonus(userId, tx as unknown as (text: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number }>);
     });
+
+    // ── Phase 1.1: Device fingerprint registry ──
+    // Record this user on the device. If the device is already linked
+    // to other accounts, flag + audit. Runs after user insert because
+    // the registry needs a userId.
+    if (fingerprint && fingerprint.trim() !== '') {
+      try {
+        const decision = await recordDeviceUse(userId, fingerprint, {
+          ua: req.headers['user-agent'] ?? null,
+          ip: ipAddress,
+        });
+        if (decision && decision.shouldFlag) {
+          shouldFlag = true;
+          fraudDetails.push(
+            `ডিভাইস ফিঙ্গারপ্রিন্ট অন্য ${decision.accountCount - 1}টি অ্যাকাউন্টের সাথে শেয়ার করা হয়েছে (trust=${decision.trustLevel})`,
+          );
+          await query(
+            `INSERT INTO audit_log (category, action, severity, user_id, details)
+             VALUES ('fraud', 'signup.flagged.device_shared', 'warn', $1, $2)`,
+            [userId, JSON.stringify({
+              device_account_count: decision.accountCount,
+              existing_user_ids: decision.existingUserIds,
+              trust_level: decision.trustLevel,
+              reason: decision.reason,
+            })],
+          );
+          // Phase 1.5: emit fraud alert (severity scales with cluster size).
+          try {
+            await alertDeviceCluster(userId, decision.fingerprintHash, decision.accountCount);
+          } catch { /* alert fan-out is best-effort */ }
+        }
+      } catch (e) {
+        // Non-fatal — the legacy users.fingerprint column still flags.
+        // eslint-disable-next-line no-console
+        console.error('[signup] device-fingerprint record failed:', e);
+      }
+    }
+
+    // Phase 2.3: IP reputation + initial risk score. The IP
+    // reputation service writes fraud_signals rows (tor / datacenter
+    // / known_fraud / proxy) that the risk engine then aggregates.
+    // Best-effort — risk computation failure must never break signup.
+    try {
+      await recalculateRisk(userId, { ip: ipAddress });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[signup] recalculateRisk failed:', e);
+    }
+
+    // Phase 1.4: drop a fraud_signals row if self-referral was detected
+    // (so Phase 1.2 risk engine can score this user up). Best-effort.
+    if (selfReferralVerdict && selfReferralVerdict.action !== 'allow') {
+      try {
+        await recordSelfReferralVerdict(userId, selfReferralVerdict);
+        // Phase 1.5: emit alert (only on block; flag is informational only).
+        if (selfReferralVerdict.action === 'block') {
+          const matchedSignals = [
+            selfReferralVerdict.signals.sameDevice && 'same_device',
+            selfReferralVerdict.signals.sameIp && 'same_ip',
+            selfReferralVerdict.signals.sameKyc && 'same_kyc',
+          ].filter(Boolean) as string[];
+          try {
+            await alertSelfReferral(userId, selfReferralVerdict.referrerId, matchedSignals);
+          } catch { /* alert fan-out is best-effort */ }
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[signup] recordSelfReferralVerdict failed:', e);
+      }
+    }
 
     // Record fraud flags
     if (shouldFlag) {
@@ -187,23 +313,33 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       return res.status(401).json({ success: false, error: 'ইউজারনেম বা পাসওয়ার্ড ভুল।' });
     }
 
-    // ২এফএ চালু থাকলে টেম্পোরারি টোকেন রিটার্ন করো
-    if (user.two_factor_enabled) {
-      const tempToken = jwt.sign(
-        { userId: user.id, username: user.username, isAdmin: user.is_admin, role: user.role, isTemp: true },
-        JWT_SECRET,
-        { expiresIn: '5m' }
-      );
-      return res.json({
-        success: true,
-        require2FA: true,
-        tempToken,
-        message: '২এফএ যাচাইকরণ প্রয়োজন।',
-      });
+    // Determine whether 2FA is required for this user.
+    const admin2faRequired = await getAdminSettingBool('admin_2fa_required', false);
+    const isAdmin = (user as any).is_admin;
+    const require2FAForThisUser = user.two_factor_enabled || (isAdmin && admin2faRequired);
+
+    if (require2FAForThisUser) {
+      // If the admin 2FA toggle is off, an admin with 2FA already configured can still
+      // log in in one shot. The toggle only forces 2FA when on.
+      if (isAdmin && !admin2faRequired) {
+        // proceed to token below
+      } else {
+        const tempToken = jwt.sign(
+          { userId: user.id, username: user.username, isAdmin: user.is_admin, role: user.role, isTemp: true },
+          JWT_SECRET,
+          { expiresIn: '5m' }
+        );
+        return res.json({
+          success: true,
+          require2FA: true,
+          tempToken,
+          message: '২এফএ যাচাইকরণ প্রয়োজন।',
+        });
+      }
     }
 
-    // Admin accounts MUST have 2FA enabled when ADMIN_2FA_REQUIRED is true.
-    if (ADMIN_2FA_REQUIRED && user.is_admin) {
+    // Admin accounts MUST have 2FA enabled when admin_2fa_required is true.
+    if (admin2faRequired && isAdmin) {
       return res.status(403).json({
         success: false,
         require2FASetup: true,
@@ -339,23 +475,31 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
 
     const u = user.rows[0];
 
-    // ২এফএ চালু থাকলে টেম্পোরারি টোকেন রিটার্ন করো
-    if (u.two_factor_enabled) {
-      const tempToken = jwt.sign(
-        { userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role, isTemp: true },
-        JWT_SECRET,
-        { expiresIn: '5m' }
-      );
-      return res.json({
-        success: true,
-        require2FA: true,
-        tempToken,
-        message: '২এফএ যাচাইকরণ প্রয়োজন।',
-      });
+    // Determine whether 2FA is required for this user.
+    const admin2faRequired = await getAdminSettingBool('admin_2fa_required', false);
+    const isAdmin = (u as any).is_admin;
+    const require2FAForThisUser = u.two_factor_enabled || (isAdmin && admin2faRequired);
+
+    if (require2FAForThisUser) {
+      if (isAdmin && !admin2faRequired) {
+        // proceed to token below
+      } else {
+        const tempToken = jwt.sign(
+          { userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role, isTemp: true },
+          JWT_SECRET,
+          { expiresIn: '5m' }
+        );
+        return res.json({
+          success: true,
+          require2FA: true,
+          tempToken,
+          message: '২এফএ যাচাইকরণ প্রয়োজন।',
+        });
+      }
     }
 
-    // Admin accounts MUST have 2FA enabled when ADMIN_2FA_REQUIRED is true.
-    if (ADMIN_2FA_REQUIRED && u.is_admin) {
+    // Admin accounts MUST have 2FA enabled when admin_2fa_required is true.
+    if (admin2faRequired && isAdmin) {
       return res.status(403).json({
         success: false,
         require2FASetup: true,
@@ -383,195 +527,6 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
   }
 });
 
-// ══════════════════════════════════════════════════════════════
-//  POST /api/auth/2fa/setup — ২এফএ সেটআপ কি জেনারেট করো
-// ══════════════════════════════════════════════════════════════
-router.post('/2fa/setup', authMiddleware, async (req: Request, res: Response) => {
-  try {
-    const { userId, username } = (req as Request & { user: AuthPayload }).user;
-
-    const userResult = await query('SELECT email FROM users WHERE id = $1', [userId]);
-    if (!userResult.rows.length) {
-      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
-    }
-
-    const email = userResult.rows[0].email || `${username}@coinmaster.internal`;
-    const { secret, otpauthUrl } = generateTotpSecret(email);
-    const encryptedSecret = encryptSecret(secret);
-
-    await query(
-      'UPDATE users SET two_factor_temp_secret = $1 WHERE id = $2',
-      [encryptedSecret, userId]
-    );
-
-    res.json({
-      success: true,
-      secret,
-      otpauthUrl,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  POST /api/auth/2fa/verify — ২এফএ সেটআপ ভেরিফাই ও এনেবল করো
-// ══════════════════════════════════════════════════════════════
-router.post('/2fa/verify', authMiddleware, validateBody(twoFactorVerifySchema), async (req: Request, res: Response) => {
-  try {
-    const { userId } = (req as Request & { user: AuthPayload }).user;
-    const { token } = req.body;
-
-    const userResult = await query(
-      'SELECT two_factor_temp_secret FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (!userResult.rows.length) {
-      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
-    }
-
-    const tempSecretEncrypted = userResult.rows[0].two_factor_temp_secret;
-    if (!tempSecretEncrypted) {
-      return res.status(400).json({ success: false, error: '২এফএ সেটআপ প্রথমে শুরু করুন।' });
-    }
-
-    const tempSecret = decryptSecret(tempSecretEncrypted);
-    const isValid = verifyTotp(tempSecret, token);
-
-    if (!isValid) {
-      return res.status(400).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
-    }
-
-    await query(
-      'UPDATE users SET two_factor_secret = two_factor_temp_secret, two_factor_enabled = true, two_factor_temp_secret = NULL WHERE id = $1',
-      [userId]
-    );
-
-    res.json({
-      success: true,
-      message: '২এফএ সফলভাবে চালু করা হয়েছে।',
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  POST /api/auth/2fa/disable — ২এফএ ডিজেবল করো
-// ══════════════════════════════════════════════════════════════
-router.post('/2fa/disable', authMiddleware, validateBody(twoFactorDisableSchema), async (req: Request, res: Response) => {
-  try {
-    const { userId } = (req as Request & { user: AuthPayload }).user;
-    const { token } = req.body;
-
-    const userResult = await query(
-      'SELECT two_factor_secret, two_factor_enabled, is_admin FROM users WHERE id = $1',
-      [userId]
-    );
-
-    if (!userResult.rows.length) {
-      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি।' });
-    }
-
-    const { two_factor_secret: secretEncrypted, two_factor_enabled: enabled, is_admin: isAdmin } = userResult.rows[0];
-    if (!enabled || !secretEncrypted) {
-      return res.status(400).json({ success: false, error: '২এফএ চালু নেই।' });
-    }
-
-    const secret = decryptSecret(secretEncrypted);
-    const isValid = verifyTotp(secret, token);
-
-    if (!isValid) {
-      return res.status(400).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
-    }
-
-    // Admin accounts cannot disable 2FA — production requirement.
-    if (isAdmin) {
-      return res.status(403).json({ success: false, error: 'Admin accounts cannot disable two-factor authentication.' });
-    }
-
-    await query(
-      'UPDATE users SET two_factor_secret = NULL, two_factor_enabled = false WHERE id = $1',
-      [userId]
-    );
-
-    res.json({
-      success: true,
-      message: '২এফএ সফলভাবে বন্ধ করা হয়েছে।',
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  POST /api/auth/2fa/login — ২এফএ কোড ভেরিফাই করে লগইন করো
-// ══════════════════════════════════════════════════════════════
-router.post('/2fa/login', authLimiter, validateBody(twoFactorLoginSchema), async (req: Request, res: Response) => {
-  try {
-    const { tempToken, token } = req.body;
-
-    let decoded: any;
-    try {
-      decoded = jwt.verify(tempToken, JWT_SECRET);
-    } catch {
-      return res.status(401).json({ success: false, error: 'টেম্পোরারি টোকেন অবৈধ বা মেয়াদোত্তীর্ণ।' });
-    }
-
-    if (!decoded.isTemp || !decoded.userId) {
-      return res.status(401).json({ success: false, error: 'টেম্পোরারি টোকেন অবৈধ।' });
-    }
-
-    const userResult = await query(
-      'SELECT id, username, balance, is_admin, role, two_factor_secret, two_factor_enabled FROM users WHERE id = $1 AND is_active = true',
-      [decoded.userId]
-    );
-
-    if (!userResult.rows.length) {
-      return res.status(404).json({ success: false, error: 'ইউজার পাওয়া যায়নি বা নিষ্ক্রিয়।' });
-    }
-
-    const user = userResult.rows[0];
-    if (!user.two_factor_enabled || !user.two_factor_secret) {
-      return res.status(400).json({ success: false, error: 'এই ইউজারের জন্য ২এফএ চালু নেই।' });
-    }
-
-    const secret = decryptSecret(user.two_factor_secret);
-    const isValid = verifyTotp(secret, token);
-
-    if (!isValid) {
-      return res.status(401).json({ success: false, error: '২এফএ কোডটি সঠিক নয়।' });
-    }
-
-    const authToken = createToken({
-      userId: user.id,
-      username: user.username,
-      isAdmin: user.is_admin,
-      role: user.role,
-    });
-
-    res.json({
-      success: true,
-      token: authToken,
-      user: {
-        userId: user.id,
-        username: user.username,
-        balance: parseFloat(user.balance),
-        isAdmin: user.is_admin,
-      },
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  GET /api/auth/me — বর্তমান ইউজারের তথ্য
 // ══════════════════════════════════════════════════════════════
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   try {

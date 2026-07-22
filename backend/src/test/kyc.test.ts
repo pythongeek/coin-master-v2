@@ -1,292 +1,127 @@
-import { Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
-import * as dbModule from '../config/database';
-import { db } from '../config/database';
-import { kycService } from '../services/kyc';
-import { getStatus, postToken, postWebhook, postSimulateSuccess, postVerifyAI, AuthRequest } from '../routes/kyc';
+import { query } from '../config/database';
+import { getKycSettings, setKycApiKey, setKycSettings, clearKycApiKey } from '../services/kyc-settings';
+import { encryptSecret, decryptSecret } from '../services/secret-vault';
+import { calculateKycRisk } from '../services/kyc-risk';
+import { submitKycVerification } from '../services/kyc-session';
 
-// Mock database state variables
-let mockKycStatus = 'unverified';
-let mockKycVerifiedAt: Date | null = null;
-let mockKycApplicantId: string | null = null;
+/**
+ * KYC Integration Test
+ *
+ * Exercises the custom MiniMax-powered KYC flow without calling the real
+ * MiniMax API.
+ */
 
-// Mock pool.query and pool.connect directly to isolate tests from running database instances
-(db as any).query = async (text: string, params?: any[]): Promise<any> => {
-  const queryStr = text.trim().replace(/\s+/g, ' ');
+process.env.KYC_SECRET_ENCRYPTION_KEY = 'kyc_test_encryption_key_that_is_32bytes!';
 
-  if (queryStr.includes('SELECT kyc_status, kyc_verified_at, kyc_applicant_id')) {
-    return {
-      rows: [{
-        kyc_status: mockKycStatus,
-        kyc_verified_at: mockKycVerifiedAt,
-        kyc_applicant_id: mockKycApplicantId
-      }]
-    };
-  }
+const testUserEmail = 'kycuser_test@example.com';
+const adminEmail = 'kycadmin_test@example.com';
 
-  if (queryStr.includes('SELECT email, username, kyc_applicant_id, kyc_status')) {
-    return {
-      rows: [{
-        email: 'test@example.com',
-        username: 'test_user',
-        kyc_applicant_id: mockKycApplicantId,
-        kyc_status: mockKycStatus
-      }]
-    };
-  }
+let userId: string;
+let adminUserId: string;
 
-  if (queryStr.includes('UPDATE users SET kyc_applicant_id = $1, kyc_status = $2')) {
-    mockKycApplicantId = params?.[0] || null;
-    mockKycStatus = params?.[1] || 'unverified';
-    return { rows: [] };
-  }
+async function setup() {
+  const userRes = await query(
+    `INSERT INTO users (username, email, password_hash, role, is_active, kyc_status)
+     VALUES ($1, $2, $3, 'user', true, 'unverified')
+     RETURNING id`,
+    ['kycuser_test', testUserEmail, 'fakehash']
+  );
+  userId = userRes.rows[0].id;
 
-  if (queryStr.includes("UPDATE users SET kyc_status = 'verified'")) {
-    mockKycStatus = 'verified';
-    mockKycVerifiedAt = new Date();
-    if (params && params.length > 0) {
-      mockKycApplicantId = params[0];
-    }
-    return { rows: [] };
-  }
-
-  if (queryStr.includes("UPDATE users SET kyc_status = 'rejected'")) {
-    mockKycStatus = 'rejected';
-    if (params && params.length > 0) {
-      mockKycApplicantId = params[0];
-    }
-    return { rows: [] };
-  }
-
-  if (queryStr.includes("UPDATE users SET kyc_status = 'pending'")) {
-    mockKycStatus = 'pending';
-    return { rows: [] };
-  }
-
-  if (queryStr.includes('UPDATE users SET kyc_status = $1, kyc_verified_at = NOW()')) {
-    mockKycStatus = params?.[0] || 'verified';
-    mockKycVerifiedAt = new Date();
-    return { rows: [] };
-  }
-
-  if (queryStr.includes('UPDATE users SET kyc_status = $1 WHERE id =')) {
-    mockKycStatus = params?.[0] || 'rejected';
-    return { rows: [] };
-  }
-
-  return { rows: [] };
-};
-
-// Mock pool connect method
-(db as any).connect = async (): Promise<any> => {
-  return {
-    query: db.query,
-    release: () => {},
-  };
-};
-(global as any).__TEST_MOCK_QUERY__ = db.query as any;
-
-// Mock Express req, res generators
-function createMockRequest(userId?: string, body: any = {}, headers: Record<string, string> = {}): AuthRequest {
-  const req = {
-    body,
-    headers,
-    user: userId ? { userId, username: 'test_user', isAdmin: false } : undefined,
-  } as unknown as AuthRequest;
-  return req;
+  const adminRes = await query(
+    `INSERT INTO users (username, email, password_hash, role, is_active, kyc_status)
+     VALUES ($1, $2, $3, 'super_admin', true, 'approved')
+     RETURNING id`,
+    ['kycadmin_test', adminEmail, 'fakehash']
+  );
+  adminUserId = adminRes.rows[0].id;
 }
 
-function createMockResponse() {
-  let statusCode = 200;
-  let jsonResponse: any = null;
-
-  const res = {
-    status(code: number) {
-      statusCode = code;
-      return this;
-    },
-    json(data: any) {
-      jsonResponse = data;
-      return this;
-    },
-  } as unknown as Response;
-
-  return {
-    res,
-    results: {
-      getStatusCode: () => statusCode,
-      getResponse: () => jsonResponse,
-    },
-  };
+async function cleanup() {
+  await query('DELETE FROM kyc_sessions WHERE user_id = $1', [userId]);
+  await query('DELETE FROM users WHERE id IN ($1, $2)', [userId, adminUserId]);
+  await clearKycApiKey().catch(() => {});
 }
+
+// Minimal base64 image (1x1 transparent PNG)
+const dummyImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
 
 async function runTests() {
-  console.log('🧪 Starting Mocked KYC Service & Routes Integration Tests...');
-  const testUserId = uuidv4();
-
   try {
-    // 1. Test KYC Service Mock Mode checks
-    console.log('\nScenario 1: Testing KYC Service Mock Mode...');
-    const isMock = kycService.isMockMode();
-    console.log(`ℹ️ KYC Service is running in Mock Mode: ${isMock}`);
-    if (isMock) {
-      const applicant = await kycService.createApplicant(testUserId, 'test@example.com');
-      if (applicant.applicantId.startsWith('mock_applicant_')) {
-        console.log('✅ Mock applicant creation succeeded.');
-      } else {
-        throw new Error('Failed to generate mock applicant ID');
-      }
+    await setup();
 
-      const token = await kycService.getAccessToken(testUserId);
-      if (token.startsWith('mock_sdk_token_')) {
-        console.log('✅ Mock access token generation succeeded.');
-      } else {
-        throw new Error('Failed to generate mock access token');
-      }
-    } else {
-      console.log('⚠️ Running in real mode. Skipping mock assertions.');
-    }
+    console.log('Scenario 1: Secret vault encrypt/decrypt');
+    const secret = 'sk-cp-...6789';
+    const encrypted = encryptSecret(secret);
+    if (encrypted === secret) throw new Error('Encryption did not change the value');
+    const decrypted = decryptSecret(encrypted);
+    if (decrypted !== secret) throw new Error('Decryption returned wrong value');
+    console.log('✅ Secret vault works');
 
-    // 2. Test GET /status route
-    console.log('\nScenario 2: Testing GET /status route handler...');
-    mockKycStatus = 'unverified';
-    mockKycApplicantId = null;
-    mockKycVerifiedAt = null;
+    console.log('Scenario 2: KYC settings default');
+    const settings = await getKycSettings();
+    if (settings.provider !== 'manual') throw new Error('Expected default provider manual');
+    if (settings.minimaxApiKeySet) throw new Error('Expected no API key by default');
+    console.log('✅ Default settings correct');
 
-    const req1 = createMockRequest(testUserId);
-    const m1 = createMockResponse();
-    await getStatus(req1, m1.res);
+    console.log('Scenario 3: Save and read MiniMax API key');
+    await setKycApiKey('sk-cp-...6789');
+    const settings2 = await getKycSettings();
+    if (!settings2.minimaxApiKeySet) throw new Error('API key should be set');
+    if (settings2.minimaxApiKey !== 'sk-cp-...6789') throw new Error('API key value mismatch');
+    console.log('✅ API key saved and encrypted');
 
-    if (m1.results.getStatusCode() === 200) {
-      const resp = m1.results.getResponse();
-      if (resp.success && resp.kycStatus === 'unverified') {
-        console.log('✅ Initial status is correctly unverified.');
-      } else {
-        throw new Error(`Unexpected status response: ${JSON.stringify(resp)}`);
-      }
-    } else {
-      throw new Error(`Status route failed with code ${m1.results.getStatusCode()}`);
-    }
+    console.log('Scenario 4: Update KYC settings');
+    await setKycSettings({ provider: 'minimax', requiredForWithdrawal: true, requiredForBetAbove: 100 });
+    const settings3 = await getKycSettings();
+    if (settings3.provider !== 'minimax') throw new Error('Provider not updated');
+    if (settings3.requiredForBetAbove !== 100) throw new Error('requiredForBetAbove not updated');
+    console.log('✅ KYC settings updated');
 
-    // 3. Test POST /token route
-    console.log('\nScenario 3: Testing POST /token route handler...');
-    const req2 = createMockRequest(testUserId);
-    const m2 = createMockResponse();
-    await postToken(req2, m2.res);
-
-    if (m2.results.getStatusCode() === 200) {
-      const resp = m2.results.getResponse();
-      if (resp.success && resp.token) {
-        console.log('✅ Token response contains access token.');
-        if (mockKycStatus === 'pending' && mockKycApplicantId) {
-          console.log('✅ User updated to pending status and applicant id registered in mock database.');
-        } else {
-          throw new Error(`User status not updated in mock DB: ${mockKycStatus}, ${mockKycApplicantId}`);
-        }
-      } else {
-        throw new Error(`Token endpoint returned error: ${JSON.stringify(resp)}`);
-      }
-    } else {
-      throw new Error(`Token route failed with code ${m2.results.getStatusCode()}`);
-    }
-
-    // 4. Test POST /verify-ai route (Mock mode verify-ai check)
-    console.log('\nScenario 4: Testing POST /verify-ai route handler...');
-    // Reset status to unverified
-    mockKycStatus = 'unverified';
-    mockKycApplicantId = null;
-
-    const req3 = createMockRequest(testUserId, {
-      document: 'data:image/jpeg;base64,mockdocdata',
-      selfie: 'data:image/jpeg;base64,mockselfiedata'
-    });
-    const m3 = createMockResponse();
-    await postVerifyAI(req3, m3.res);
-
-    if (m3.results.getStatusCode() === 200) {
-      const resp = m3.results.getResponse();
-      if (resp.success && resp.verified) {
-        console.log('✅ AI verification route handler successfully completed.');
-        if (mockKycStatus === 'verified' && mockKycApplicantId === `ai_${testUserId}`) {
-          console.log('✅ User status correctly transitioned to verified in mock DB.');
-        } else {
-          throw new Error(`User status was not updated correctly in mock DB: ${mockKycStatus}`);
-        }
-      } else {
-        throw new Error(`AI verification endpoint returned fail: ${JSON.stringify(resp)}`);
-      }
-    } else {
-      throw new Error(`AI verification route failed with code ${m3.results.getStatusCode()}`);
-    }
-
-    // 5. Test POST /simulate-success route
-    console.log('\nScenario 5: Testing POST /simulate-success route handler...');
-    // Reset status to unverified
-    mockKycStatus = 'unverified';
-    mockKycApplicantId = null;
-
-    const req5 = createMockRequest(testUserId);
-    const m5 = createMockResponse();
-    await postSimulateSuccess(req5, m5.res);
-
-    if (m5.results.getStatusCode() === 200) {
-      const resp = m5.results.getResponse();
-      if (resp.success) {
-        console.log('✅ Simulation success endpoint succeeded.');
-        if (mockKycStatus === 'verified') {
-          console.log('✅ User KYC updated to verified in the mock database.');
-        } else {
-          throw new Error('Simulation failed to update mock DB');
-        }
-      } else {
-        throw new Error(`Simulation route returned error: ${JSON.stringify(resp)}`);
-      }
-    } else {
-      // If we are in real mode, it's expected to return 403
-      if (kycService.isMockMode()) {
-        throw new Error(`Simulation route failed with code ${m5.results.getStatusCode()}`);
-      } else {
-        console.log('✅ Simulation endpoint correctly forbidden in production mode.');
-      }
-    }
-
-    // 6. Test POST /webhook route
-    console.log('\nScenario 6: Testing POST /webhook route handler...');
-    mockKycStatus = 'unverified';
-    mockKycVerifiedAt = null;
-
-    const webhookPayload = {
-      applicantId: 'mock_app_123',
-      externalUserId: testUserId,
-      reviewStatus: 'completed',
-      reviewResult: {
-        reviewAnswer: 'GREEN',
+    console.log('Scenario 5: Risk engine approves low-risk inputs');
+    const risk = calculateKycRisk({
+      minimax: {
+        document_valid: true,
+        extracted_fields: { full_name: 'John Doe', date_of_birth: '1990-01-01' },
+        face_match: true,
+        face_similarity_score: 0.95,
+        liveness_passed: true,
+        fraud_signals: ['none'],
+        sanctions_risk: 'low',
+        reasoning: 'All checks passed',
+        recommended_decision: 'APPROVED',
       },
-    };
-    const req6 = createMockRequest(undefined, webhookPayload);
-    const m6 = createMockResponse();
-    await postWebhook(req6, m6.res);
+      quality: {
+        document: { width: 1200, height: 800, format: 'jpeg', sizeBytes: 100000, brightness: 120, blurScore: 300, acceptable: true, reasons: [] },
+        selfie: { width: 1200, height: 800, format: 'jpeg', sizeBytes: 100000, brightness: 120, blurScore: 300, acceptable: true, reasons: [] },
+      },
+      sanctions: { success: true, entity_name: 'John Doe', matches: [] },
+      ocr: { text: 'John Doe', confidence: 95 },
+    });
+    if (risk.decision !== 'approved') throw new Error(`Expected approved, got ${risk.decision}`);
+    if (risk.tier !== 'LOW') throw new Error(`Expected LOW tier, got ${risk.tier}`);
+    console.log('✅ Risk engine approves clean inputs');
 
-    if (m6.results.getStatusCode() === 200) {
-      const resp = m6.results.getResponse();
-      if (resp.success) {
-        if (mockKycStatus === 'verified') {
-          console.log('✅ Webhook status update correctly processed and user is verified.');
-        } else {
-          throw new Error('User status not updated by webhook');
-        }
-      } else {
-        throw new Error(`Webhook endpoint returned error: ${JSON.stringify(resp)}`);
+    console.log('Scenario 6: KYC submission without API key fails gracefully');
+    await clearKycApiKey();
+    await setKycSettings({ provider: 'manual' });
+    try {
+      await submitKycVerification(userId, dummyImage, dummyImage);
+      throw new Error('Expected submission to fail without API key');
+    } catch (err: any) {
+      if (!err.message.includes('MiniMax API key is not configured')) {
+        throw new Error(`Unexpected error message: ${err.message}`);
       }
-    } else {
-      throw new Error(`Webhook route failed with code ${m6.results.getStatusCode()}`);
     }
+    console.log('✅ Submission fails gracefully when provider is manual');
 
-    console.log('\n🎉 All KYC integration tests passed successfully!');
+    console.log('\n🎉 All KYC tests passed!');
+    await cleanup();
     process.exit(0);
-
-  } catch (error) {
-    console.error('\n❌ Test failed with error:', error);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('\n❌ KYC test failed:', msg);
+    await cleanup().catch(() => {});
     process.exit(1);
   }
 }

@@ -98,7 +98,61 @@ export async function unlockBet(userId: string): Promise<void> {
   await redis.del(`bet_lock:${userId}`);
 }
 
-// ── Helper: Win Streak ট্র্যাক করা
+// ── Idempotency: clientRequestId dedup (industry standard for HTTP bet POST) ──
+// Returns the existing request key if already-seen (replay); otherwise sets
+// the lock and returns null. Bypassed when clientRequestId is empty/undefined.
+export async function checkBetIdempotency(userId: string, clientRequestId: string): Promise<boolean> {
+  if (!clientRequestId || clientRequestId.length < 8) return false;
+  const key = `bet_idem:${userId}:${clientRequestId}`;
+  // SET with NX (only-if-absent) and a 60s TTL — replays fall through, fast
+  const ok = await redis.set(key, '1', 'EX', 60, 'NX');
+  return ok === null; // true = already-seen (replay)
+}
+
+// ── Session cap: how many bets per rolling window per user ──
+// Industry standard: limit cumulative bet count to prevent runaway bots even
+// if individual bets are within the per-bet limits.
+export async function incrementSessionBetCount(userId: string, windowSec = 60): Promise<number> {
+  const key = `session_bets:${userId}`;
+  const n = await redis.incr(key);
+  if (n === 1) await redis.expire(key, windowSec);
+  return n;
+}
+
+// ── Per-user configurable session cap lookup ──
+export async function getSessionBetCap(): Promise<number> {
+  const v = await redis.get('config:game_session_bet_cap');
+  if (!v) return 30; // 30 bets/min default
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) && n > 0 ? n : 30;
+}
+export async function setSessionBetCap(cap: number): Promise<void> {
+  await redis.set('config:game_session_bet_cap', String(Math.max(1, cap)));
+}
+
+// ── Win-rate anomaly trip: count recent wins; flag if > X wins in Y bets ──
+// Used by the anti-bot layer; just observe, don't yet auto-flag the user
+// (this is informational for the AI risk engine to pick up).
+export async function recordSessionWin(userId: string, windowSec = 60): Promise<{ wins: number; total: number }> {
+  const key = `session_win:${userId}`;
+  const wins = await redis.incr(key);
+  if (wins === 1) await redis.expire(key, windowSec);
+  const total = await redis.incr(`session_total:${userId}`);
+  if (total === 1) await redis.expire(`session_total:${userId}`, windowSec);
+  return { wins, total };
+}
+
+// ── Reset helpers for the session counters (used by tests / admin tools) ──
+export async function resetSessionBetCount(userId: string): Promise<void> {
+  await redis.del(`session_bets:${userId}`);
+}
+
+export async function resetSessionWin(userId: string): Promise<void> {
+  await redis.del(`session_win:${userId}`);
+  await redis.del(`session_total:${userId}`);
+}
+
+// ── Win Streak ট্র্যাক করা
 export async function incrementWinStreak(userId: string): Promise<number> {
   const key = `win_streak:${userId}`;
   const count = await redis.incr(key);

@@ -15,14 +15,16 @@ import { Request, Response, NextFunction } from 'express';
  * requests).
  */
 export function csrfMiddleware(req: Request, res: Response, next: NextFunction) {
-  const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const allowedOrigins = [allowedOrigin];
-  if (process.env.TUNNEL_APP_URL) allowedOrigins.push(process.env.TUNNEL_APP_URL);
-  // Allow extra origins (comma-separated). Used for dev / external IP access.
-  if (process.env.EXTRA_ALLOWED_ORIGINS) {
-    for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
-      const t = o.trim();
-      if (t) allowedOrigins.push(t);
+  const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL;
+  const allowedOrigins: string[] = [];
+  if (allowedOrigin) allowedOrigins.push(allowedOrigin);
+  if (process.env.NODE_ENV !== 'production') {
+    if (process.env.TUNNEL_APP_URL) allowedOrigins.push(process.env.TUNNEL_APP_URL);
+    if (process.env.EXTRA_ALLOWED_ORIGINS) {
+      for (const o of process.env.EXTRA_ALLOWED_ORIGINS.split(',')) {
+        const t = o.trim();
+        if (t) allowedOrigins.push(t);
+      }
     }
   }
   // Allow any origin on the same hostname as the backend itself (different
@@ -34,6 +36,11 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction) 
   // Bypass checks for safe HTTP methods
   if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     return next();
+  }
+
+  // Fail-closed in production: mutating requests must have a known origin.
+  if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
+    return res.status(500).json({ success: false, error: 'CSRF misconfiguration: NEXT_PUBLIC_APP_URL not set.' });
   }
 
   // Same-origin is implicitly safe (browser won't strip Origin on
@@ -109,12 +116,22 @@ export const helmetConfig = {
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https://*.sumsub.com", "https://*.google.com"],
-      // Allow WebSocket connections and Sumsub APIs
+      // Allow WebSocket connections and Sumsub APIs. The backend port
+      // 4000 is publicly exposed (see docker-compose.yml `4000:4000`),
+      // and the browser connects directly to ws://<host>:4000/socket.io
+      // because the Next.js /api catch-all proxy doesn't support
+      // WebSocket upgrades. Both the wss://host (via NEXT_PUBLIC_APP_URL)
+      // and the wss://<host>:4000 (direct) variants are allowed.
       connectSrc: [
         "'self'",
-        "ws://localhost:*",
-        "wss://localhost:*",
-        "http://localhost:*",
+        ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL.replace(/^https?:\/\//, 'wss://').replace(/^http:\/\//, 'ws://')] : []),
+        ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL] : []),
+        // Direct backend connection (port 4000) — needed for socket.io
+        // since Next.js's HTTP catch-all proxy can't handle WS upgrades.
+        "ws://46.62.247.167:4000",
+        "wss://46.62.247.167:4000",
+        "http://46.62.247.167:4000",
+        "https://46.62.247.167:4000",
         "https://*.sumsub.com",
       ],
       frameSrc: ["'self'", "https://*.sumsub.com"],

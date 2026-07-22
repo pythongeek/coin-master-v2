@@ -79,6 +79,24 @@ export function setupSocketHandlers(io: SocketIOServer) {
     const user = socket.data.user as AuthPayload | null;
     const displayName = user ? user.username : `অতিথি_${socket.id.slice(0, 4)}`;
 
+    // Allow re-authenticating on an existing socket without reconnecting.
+    socket.on('auth:token', (payload: { token?: string }) => {
+      if (!payload?.token) {
+        socket.data.user = null;
+        socket.data.isGuest = true;
+        return;
+      }
+      try {
+        const decoded = jwt.verify(payload.token, JWT_SECRET) as AuthPayload;
+        socket.data.user = decoded;
+        socket.data.isGuest = false;
+        onlineUsers.set(socket.id, { userId: decoded.userId, username: decoded.username, socketId: socket.id });
+      } catch {
+        socket.data.user = null;
+        socket.data.isGuest = true;
+      }
+    });
+
     // অনলাইন তালিকায় যোগ করো
     if (user) {
       onlineUsers.set(socket.id, { userId: user.userId, username: user.username, socketId: socket.id });

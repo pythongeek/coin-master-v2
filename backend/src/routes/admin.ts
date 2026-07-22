@@ -10,6 +10,9 @@
 
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
+import { Decimal } from '@prisma/client/runtime/library';
+import { PrismaClient } from '@prisma/client';
 import {
   getConfig, updateConfig, updateAllConfig,
   resetToDefaults, CONFIG_LABELS, DEFAULT_CONFIG, GameConfig
@@ -29,6 +32,8 @@ import { getRakebackStatus, claimRakeback, getRakebackStats } from '../services/
 import { getUserChallengeProgress, claimChallengeReward, getChallengeStats, getChallengeDefinitions } from '../services/challenges';
 import { getWhitelistedIps, addIpToWhitelist, removeIpFromWhitelist } from '../services/ip-whitelist';
 import { ipWhitelistAddSchema } from '../schemas';
+
+const prisma = new PrismaClient();
 
 const router = Router();
 
@@ -118,11 +123,13 @@ router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['supe
 // ══════════════════════════════════════════════════════════════
 router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
   try {
-    const [totalBets, todayBets, totalUsers, activeRain] = await Promise.all([
+    // Add houseProfit to the admin stats response.
+    const [totalBets, todayBets, totalUsers, activeRain, houseProfit] = await Promise.all([
       query('SELECT COUNT(*) as count, SUM(amount) as volume FROM bets'),
       query("SELECT COUNT(*) as count, SUM(amount) as volume FROM bets WHERE created_at > NOW() - INTERVAL '24 hours'"),
       query('SELECT COUNT(*) as count FROM users WHERE is_active = true'),
       query("SELECT COUNT(*) as count FROM crypto_rain_events WHERE status = 'active'"),
+      query('SELECT COALESCE(SUM(amount - payout), 0) as profit FROM bets'),
     ]);
 
     res.json({
@@ -134,6 +141,7 @@ router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
         todayVolume: parseFloat(todayBets.rows[0].volume || '0'),
         totalUsers: parseInt(totalUsers.rows[0].count),
         activeRainEvents: parseInt(activeRain.rows[0].count),
+        houseProfit: parseFloat(houseProfit.rows[0].profit || '0'),
       },
     });
   } catch (err) {
@@ -659,5 +667,391 @@ router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super
     res.json({ success: true, users: result.rows });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  DEPOSIT & RATE MANAGEMENT
+// ══════════════════════════════════════════════════════════════
+
+import { customRateService } from '../services/custom-rate.service';
+import { depositService } from '../services/deposit.service';
+
+// GET /api/admin/rates — list active custom rates
+router.get('/rates', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const pair = req.query.pair as string | undefined;
+    const rates = await customRateService.listCustomRates(pair);
+    res.json({ success: true, data: rates });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// GET /api/admin/deposits/queue — pending deposit queue
+router.get('/deposits/queue', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    const queue = await prisma.depositTransaction.findMany({
+      where: { status: { in: ['rate_locked', 'awaiting_payment', 'payment_detected', 'confirming'] } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    res.json({ success: true, count: queue.length, data: queue });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/deposits/:depositId/force-complete — manually complete a deposit
+router.post('/deposits/:depositId/force-complete', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const { depositId } = req.params;
+    await depositService.confirmDeposit(depositId as string, 999);
+    res.json({ success: true, message: 'Deposit force-completed' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/deposits/expire-old — manually expire timed-out deposits
+router.post('/deposits/expire-old', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (_req: Request, res: Response) => {
+  try {
+    const count = await depositService.expireOldDeposits();
+    res.json({ success: true, count });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/rates/custom — set a custom rate override
+router.post('/rates/custom', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+  try {
+    const { pair, customRate, buySpread, sellSpread, justification, validUntil } = req.body;
+    if (!pair || !customRate || !buySpread || !sellSpread || !justification) {
+      return res.status(400).json({ success: false, error: 'pair, customRate, buySpread, sellSpread, justification required' });
+    }
+    const user = (req as Request & { user?: AuthPayload }).user;
+    if (!user?.id) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    const result = await customRateService.setCustomRate(
+      user.id,
+      pair as string,
+      new Decimal(customRate),
+      new Decimal(buySpread),
+      new Decimal(sellSpread),
+      justification as string,
+      new Date(),
+      validUntil ? new Date(validUntil) : undefined,
+      true
+    );
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// POST /api/admin/rates/revert — revert a custom rate to market
+router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+  try {
+    const { pair, justification } = req.body;
+    if (!pair || !justification) {
+      return res.status(400).json({ success: false, error: 'pair and justification required' });
+    }
+    const user = (req as Request & { user?: AuthPayload }).user;
+    if (!user?.id) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+    await customRateService.revertToMarketRate(user.id, pair, justification);
+    res.json({ success: true, message: 'Reverted to market rate' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: String(err) });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  ADMIN SETTINGS
+// ══════════════════════════════════════════════════════════════
+import { getAdminSettingBool, setAdminSetting } from '../services/admin-settings.service';
+import { creditCoins, ensureTestingWallet, TESTING_TOKEN } from '../services/testing-balance';
+import {
+  checkIpReputation, getIpReputationReport,
+  addToBlocklist, removeFromBlocklist, listBlocklist,
+} from '../services/ip-reputation';
+import mlRoutes from './ml-routes';
+
+// GET /api/admin/settings — list all admin settings
+router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const result = await query('SELECT key, value, description, updated_at FROM admin_settings ORDER BY key ASC');
+    res.json({ success: true, data: result.rows });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// PUT /api/admin/settings/bulk — update many settings in one shot.
+// Body: { updates: [{ key, value, description? }, ...] }
+// NOTE: Must come BEFORE PUT /settings/:key so Express matches the
+// literal "bulk" segment instead of treating it as a :key parameter.
+router.put('/settings/bulk', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({
+  updates: z.array(z.object({
+    key: z.string().min(1).max(120),
+    value: z.string().max(4000),
+    description: z.string().max(500).optional(),
+  })).min(1).max(50),
+})), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    const { updates } = req.body as { updates: Array<{ key: string; value: string; description?: string }> };
+    for (const u of updates) {
+      await setAdminSetting(u.key, u.value, u.description);
+    }
+    if (adminId) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('admin', 'settings.bulk_update', 'info', $1::uuid, $2::jsonb)`,
+        [adminId, JSON.stringify({ count: updates.length, keys: updates.map((u) => u.key) })],
+      );
+    }
+    res.json({ success: true, updated: updates.length });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// PUT /api/admin/settings/:key — update a setting (super_admin only)
+router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({ value: z.string() })), async (req: Request, res: Response) => {
+  try {
+    const { key } = req.params;
+    const { value } = req.body;
+    await setAdminSetting(key as string, value as string);
+    res.json({ success: true, message: 'Setting updated' });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// GET /api/admin/settings/groups — curated grouping for the UI
+// (avoids dumping every row of admin_settings into a single table).
+router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+  try {
+    // Pull every key and group by prefix.
+    const r = await query('SELECT key, value, description, updated_at FROM admin_settings ORDER BY key ASC');
+    const groups: Record<string, Array<{ key: string; value: string; description: string | null; updated_at: Date | null }>> = {
+      'Bonus & Wagering': [],
+      'Fraud Detection': [],
+      'IP Reputation': [],
+      'Deepfake KYC': [],
+      'Safety & Limits': [],
+      'Admin & Auth': [],
+      'Other': [],
+    };
+    const bucket = (k: string): string => {
+      if (k.startsWith('bonus_') || k.startsWith('wagering_')) return 'Bonus & Wagering';
+      if (k.startsWith('fraud_') || k.startsWith('velocity_') || k.startsWith('affiliate_')) return 'Fraud Detection';
+      if (k.startsWith('ip_reputation') || k.startsWith('abuseipdb') || k.startsWith('fraud_ip_')) return 'IP Reputation';
+      if (k.startsWith('kyc_deepfake_')) return 'Deepfake KYC';
+      if (k.startsWith('admin_') || k.startsWith('security_') || k.startsWith('kyc_')) return 'Admin & Auth';
+      if (k.startsWith('alert_')) return 'Fraud Detection';
+      if (k.includes('self_excl') || k.includes('limit')) return 'Safety & Limits';
+      return 'Other';
+    };
+    for (const row of r.rows as Array<{ key: string; value: string; description: string | null; updated_at: Date | null }>) {
+      groups[bucket(row.key)]!.push(row);
+    }
+    res.json({ success: true, groups });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// GET /api/admin/settings/admin-2fa-status — check if admin 2FA is required
+router.get('/settings/admin-2fa-status', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const required = await getAdminSettingBool('admin_2fa_required', false);
+    res.json({ success: true, required });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  TESTING BALANCE — quick credit for admin / smoke tests
+// ══════════════════════════════════════════════════════════════
+//
+//  POST /api/admin/testing/credit-coins
+//    body: { userId, amount, reason }
+//  POST /api/admin/testing/ensure-wallet
+//    body: { userId }
+//  GET  /api/admin/testing/wallet/:userId
+//
+//  These are explicitly for testing. They use an "INTERNAL" chain
+//  wallet (no real on-chain address, no deposit monitor) so admins
+//  can give themselves coins to smoke-test the game without needing
+//  real Binance Pay deposits. Production deposits still flow through
+//  wallet-derivation + deposit-monitor + reconciliation.
+
+router.post('/testing/credit-coins', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const body = req.body as { userId?: string; amount?: number; reason?: string };
+    if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
+    if (typeof body.amount !== 'number' || !Number.isFinite(body.amount) || body.amount <= 0) {
+      return res.status(400).json({ success: false, error: 'amount must be a positive number' });
+    }
+    if (!body.reason || body.reason.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'reason must be at least 5 characters' });
+    }
+    const result = await creditCoins(body.userId, body.amount, body.reason.trim(), adminId);
+    res.json({ success: true, result });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === 'USER_NOT_FOUND') return res.status(404).json({ success: false, error: 'User not found' });
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.post('/testing/ensure-wallet', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const body = req.body as { userId?: string };
+    if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
+    const w = await ensureTestingWallet(body.userId);
+    res.json({ success: true, walletId: w.walletId, currency: w.currency });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.get('/testing/wallet/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+  try {
+    const userId = String(req.params.userId);
+    const user = await query(
+      `SELECT id, username, balance::float8 AS balance,
+              withdrawable_balance_coins::float8 AS withdrawable,
+              bonus_balance_coins::float8 AS bonus
+         FROM users WHERE id = $1::uuid`,
+      [userId],
+    );
+    if (user.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+    const w = await ensureTestingWallet(userId);
+    const wallet = await query(
+      `SELECT id, chain, token_symbol, balance::float8 AS balance,
+              locked_balance::float8 AS locked
+         FROM wallets WHERE id = $1::uuid`,
+      [w.walletId],
+    );
+    res.json({
+      success: true,
+      user: user.rows[0],
+      wallet: wallet.rows[0] ?? null,
+      currency: TESTING_TOKEN,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  IP REPUTATION (Phase 2.3) — provider-agnostic IP risk lookup
+// ══════════════════════════════════════════════════════════════
+//
+//  GET  /api/admin/ip/check?ip=X     — live lookup, cached
+//  GET  /api/admin/ip/blocklist      — list admin-managed entries
+//  POST /api/admin/ip/blocklist      — add an IP to deny/allow
+//  DELETE /api/admin/ip/blocklist    — remove an IP entry
+//  GET  /api/admin/ip/reports        — aggregate report (cache stats,
+//                                      top abusive, recent lookups)
+
+router.get('/ip/check', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (req: Request, res: Response) => {
+  try {
+    const ip = String(req.query.ip || '').trim();
+    if (!ip) return res.status(400).json({ success: false, error: 'ip query param required' });
+    const result = await checkIpReputation(ip);
+    res.json({ success: true, result });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.get('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response) => {
+  try {
+    const rows = await listBlocklist();
+    res.json({ success: true, entries: rows, total: rows.length });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.post('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+    const body = req.body as { ip?: string; listType?: 'deny' | 'allow'; reason?: string; expiresAt?: string };
+    if (!body.ip) return res.status(400).json({ success: false, error: 'ip required' });
+    if (!body.listType || !['deny', 'allow'].includes(body.listType)) {
+      return res.status(400).json({ success: false, error: 'listType must be deny|allow' });
+    }
+    if (!body.reason || body.reason.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'reason must be at least 5 characters' });
+    }
+    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    if (expiresAt && isNaN(expiresAt.getTime())) {
+      return res.status(400).json({ success: false, error: 'expiresAt invalid' });
+    }
+    const r = await addToBlocklist(body.ip, body.listType, body.reason.trim(), adminId, expiresAt);
+    await query(
+      `INSERT INTO audit_log (category, action, severity, user_id, details)
+       VALUES ('admin', 'ip.blocklist_add', 'info', $1::uuid, $2::jsonb)`,
+      [adminId, JSON.stringify({ ip: body.ip, listType: body.listType, reason: body.reason.trim() })],
+    );
+    res.json({ success: true, id: r.id });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.delete('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  try {
+    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
+    const ip = String(req.query.ip || '').trim();
+    const listType = (req.query.listType as 'deny' | 'allow') || 'deny';
+    if (!ip) return res.status(400).json({ success: false, error: 'ip query param required' });
+    if (!['deny', 'allow'].includes(listType)) {
+      return res.status(400).json({ success: false, error: 'listType must be deny|allow' });
+    }
+    await removeFromBlocklist(ip, listType);
+    if (adminId) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('admin', 'ip.blocklist_remove', 'info', $1::uuid, $2::jsonb)`,
+        [adminId, JSON.stringify({ ip, listType })],
+      );
+    }
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+router.get('/ip/reports', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response) => {
+  try {
+    const report = await getIpReputationReport();
+    res.json({ success: true, report });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
   }
 });

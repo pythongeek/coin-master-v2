@@ -45,16 +45,16 @@ new_text, n = re.subn(
 )
 assert n == 1, f'expected exactly 1 location substitution, got {n}'
 
-# 4. Substitute ONLY the gateway token in the proxy_set_header line.
+# 4. Substitute ONLY the gateway token in the proxy_set_header lines.
 #    Marker is `proxy_set_header X-Admin-Gateway "__GATEWAY_TOKEN__";`
 #    Use a targeted regex so comments above stay clean.
 new_text, n = re.subn(
     r'X-Admin-Gateway "__GATEWAY_TOKEN__"',
     f'X-Admin-Gateway "{gateway_token}"',
     new_text,
-    count=1,
+    count=0,  # replace all occurrences (admin path + /api)
 )
-assert n == 1, f'expected exactly 1 gateway-token substitution, got {n}'
+assert n >= 2, f'expected at least 2 gateway-token substitutions, got {n}'
 
 # 5. Verify secrets do NOT leak into comment blocks
 #    (each must appear in only the directive line we just wrote)

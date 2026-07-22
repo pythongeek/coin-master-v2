@@ -25,6 +25,11 @@ const testFiles = [
   'affiliate.test.ts',
   'promo.test.ts',
   'fraud.test.ts',
+  'maxmind.test.ts',
+  'admin-geoip.test.ts',
+  'daily-fraud-report.test.ts',
+  'cohort-analysis.test.ts',
+  'game-fraud-controls.test.ts',
   'concurrency.test.ts',
 ];
 

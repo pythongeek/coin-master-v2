@@ -21,10 +21,9 @@
 import { useState, useEffect } from 'react';
 import { KeyRound, RotateCw, CheckCircle2, Lock, X, AlertTriangle } from 'lucide-react';
 
-const API =
-  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { getApiBase } from '@/lib/api/base';
+
+const API = getApiBase();
 
 export default function SeedRotationPanel() {
   const [rotating, setRotating]       = useState(false);

@@ -14,7 +14,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Lock, RotateCw, Coins, Play, Square } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
-import { getSocket } from '@/lib/socket';
+import { emitSocket } from '@/lib/socket';
 import { trackEvent } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -127,8 +127,7 @@ export default function BetControls() {
   const handleFlip = () => {
     if (!canBet || betAmount <= 0) return;
 
-    const socket = getSocket(undefined);
-    socket.emit('game:bet', {
+    emitSocket('game:bet', {
       choice: currentChoice,
       amount: betAmount,
       clientSeed,
@@ -174,8 +173,7 @@ export default function BetControls() {
       return;
     }
 
-    const socket = getSocket(undefined);
-    socket.emit('game:bet', {
+    emitSocket('game:bet', {
       choice: currentChoice,
       amount: amount,
       clientSeed,

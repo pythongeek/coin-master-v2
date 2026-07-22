@@ -1,15 +1,10 @@
 /**
  * Determine the API base URL.
  *
- * When the app is served from a non-localhost host (production or a public
- * tunnel), we route API calls through the Next.js frontend's `/api/*`
- * catch-all proxy. This avoids the browser trying to connect to
- * localhost:4000 on the user's machine.
+ * Resolved by the shared helper in ./base so all callers agree.
  */
-const BASE =
-  typeof window !== 'undefined' && !process.env.NEXT_PUBLIC_API_URL
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+import { getApiBase } from './base';
+const BASE = getApiBase();
 
 async function request(method: string, path: string, token?: string | null, body?: unknown): Promise<Record<string, any>> {
   const headers: Record<string, string> = {
@@ -27,6 +22,7 @@ async function request(method: string, path: string, token?: string | null, body
 export const api = {
   get: (path: string, token?: string | null) => request('GET', path, token),
   post: (path: string, token: string | undefined | null, body?: unknown) => request('POST', path, token, body),
+  put: (path: string, token: string | undefined | null, body?: unknown) => request('PUT', path, token, body),
   patch: (path: string, token: string | undefined | null, body?: unknown) => request('PATCH', path, token, body),
   delete: (path: string, token: string | undefined | null) => request('DELETE', path, token),
 };

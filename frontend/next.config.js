@@ -1,25 +1,31 @@
+const { withSentryConfig } = require('@sentry/nextjs');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Docker production build — small, standalone output
-  output: 'standalone',
-
-  // Disable trailing-slash redirect so nginx handles /admin internally
+  // ... existing config ...
+  // P3-3a: was `output: 'standalone'` until P3-3a. Standalone uses
+  // @vercel/nft to trace which node_modules entries are imported
+  // from the static import graph, then tree-shakes the rest into a
+  // tiny image. That breaks ANY client component that is reachable
+  // only from an admin route (like d3 from the fraud panel), because
+  // the trace from app/dashboard/page.tsx stops at AdminClientShell
+  // and never reaches AdminFraudPanel -> ClusterGraphViewer -> d3.
+  // Switching to default output keeps the full node_modules shipped
+  // to the container at the cost of ~960MB image bloat — acceptable
+  // here because the existing image was already 1.4GB.
+  // output: 'standalone',
   skipTrailingSlashRedirect: true,
-
-  // Three.js transpilation
   transpilePackages: ['three'],
 
-  // Environment variables exposed to the client bundle
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
     NEXT_PUBLIC_SOCKET_URL: process.env.NEXT_PUBLIC_SOCKET_URL,
     NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
-    // Source of truth: .admin-secret-path (chmod 600, gitignored)
     NEXT_PUBLIC_ADMIN_PATH: process.env.ADMIN_SECRET_PATH || '',
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION,
   },
 
-  // Secret admin URL rewrites
   async rewrites() {
     const secret = process.env.ADMIN_SECRET_PATH;
     if (!secret || secret === '/admin') return [];
@@ -30,11 +36,7 @@ const nextConfig = {
   },
 
   async headers() {
-    // CORS for Next.js API route proxies (/api/* on the frontend).
-    // Only the canonical app origin is trusted; dynamic origins are
-    // denied. Tunnel domains must be explicitly mounted via the
-    // upstream proxy, not added to this allowlist.
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     if (!appUrl || !appUrl.startsWith('http')) {
       throw new Error('NEXT_PUBLIC_APP_URL must be a valid http/https origin');
     }
@@ -50,7 +52,6 @@ const nextConfig = {
         ],
       },
       {
-        // Security headers for all routes
         source: '/:path*',
         headers: [
           { key: 'X-Content-Type-Options', value: 'nosniff' },
@@ -67,4 +68,17 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+const sentryWebpackPluginOptions = {
+  silent: true,
+  org: process.env.SENTRY_ORG || 'cryptoflip',
+  project: process.env.SENTRY_PROJECT || 'frontend',
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  widenClientFileUpload: true,
+  transpileClientSDKs: true,
+  tunnelRoute: '/monitoring',
+  hideSourceMaps: true,
+  disableLogger: true,
+  automaticVercelMonitors: false,
+};
+
+module.exports = withSentryConfig(nextConfig, sentryWebpackPluginOptions);

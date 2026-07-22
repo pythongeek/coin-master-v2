@@ -55,7 +55,7 @@ export default function SquadFlip() {
 
   // ── Listen for socket events ────────────────────────────────────────
   useEffect(() => {
-    const socket = getSocket(undefined);
+    const socket = getSocket();
 
     socket.on('squad:created', (info: SquadInfo) => {
       setActiveSquad(info);
@@ -90,14 +90,14 @@ export default function SquadFlip() {
   const createSquad = () => {
     if (!user) return;
     setCreating(true);
-    const socket = getSocket(undefined);
+    const socket = getSocket();
     socket.emit('squad:create', { betAmount: squadBetAmount, choice: squadChoice });
   };
 
   // ── Join squad ────────────────────────────────────────
   const joinSquad = () => {
     if (!user || !joinCode.trim()) return;
-    const socket = getSocket(undefined);
+    const socket = getSocket();
     socket.emit('squad:join', { squadId: joinCode.trim() });
   };
 
@@ -113,7 +113,7 @@ export default function SquadFlip() {
   // ── Start squad flip (creator only) ───────────────────
   const startFlip = () => {
     if (!activeSquad || flipping) return;
-    const socket = getSocket(undefined);
+    const socket = getSocket();
     socket.emit('squad:flip', { squadId: activeSquad.squadId });
   };
 

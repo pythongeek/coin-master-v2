@@ -61,7 +61,7 @@ export default function GamePage() {
 
   // ── Initialize socket + load settings ────────────────────────
   useEffect(() => {
-    getSocket(undefined);
+    getSocket();
     loadSettings();
   }, [loadSettings]);
 

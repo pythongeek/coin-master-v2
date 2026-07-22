@@ -7,11 +7,10 @@
 import { useState, useEffect } from 'react';
 import { Wallet, CloudRain, Users, Zap, ShieldCheck, Settings, RotateCcw, Calculator, Check, Loader2, type LucideIcon } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
+const API = getApiBase();
 
 // ── DEFAULT CONFIG (Backend থেকে না পেলে এটি ব্যবহার হবে) ────────
 const DEFAULTS = {

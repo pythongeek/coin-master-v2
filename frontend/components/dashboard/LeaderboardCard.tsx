@@ -7,11 +7,10 @@
 import { useState, useEffect } from "react";
 import { Trophy, Medal } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== "undefined" && !window.location.host.startsWith("localhost:") && window.location.host !== "localhost"
-    ? "/api"
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+const API = getApiBase();
 
 interface LeaderboardEntry {
   rank: number;

@@ -182,6 +182,9 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     };
 
     // ── шаг ৪: ইউজারের ব্যালেন্স চেক করো (Row Lock সহ) ──────────────────────
+    // Read the split-balance columns that the app actually uses. The legacy
+    // `balance` column is a derived sum (via trigger), so checking it alone
+    // can mask insufficiency in the individual sources.
     const userResult = await client.query(
       'SELECT balance, bonus_balance_coins, withdrawable_balance_coins, total_wagered, pending_rakeback, referred_by FROM users WHERE id = $1 AND is_active = true FOR UPDATE',
       [req.userId]
@@ -189,6 +192,8 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     if (!userResult.rows.length) throw new Error('ইউজার পাওয়া যায়নি।');
 
     const currentBalance = parseFloat(userResult.rows[0].balance);
+    const bonusBalance = parseFloat(userResult.rows[0].bonus_balance_coins || '0');
+    const withdrawableBalance = parseFloat(userResult.rows[0].withdrawable_balance_coins || '0');
     const totalWagered = parseFloat(userResult.rows[0].total_wagered || '0');
     const pendingRakeback = parseFloat(userResult.rows[0].pending_rakeback || '0');
     const referredBy = userResult.rows[0].referred_by;
@@ -203,7 +208,14 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
     ) => Promise<{ rows: any[]; rowCount: number }>;
 
     // ── ব্যালেন্স সোর্স নির্ধারণ করো এবং বেট ডেবিট করো ──
+    // Determine source first, then verify that the chosen source can actually
+    // cover the bet. This prevents a positive derived balance from masking an
+    // insufficient bonus or withdrawable sub-balance.
     const source = await determineBalanceSource(req.userId, req.amount, txClient);
+    const availableForSource = source === 'bonus' ? bonusBalance : withdrawableBalance;
+    if (availableForSource < req.amount) {
+      throw new Error(`অপর্যাপ্ত ব্যালেন্স। ${source === 'bonus' ? 'বোনাস' : 'উইথড্রযোগ্য'} ব্যালেন্স: $${availableForSource.toFixed(2)}`);
+    }
     await debitBalanceForBet(req.userId, req.amount, source, txClient);
 
     // ── Provably Fair: reserve a nonce on the global active seed ──────

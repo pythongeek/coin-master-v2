@@ -16,21 +16,24 @@
     "declarationMap": true,
     "sourceMap": true,
     "paths": {
-      "@/services/*": [
-        "./src/services/*"
-      ],
-      "@/routes/*": [
-        "./src/routes/*"
-      ],
-      "@/config/*": [
-        "./src/config/*"
-      ],
-      "@/middleware/*": [
-        "./src/middleware/*"
-      ],
-      "@/db/*": [
-        "./src/db/*"
-      ]
+      "@/services/*": ["./src/services/*"],
+      "@/routes/*": ["./src/routes/*"],
+      "@/config/*": ["./src/config/*"],
+      "@/middleware/*": ["./src/middleware/*"],
+      "@/db/*": ["./src/db/*"],
+      "@/utils/*": ["./src/utils/*"],
+      "@/jobs/*": ["./src/jobs/*"],
+      "@/scripts/*": ["./src/scripts/*"],
+      "@/controllers/*": ["./src/controllers/*"],
+      "@controllers/*": ["./src/controllers/*"],
+      "@services/*": ["./src/services/*"],
+      "@routes/*": ["./src/routes/*"],
+      "@config/*": ["./src/config/*"],
+      "@middleware/*": ["./src/middleware/*"],
+      "@db/*": ["./src/db/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@jobs/*": ["./src/jobs/*"],
+      "@scripts/*": ["./src/scripts/*"]
     }
   },
   "include": [
@@ -39,6 +42,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/db/seeds"
+    "src/db/seeds",
+    "src/test/**/*"
   ]
 }

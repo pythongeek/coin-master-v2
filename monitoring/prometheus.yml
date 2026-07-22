@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: 'cryptoflip-backend'
+    static_configs:
+      - targets: ['backend:4000']
+        labels:
+          service: 'cryptoflip-backend'
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

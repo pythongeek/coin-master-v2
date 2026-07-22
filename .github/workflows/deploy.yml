@@ -1,137 +1,42 @@
-name: Production Deploy
+name: Deploy to cx23
+
+# Deploys the freshly-built images to the cx23 production host over SSH.
+# Triggered automatically when CI passes on main, or manually via workflow_dispatch.
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (branch / SHA)'
+        required: false
+        default: 'main'
+
+concurrency:
+  group: deploy-cx23
+  cancel-in-progress: false
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: cryptoflip_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-
-    - name: Install dependencies
-      run: |
-        cd frontend && npm ci
-        cd ../backend && npm ci
-
-    - name: Run lint
-      run: |
-        cd frontend && npm run lint
-        cd ../backend && npm run lint
-      continue-on-error: true
-
-    - name: Run unit and integration tests
-      run: |
-        cd frontend && npm run test:ci
-        cd ../backend && npm run test:ci
-      env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cryptoflip_test
-        REDIS_URL: redis://localhost:6379
-        REDIS_HOST: localhost
-        REDIS_PORT: 6379
-        JWT_SECRET: testsecret
-        NODE_ENV: test
-
-  build:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Setup Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to Registry
-      uses: docker/login-action@v3
-      with:
-        registry: your-registry.com
-        username: ${{ secrets.REGISTRY_USERNAME }}
-        password: ${{ secrets.REGISTRY_PASSWORD }}
-
-    - name: Build and push frontend
-      uses: docker/build-push-action@v5
-      with:
-        context: ./frontend
-        push: true
-        tags: |
-          your-registry.com/cryptoflip-frontend:${{ github.sha }}
-          your-registry.com/cryptoflip-frontend:latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-
-    - name: Build and push backend
-      uses: docker/build-push-action@v5
-      with:
-        context: ./backend
-        push: true
-        tags: |
-          your-registry.com/cryptoflip-api:${{ github.sha }}
-          your-registry.com/cryptoflip-api:latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-
   deploy:
-    needs: build
+    name: SSH deploy
     runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.workflow_run.conclusion == 'success')
     environment: production
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
     steps:
-    - name: Setup kubectl
-      uses: azure/setup-kubectl@v3
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.CX23_SSH_KEY }}" > ~/.ssh/cx23_key
+          chmod 600 ~/.ssh/cx23_key
+          ssh-keyscan -H "${{ secrets.CX23_HOST }}" >> ~/.ssh/known_hosts
 
-    - name: Setup Helm
-      uses: azure/setup-helm@v3
-
-    - name: Deploy to Kubernetes
-      run: |
-        echo "${{ secrets.KUBECONFIG }}" | base64 -d > kubeconfig
-        export KUBECONFIG=kubeconfig
-
-        # Update image tags
-        kubectl set image deployment/cryptoflip-frontend frontend=your-registry.com/cryptoflip-frontend:${{ github.sha }} -n production
-        kubectl set image deployment/cryptoflip-api api=your-registry.com/cryptoflip-api:${{ github.sha }} -n production
-
-        # Wait for rollout
-        kubectl rollout status deployment/cryptoflip-frontend -n production
-        kubectl rollout status deployment/cryptoflip-api -n production
-
-    - name: Run smoke tests
-      run: |
-        curl -f https://yourgame.com/api/health
-        curl -f https://api.yourgame.com/health
+      - name: Deploy via ssh
+        run: |
+          ssh -i ~/.ssh/cx23_key -o StrictHostKeyChecking=accept-new \
+            "root@${{ secrets.CX23_HOST }}" \
+            "cd /root/coin-master && git fetch --all && git reset --hard origin/main && docker compose up -d --build frontend backend && sleep 8 && curl -fsS https://crazycoin.duckdns.org/api/health >/dev/null && curl -fsS https://crazycoin.duckdns.org/health >/dev/null && docker ps --format 'table {{.Names}}\t{{.Status}}'"

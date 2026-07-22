@@ -1,13 +1,19 @@
 import crypto from 'crypto';
 import { Queue, Worker, Job } from 'bullmq';
+import { logger } from '../config/logger';
 import { db, query } from '../config/database';
 import { redisConfig } from '../config/redis';
 import { reconcileUser } from './reconciliation-engine';
+import { getKycSettings } from './kyc-settings';
 
 // Configure a withdrawal Queue
 export const withdrawalQueue = new Queue('withdrawals', {
   connection: redisConfig
 });
+
+function isKycVerified(kycStatus: string): boolean {
+  return kycStatus === 'verified' || kycStatus === 'approved';
+}
 
 /**
  * Initiates a withdrawal request by performing safety checks, debited balances,
@@ -17,7 +23,8 @@ export async function requestWithdrawal(
   userId: string,
   walletId: string,
   toAddress: string,
-  amount: number
+  amount: number,
+  memo?: string
 ): Promise<{ requestId: string; status: string }> {
   // Validate basic parameters
   if (amount <= 0) {
@@ -30,7 +37,7 @@ export async function requestWithdrawal(
 
     // 1. Check user KYC and Self-exclusion
     const userResult = await client.query(
-      'SELECT kyc_status, self_excluded_until, is_active FROM users WHERE id = $1',
+      'SELECT kyc_status, kyc_tier, self_excluded_until, is_active FROM users WHERE id = $1',
       [userId]
     );
 
@@ -43,7 +50,8 @@ export async function requestWithdrawal(
       throw new Error('Account is inactive');
     }
 
-    if (user.kyc_status !== 'verified') {
+    const kycSettings = await getKycSettings();
+    if (kycSettings.requiredForWithdrawal && !isKycVerified(user.kyc_status)) {
       throw new Error('KYC verification required for withdrawals');
     }
 
@@ -63,6 +71,54 @@ export async function requestWithdrawal(
 
     const wallet = walletResult.rows[0];
     const currentBalance = Number(wallet.balance);
+
+    // S1 fix: validate destination address format before touching balance.
+    // Without this, a typo or wrong-chain address would lose the user's funds.
+    const { validateAddress } = await import('../utils/address-validator');
+    const addrCheck = validateAddress(toAddress, wallet.chain);
+    if (!addrCheck.ok) {
+      throw new Error('Invalid destination address for ' + wallet.chain + ': ' + addrCheck.error);
+    }
+
+    // KYC tier-based limits (P1 fix).
+    // Tiers: tier0 = unverified (no withdrawals); tier1 = basic; tier2 = ID; tier3 = full.
+    const tier = (user.kyc_tier || '').toLowerCase();
+    const tierLevel = tier === 'tier3' || tier === '3' ? 3 : tier === 'tier2' || tier === '2' ? 2 : tier === 'tier1' || tier === '1' ? 1 : 0;
+    if (tierLevel === 0) {
+      if (kycSettings.requiredForWithdrawal) {
+        throw new Error('KYC verification required for withdrawals. Please complete verification first.');
+      } else {
+        // Even with KYC disabled, unverified users get tight limits
+        if (amount > 50) {
+          throw new Error('Unverified users can withdraw max 50 USDT. Complete KYC to unlock higher limits.');
+        }
+      }
+    } else if (tierLevel === 1) {
+      if (amount > 50) throw new Error('Tier 1 limit: 50 USDT per withdrawal. Complete Tier 2 to increase.');
+    } else if (tierLevel === 2) {
+      if (amount > 1000) throw new Error('Tier 2 limit: 1000 USDT per withdrawal. Complete Tier 3 to increase.');
+    } else if (tierLevel === 3) {
+      if (amount > 10000) throw new Error('Tier 3 limit: 10000 USDT per withdrawal.');
+    }
+
+    // Daily limit (sum of pending + completed withdrawals today)
+    const tierDailyLimits: Record<number, number> = { 0: 50, 1: 100, 2: 5000, 3: 50000 };
+    const dailyMax = tierDailyLimits[tierLevel];
+    if (dailyMax > 0) {
+      const todayRes = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::float8 AS total
+         FROM transactions
+         WHERE user_id = $1
+           AND type = 'withdrawal'
+           AND status IN ('pending', 'confirmed')
+           AND created_at >= date_trunc('day', NOW())`,
+        [userId]
+      );
+      const todayTotal = todayRes.rows[0].total;
+      if (todayTotal + amount > dailyMax) {
+        throw new Error('Daily withdrawal limit exceeded. Used ' + todayTotal.toFixed(2) + '/' + dailyMax + ' USDT today. Tier ' + tierLevel + ' limit.');
+      }
+    }
 
     if (currentBalance < amount) {
       throw new Error('Insufficient balance');
@@ -115,7 +171,7 @@ export async function requestWithdrawal(
         user_id, wallet_id, type, amount, status, to_address, metadata, created_at
       ) VALUES ($1, $2, 'withdrawal', $3, 'pending', $4, $5, NOW())
       RETURNING id`,
-      [userId, walletId, amount, toAddress, JSON.stringify({ chain, currency })]
+      [userId, walletId, amount, toAddress, JSON.stringify({ chain, currency, memo: memo || null })]
     );
     const txId = txResult.rows[0].id;
 
@@ -153,17 +209,21 @@ export async function requestWithdrawal(
 
 // Configure and start Worker
 export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
-  const { txId, walletId, amount, chain, userId } = job.data;
+  const { txId, walletId, amount, chain, userId, toAddress } = job.data;
 
   try {
-    // 1. Simulate blockchain payout / broadcast
+    // TRON withdrawals are paid out via the MCP payout worker after admin approval.
+    if (chain === 'tron') {
+      logger.info('Skipping TRON simulation payout; will be handled by MCP payout worker after admin approval', { txId, toAddress });
+      return { success: true, handledBy: 'mcp-payout-worker' };
+    }
+
+    // 1. Simulate blockchain payout / broadcast for non-TRON chains (legacy/manual)
     let txHash: string;
     if (chain === 'ethereum') {
       txHash = '0x' + crypto.randomUUID().replace(/-/g, '') + '000000000000';
     } else if (chain === 'solana') {
       txHash = crypto.randomUUID().replace(/-/g, '') + 'sol';
-    } else if (chain === 'tron') {
-      txHash = crypto.randomUUID().replace(/-/g, '') + 'tron';
     } else {
       txHash = crypto.randomUUID().replace(/-/g, '') + 'mock';
     }

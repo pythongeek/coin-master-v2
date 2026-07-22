@@ -83,9 +83,18 @@ export async function fetchAdminUser(token: string): Promise<AdminUser | null> {
 export async function isAdminAuthorized(token: string): Promise<AdminUser | null> {
   const user = await fetchAdminUser(token);
   if (!user) return null;
-  // 2FA is mandatory for admin accounts. The backend also enforces this
-  // on login, but we double-check at the edge so a stolen JWT from a
-  // non-2FA session cannot reach the admin panel.
-  if (!user.two_factor_enabled) return null;
+  // 2FA is mandatory for admin accounts only when the admin_2fa_required toggle is on.
+  // The backend enforces this on login; we double-check at the edge so a stolen JWT
+  // from a non-2FA session cannot reach the admin panel while the toggle is on.
+  const settingRes = await fetch(`${internalApiBaseUrl()}/api/admin/settings/admin-2fa-status`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  });
+  let admin2faRequired = false;
+  if (settingRes.ok) {
+    const settingJson = await settingRes.json() as { success?: boolean; required?: boolean };
+    admin2faRequired = settingJson.required === true;
+  }
+  if (admin2faRequired && !user.two_factor_enabled) return null;
   return user;
 }

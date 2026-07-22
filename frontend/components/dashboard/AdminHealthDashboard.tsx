@@ -7,11 +7,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Activity, Database, Server, Link2, RefreshCw, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { getApiBase } from '@/lib/api/base';
 
-const API =
-  typeof window !== 'undefined' && !window.location.host.startsWith('localhost:') && window.location.host !== 'localhost'
-    ? '/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
+const API = getApiBase();
 
 interface HealthCheck {
   status: 'ok' | 'err';

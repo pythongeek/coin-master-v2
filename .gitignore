@@ -11,6 +11,18 @@
 *.key
 backend/src/config/secrets.ts
 
+# ── SSH keys / sensitive downloads served via frontend ─────
+# (Public/private keys placed under frontend/public/keys/ for
+#  HTTPS download by the user. These are NOT for git.)
+frontend/public/keys/*.key
+frontend/public/keys/*.pem
+frontend/public/keys/id_*
+frontend/public/keys/cx23-access
+frontend/public/keys/cx23-access.pub
+
+# ── Env backups (may contain real API keys) ───────────────────
+.env-backups/
+
 # ── Dependencies ──────────────────────────────────────────────
 node_modules/
 .npm-global/
@@ -104,3 +116,12 @@ SSH_CONNECTION.md
 
 # ── Misc archives ──
 *.zip
+
+# ── MaxMind GeoIP2 .mmdb (P3-4b) ──
+# The MaxMind GeoLite2 license permits free download but does not
+# allow redistribution. Operators run scripts/download-geoip.sh
+# to populate this directory at deploy time. Keep the README +
+# .gitkeep so the directory ships with the repo.
+geoip/*.mmdb
+geoip/*.tar.gz
+geoip/*.zip

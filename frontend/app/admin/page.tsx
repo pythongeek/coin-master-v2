@@ -9,10 +9,14 @@
  */
 
 import { cookies } from 'next/headers';
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 import Link from 'next/link';
 import { AlertCircle, LogOut } from 'lucide-react';
 import { isAdminAuthorized } from '@/lib/admin-server';
 import AdminClientShell from '@/components/dashboard/AdminClientShell';
+
+export const runtime = 'edge';
 
 export default async function AdminPage() {
   const cookieStore = await cookies();
@@ -24,15 +28,15 @@ export default async function AdminPage() {
       <main className="min-h-screen flex items-center justify-center p-6">
         <div className="glass-card max-w-md w-full p-6 text-center">
           <AlertCircle size={32} className="mx-auto text-brand-red mb-3" />
-          <h2 className="heading-display text-lg text-text-primary mb-2">Access denied</h2>
+          <h2 className="heading-display text-lg text-text-primary mb-2">Admin access required</h2>
           <p className="text-text-muted text-sm font-mono mb-4">
             You must be signed in as an admin to view this panel.
           </p>
           <Link
-            href="/game?login=admin"
+            href="/admin/login"
             className="inline-block btn-brand py-2 px-5 rounded-lg font-mono text-sm"
           >
-            Go to login
+            Sign in to admin
           </Link>
         </div>
       </main>
