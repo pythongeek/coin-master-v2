@@ -21,12 +21,27 @@ let currentToken: string | undefined;
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return '';
 
-  // In production we use the same host (Next.js proxy handles /socket.io -> backend).
-  // In local dev we still talk to the backend directly on :4000.
   const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  return isDev
-    ? (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000')
-    : '';
+  if (isDev) {
+    // Local dev: talk to backend directly on :4000
+    return process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
+  }
+
+  // Production: connect directly to the backend's socket.io endpoint.
+  // The Next.js /api catch-all proxy does HTTP fine but CANNOT proxy
+  // WebSocket upgrades, so the browser must connect to port 4000
+  // (which is publicly exposed at 46.62.247.167:4000 per
+  // docker-compose.yml). The CSP allows it (see
+  // backend/src/middleware/security.ts: helmetConfig.connectSrc).
+  //
+  // NEXT_PUBLIC_SOCKET_URL lets ops override the host (e.g. if you
+  // put nginx in front and route /socket.io/* there). When unset we
+  // derive http(s):// from the current page hostname + port 4000.
+  const override = (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_SOCKET_URL) || '';
+  if (override) return override;
+  const loc = window.location;
+  const proto = loc.protocol === 'https:' ? 'https' : 'http';
+  return `${proto}://${loc.hostname}:4000`;
 }
 
 function createSocket(): Socket {

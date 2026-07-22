@@ -29,6 +29,7 @@ const testFiles = [
   'admin-geoip.test.ts',
   'daily-fraud-report.test.ts',
   'cohort-analysis.test.ts',
+  'game-fraud-controls.test.ts',
   'concurrency.test.ts',
 ];
 

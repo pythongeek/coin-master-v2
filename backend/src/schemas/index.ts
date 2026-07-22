@@ -101,6 +101,13 @@ export const betSchema = z.object({
   clientSeed: z
     .string()
     .optional(),
+  // Industry-standard idempotency: a client-generated uuid that dedupes
+  // accidental double-clicks + replayed HTTP requests. Empty/undefined
+  // is allowed for backwards compatibility, but accepted as a "best-effort".
+  clientRequestId: z
+    .string()
+    .max(64, 'clientRequestId অত্যন্ত দীর্ঘ।')
+    .optional(),
   targetMultiplier: z.coerce
     .number()
     .min(1.01, 'targetMultiplier অবশ্যই ১.০১ থেকে ১,০২৭,৬০৪.৪৮ এর মধ্যে হতে হবে।')

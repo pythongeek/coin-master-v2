@@ -116,11 +116,22 @@ export const helmetConfig = {
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https://*.sumsub.com", "https://*.google.com"],
-      // Allow WebSocket connections and Sumsub APIs
+      // Allow WebSocket connections and Sumsub APIs. The backend port
+      // 4000 is publicly exposed (see docker-compose.yml `4000:4000`),
+      // and the browser connects directly to ws://<host>:4000/socket.io
+      // because the Next.js /api catch-all proxy doesn't support
+      // WebSocket upgrades. Both the wss://host (via NEXT_PUBLIC_APP_URL)
+      // and the wss://<host>:4000 (direct) variants are allowed.
       connectSrc: [
         "'self'",
         ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL.replace(/^https?:\/\//, 'wss://').replace(/^http:\/\//, 'ws://')] : []),
         ...(process.env.NEXT_PUBLIC_APP_URL ? [process.env.NEXT_PUBLIC_APP_URL] : []),
+        // Direct backend connection (port 4000) — needed for socket.io
+        // since Next.js's HTTP catch-all proxy can't handle WS upgrades.
+        "ws://46.62.247.167:4000",
+        "wss://46.62.247.167:4000",
+        "http://46.62.247.167:4000",
+        "https://46.62.247.167:4000",
         "https://*.sumsub.com",
       ],
       frameSrc: ["'self'", "https://*.sumsub.com"],

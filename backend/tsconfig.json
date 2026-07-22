@@ -42,6 +42,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/db/seeds"
+    "src/db/seeds",
+    "src/test/**/*"
   ]
 }
