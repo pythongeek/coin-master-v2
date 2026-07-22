@@ -1,7 +1,9 @@
-// CryptoFlip Service Worker — offline cache for static shell only.
+// CryptoFlip Service Worker — conservative version.
+// P3-7 / P3-7-fix bugfix: never cache Next.js dynamic chunks, to prevent
+// "stale build" 404s when a new deploy ships different chunk hashes.
 // API + WebSocket + admin never go through this SW; they need live data.
 
-const CACHE = 'cryptoflip-shell-v1';
+const CACHE = 'cryptoflip-shell-v2';
 const SHELL = ['/', '/game', '/verifier', '/bonus', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
@@ -10,6 +12,7 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
+  // Bumping CACHE to v2 + delete any older caches from prior versions.
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
@@ -27,6 +30,12 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/socket.io')) return;
   if (url.pathname.startsWith('/admin') || url.pathname.startsWith('/sysop-')) return;
   if (url.origin !== self.location.origin) return;
+
+  // CRITICAL: never cache Next.js build chunks. The browser's HTTP cache
+  // already handles content-hashed filenames correctly (each new build has
+  // a different hash, so the browser will fetch the new file). Caching
+  // them in the SW would let old builds serve 404 when chunk hashes roll.
+  if (url.pathname.startsWith('/_next/')) return;
 
   // Network-first for HTML pages (so updates land), cache-first for static
   if (req.mode === 'navigate') {

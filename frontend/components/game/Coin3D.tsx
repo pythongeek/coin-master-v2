@@ -28,6 +28,14 @@ interface CoinProps {
   gameStatus: GameStatus;
   result: CoinSide | null;
   won?: boolean | null;
+  /**
+   * Pre-spin choice (the side the user picked). When gameStatus is idle
+   * the coin should visually face this side, so the user can confirm
+   * their pick before pressing the spin button.
+   *
+   * Defaults to 'heads' (backwards-compatible with the v1 game UI).
+   */
+  currentChoice?: CoinSide | null;
 }
 
 // ─── SVG Face Components (no PNG textures needed) ──────────────
@@ -162,19 +170,32 @@ function Sparkles() {
 }
 
 // ─── 3D Coin Component (CSS transforms only) ─────────────────
-export default function Coin3D({ gameStatus, result, won }: CoinProps) {
+export default function Coin3D({ gameStatus, result, won, currentChoice = 'heads' }: CoinProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const coinRef = useRef<HTMLDivElement>(null);
 
-  // Reset animation classes when idling
+  // Reset animation classes when idling, AND apply the pre-spin
+  // orientation so the coin visually faces the user's chosen side.
   useEffect(() => {
     if (!coinRef.current) return;
     if (gameStatus === 'idle') {
-      coinRef.current.classList.remove('show-heads', 'show-tails', 'spinning');
-      // Default face when idling is heads (front-side)
-      coinRef.current.style.transform = 'rotateY(0deg)';
+      const coin = coinRef.current;
+      coin.classList.remove(
+        'show-heads', 'show-tails', 'spinning',
+        styles.preChoiceHeads || 'preChoiceHeads',
+        styles.preChoiceTails || 'preChoiceTails',
+      );
+      // Tail face is rotated -180deg from heads by CSS. When the user
+      // picks tails before spin, mirror the coin so the visible front
+      // is the TAILS side (the back face in CSS geometry).
+      const klass = currentChoice === 'tails'
+        ? (styles.preChoiceTails || 'preChoiceTails')
+        : (styles.preChoiceHeads || 'preChoiceHeads');
+      coin.classList.add(klass);
+      // Drop the inline transform override — the CSS class drives it.
+      coin.style.transform = '';
     }
-  }, [gameStatus]);
+  }, [gameStatus, currentChoice]);
 
   // Persist the landed transform after the result animation finishes.
   // Without this, the coin snaps back to the idle default because the

@@ -49,7 +49,7 @@ const Coin3D = lazy(() => import('@/components/game/Coin3D'));
 export default function GamePage() {
   const { t } = useTranslation();
   const {
-    user, gameStatus, lastResult, betHistory, onlineCount,
+    user, gameStatus, currentChoice, lastResult, betHistory, onlineCount,
     logout, loadSettings, showSettings, toggleSettings,
   } = useGameStore();
 
@@ -302,7 +302,12 @@ export default function GamePage() {
                   </div>
                 }>
                   <LightningOverlay />
-                  <Coin3D gameStatus={gameStatus} result={lastResult?.result ?? null} won={lastResult?.won ?? null} />
+                  <Coin3D
+                    gameStatus={gameStatus}
+                    result={lastResult?.result ?? null}
+                    won={lastResult?.won ?? null}
+                    currentChoice={currentChoice}
+                  />
                 </Suspense>
               </ErrorBoundary>
             </div>

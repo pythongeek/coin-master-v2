@@ -52,11 +52,32 @@ const nextConfig = {
         ],
       },
       {
+        // HTML pages (incl. /, /game, /admin/*): always revalidate.
+        // Forces the browser + any CDN/proxy to refetch on every visit so
+        // users with a stale HTML page get the latest chunk hashes quickly
+        // (no more "stale build" 404s when we ship code).
         source: '/:path*',
         headers: [
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Pragma', value: 'no-cache' },
+          { key: 'Expires', value: '0' },
+        ],
+      },
+      {
+        // Next.js build chunks / static assets: immutable (content-hashed).
+        // Browsers should NEVER revalidate these unless the URL changes.
+        source: '/_next/static/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+        ],
+      },
+      {
+        source: '/static/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=86400' },
         ],
       },
     ];

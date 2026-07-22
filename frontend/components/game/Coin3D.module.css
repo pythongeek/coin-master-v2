@@ -26,6 +26,18 @@
   transition: transform 1.6s cubic-bezier(0.15, 0.85, 0.32, 1.15);
 }
 
+/* Pre-spin (idle) — show the user's chosen face:
+   The CSS geometry has .frontSide at translateZ(5px) (heads, default
+   rotateY 0) and .backSide at rotateY(180deg) translateZ(5px) (tails).
+   To display the TAILS face when the user has picked tails before
+   spinning, we rotate the coin -180deg so the back side faces camera.
+   Note: the .pre-choice-* classes override the .showHeads/.showTails
+   keyframe transforms when applied after the spin (component removes
+   them on idle / on gameStatus change).
+*/
+.preChoiceHeads { transform: rotateY(0deg) !important; }
+.preChoiceTails { transform: rotateY(180deg) !important; }
+
 .coinSide {
   position: absolute;
   width: 100%;
