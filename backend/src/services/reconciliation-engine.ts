@@ -314,14 +314,31 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
       });
     }
 
-    // 4. Freeze account if compromised and it is currently active
+    // 4. Freeze account if compromised AND an admin has enabled auto-freeze.
+    // P3-7-fix: ledger-alert rows are written regardless (admin dashboard
+    // surfaces them). Auto-freeze is opt-in via admin_settings
+    // `reconciliation_auto_freeze` — off by default in prod so a single
+    // legacy-test mismatch doesn't lock a freshly-registered user out
+    // of the game. Set to 'true' from the admin panel if you want the
+    // old behavior of freezing on the first mismatch.
     let frozen = false;
     if (isCompromised && userRow.is_active) {
-      await client.query(
-        'UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1',
-        [userId]
-      );
-      frozen = true;
+      try {
+        const freezeSetting = await client.query(
+          "SELECT value FROM admin_settings WHERE key = 'reconciliation_auto_freeze'",
+        );
+        const freezeRaw = (freezeSetting.rows[0] as { value: string | null } | undefined)?.value;
+        const shouldFreeze = String(freezeRaw || '').toLowerCase() === 'true';
+        if (shouldFreeze) {
+          await client.query(
+            'UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1',
+            [userId],
+          );
+          frozen = true;
+        }
+      } catch {
+        // On error reading the setting, default to NO freeze (safer).
+      }
     }
 
     if (!existingClient) {
