@@ -1,3 +1,4 @@
+import { NextFunction } from 'express';
 /**
  * Phase 3 / P3-1d — Admin ML endpoints.
  *
@@ -40,7 +41,7 @@ const logJob = async (modelId: string | null, event: string,
 
 // 1. list models
 router.get('/models', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin']), async (_req, res) => {
+  roleMiddleware(['super_admin']), async (_req, res, next: NextFunction) => {
     try {
       const r = await query(
         `SELECT m.id, m.name, m.version, m.provider, m.status,
@@ -55,14 +56,13 @@ router.get('/models', adminLimiter, authMiddleware,
       );
       const active = (r.rows as Array<{ id: string; status: string }>).find((m) => m.status === 'active');
       res.json({ success: true, models: r.rows, activeModelId: active?.id ?? null });
-    } catch (err: unknown) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } catch (err: unknown) { next(err);
     }
   });
 
 // 2. register a new model row (admin hands us the metadata + on-disk path)
 router.post('/models', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const actor = AuthReq(req);
       const body = req.body as {
@@ -101,13 +101,13 @@ router.post('/models', adminLimiter, authMiddleware,
       if (msg.includes('duplicate')) {
         return res.status(409).json({ success: false, error: 'name+version already exists' });
       }
-      res.status(500).json({ success: false, error: msg });
+      next(err);
     }
   });
 
 // 3. activate
 router.post('/models/:id/activate', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const actor = AuthReq(req);
       const id = String(req.params.id);
@@ -124,14 +124,13 @@ router.post('/models/:id/activate', adminLimiter, authMiddleware,
       await clearModelCache();
       await logJob(id, 'activated', actor, { name: row.name, version: row.version });
       res.json({ success: true, activeModelId: id });
-    } catch (err: unknown) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } catch (err: unknown) { next(err);
     }
   });
 
 // 4. rollback — retire current active, promote latest uploaded.
 router.post('/models/:id/rollback', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const actor = AuthReq(req);
       const id = String(req.params.id);
@@ -153,14 +152,13 @@ router.post('/models/:id/rollback', adminLimiter, authMiddleware,
       }
       await logJob(id, 'rolled_back', actor, {});
       res.json({ success: true, rolledBackFrom: id });
-    } catch (err: unknown) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } catch (err: unknown) { next(err);
     }
   });
 
 // 5. predictions
 router.get('/predictions', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {
+  roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const userId = req.query.userId ? String(req.query.userId) : null;
       const limit = Math.min(200, Number(req.query.limit ?? 50));
@@ -182,14 +180,13 @@ router.get('/predictions', adminLimiter, authMiddleware,
       const total = (await query(`SELECT count(*)::int AS n FROM ml_predictions${userId ? ` WHERE user_id=$1::uuid` : ''}`,
         userId ? [userId] : [])).rows[0] as { n: number };
       res.json({ success: true, predictions: r.rows, total: total.n, limit, offset });
-    } catch (err: unknown) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } catch (err: unknown) { next(err);
     }
   });
 
 // 6. jobs
 router.get('/jobs', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {
+  roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const limit = Math.min(200, Number(req.query.limit ?? 50));
       const r = await query(
@@ -200,14 +197,13 @@ router.get('/jobs', adminLimiter, authMiddleware,
            LEFT JOIN ml_models m ON m.id = j.model_id
           ORDER BY j.created_at DESC LIMIT $1::int`, [limit]);
       res.json({ success: true, jobs: r.rows });
-    } catch (err: unknown) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } catch (err: unknown) { next(err);
     }
   });
 
 // 7. record a train request
 router.post('/train', adminLimiter, authMiddleware,
-  roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+  roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const actor = AuthReq(req);
       const body = req.body as { notes?: string; fromPeriod?: string; toPeriod?: string };
@@ -226,8 +222,7 @@ router.post('/train', adminLimiter, authMiddleware,
       const id = String((r.rows[0] as { id: string }).id);
       await logJob(id, 'train_requested', actor, body);
       res.json({ success: true, modelId: id, notes: 'Admin must run the notebook then POST to /admin/ml/models with file path + metrics.' });
-    } catch (err: unknown) {
-      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    } catch (err: unknown) { next(err);
     }
   });
 

@@ -19,6 +19,7 @@ import { startReconciliationLoop } from './services/reconciliation';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
+import { errorHandler, setSentryCapture } from './middleware/error-handler';
 import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
@@ -259,15 +260,15 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
-// Global error handler
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Unhandled error:', err);
-  const status = err.statusCode || err.status || 500;
-  if (sentryEnabled) {
-    Sentry.captureException(err);
-  }
-  res.status(status).json({ success: false, error: err.message || 'Internal server error' });
-});
+// Global error handler — P0-06: sanitizes all 5xx errors, never leaks
+// err.message / err.stack to clients in production. See
+// ./middleware/error-handler.ts for the full classification rules.
+if (sentryEnabled && Sentry?.captureException) {
+  setSentryCapture((err, ctx) => {
+    Sentry.captureException(err, { extra: ctx });
+  });
+}
+app.use(errorHandler);
 
 // ─── Socket.io ──────────────────────────────────────────────
 setupSocketHandlers(io);

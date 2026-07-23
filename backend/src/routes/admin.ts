@@ -1,3 +1,4 @@
+import { NextFunction } from 'express';
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ADMIN ROUTES — এডমিন API এন্ডপয়েন্ট
@@ -41,7 +42,7 @@ const router = Router();
 //  GET /api/admin/config
 //  সব বর্তমান সেটিং দেখো (লেবেল সহ)
 // ══════════════════════════════════════════════════════════════
-router.get('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const config = await getConfig();
 
@@ -70,8 +71,7 @@ router.get('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin
       configWithMeta: grouped,
       message: 'কনফিগ সফলভাবে লোড হয়েছে',
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
@@ -79,7 +79,7 @@ router.get('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin
 //  PATCH /api/admin/config
 //  একটি বা একাধিক সেটিং আপডেট করো
 // ══════════════════════════════════════════════════════════════
-router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(adminSettingsSchema), async (req: Request, res: Response) => {
+router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(adminSettingsSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const updates = req.body as Partial<GameConfig>;
 
@@ -95,8 +95,7 @@ router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_adm
       config: updatedConfig,
       message: `${Object.keys(updates).length}টি সেটিং আপডেট হয়েছে।`,
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
@@ -104,7 +103,7 @@ router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_adm
 //  POST /api/admin/config/reset
 //  সব সেটিং ডিফল্টে ফিরিয়ে দাও
 // ══════════════════════════════════════════════════════════════
-router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response) => {
+router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     await resetToDefaults();
     res.json({
@@ -112,8 +111,7 @@ router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['supe
       config: DEFAULT_CONFIG,
       message: 'সব সেটিং ডিফল্টে ফেরত গেছে।',
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
@@ -121,7 +119,7 @@ router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['supe
 //  GET /api/admin/stats
 //  লাইভ গেম স্ট্যাটিস্টিক্স
 // ══════════════════════════════════════════════════════════════
-router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     // Add houseProfit to the admin stats response.
     const [totalBets, todayBets, totalUsers, activeRain, houseProfit] = await Promise.all([
@@ -144,8 +142,7 @@ router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
         houseProfit: parseFloat(houseProfit.rows[0].profit || '0'),
       },
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
@@ -153,7 +150,7 @@ router.get('/stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin'
 //  GET /api/admin/streak-stats
 //  স্ট্রিক ল্যাডার বোনাসের লাইভ স্ট্যাটিস্টিক্স ও নিয়ন্ত্রণ
 // ══════════════════════════════════════════════════════════════
-router.get('/streak-stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/streak-stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const config = await getConfig();
     const today = new Date().toISOString().slice(0, 10);
@@ -204,8 +201,7 @@ router.get('/streak-stats', adminLimiter, authMiddleware, roleMiddleware(['super
         totalExtraPayout: parseFloat((await query("SELECT SUM(lightning_extra_payout) FROM bets WHERE created_at > NOW() - INTERVAL '24 hours'")).rows[0].sum || '0'),
       },
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
@@ -213,7 +209,7 @@ router.get('/streak-stats', adminLimiter, authMiddleware, roleMiddleware(['super
 //  POST /api/admin/streak-reset/:userId
 //  একটি নির্দিষ্ট ইউজারের স্ট্রিক ল্যাডার বোনাস রিসেট করো
 // ══════════════════════════════════════════════════════════════
-router.post('/streak-reset/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.post('/streak-reset/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = req.params.userId as string;
     const { resetWinStreak, resetStreakBonusAtRisk } = await import('../config/redis');
@@ -225,91 +221,84 @@ router.post('/streak-reset/:userId', adminLimiter, authMiddleware, roleMiddlewar
       message: 'ইউজারের স্ট্রিক ল্যাডার রিসেট হয়েছে।',
       userId,
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/achievements — অ্যাচিভমেন্ট প্ল্যাটফর্ম স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/achievements', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/achievements', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const stats = await getAchievementStats();
     res.json({ success: true, stats });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/wheel-stats — দৈনিক হুইল প্ল্যাটফর্ম স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/wheel-stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/wheel-stats', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const stats = await getWheelStats();
     res.json({ success: true, stats });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/leaderboard — ওয়েজারিং লিডারবোর্ড
 // ══════════════════════════════════════════════════════════════
-router.get('/leaderboard', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/leaderboard', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const period = (req.query.period as 'daily' | 'weekly') || 'daily';
     const entries = await getLeaderboard(period);
     const stats = await getLeaderboardStats();
     res.json({ success: true, entries, stats });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/admin/leaderboard/distribute — পুরস্কার বিতরণ
 // ══════════════════════════════════════════════════════════════
-router.post('/leaderboard/distribute', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+router.post('/leaderboard/distribute', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { period = 'daily' } = req.body as { period?: 'daily' | 'weekly' };
     const result = await distributeLeaderboardPrizes(period);
     res.json({ success: true, result });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/rakeback — প্ল্যাটফর্ম রেকব্যাক স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/rakeback', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/rakeback', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const stats = await getRakebackStats();
     res.json({ success: true, stats });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/challenges — চ্যালেঞ্জ ডেফিনিশন ও স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/challenges', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/challenges', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const definitions = await getChallengeDefinitions();
     const stats = await getChallengeStats();
     res.json({ success: true, definitions, stats });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/audit-logs — সাম্প্রতিক অডিট লগগুলো দেখাও
 // ══════════════════════════════════════════════════════════════
-router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response) => {
+router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = parseInt(req.query.offset as string) || 0;
@@ -337,15 +326,14 @@ router.get('/audit-logs', adminLimiter, authMiddleware, roleMiddleware(['super_a
         offset,
       }
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/admin/fraud-logs — প্রতারণা সনাক্তকরণ লগগুলো দেখাও
 // ══════════════════════════════════════════════════════════════
-router.get('/fraud-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (req: Request, res: Response) => {
+router.get('/fraud-logs', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = parseInt(req.query.offset as string) || 0;
@@ -371,15 +359,14 @@ router.get('/fraud-logs', adminLimiter, authMiddleware, roleMiddleware(['super_a
         offset,
       }
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/admin/users/:id/unflag — ইউজার আন-ফ্ল্যাগ করো
 // ══════════════════════════════════════════════════════════════
-router.post('/users/:id/unflag', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+router.post('/users/:id/unflag', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     await query('UPDATE users SET is_flagged = false WHERE id = $1', [id]);
@@ -394,8 +381,7 @@ router.post('/users/:id/unflag', adminLimiter, authMiddleware, roleMiddleware(['
       success: true,
       message: 'ইউজার অ্যাকাউন্টটি সফলভাবে আন-ফ্ল্যাগ করা হয়েছে।'
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -412,7 +398,7 @@ router.post('/users/:id/unflag', adminLimiter, authMiddleware, roleMiddleware(['
 //  username. Side effects: audit_log row regardless; fraud_signal
 //  row on password failure.
 // ══════════════════════════════════════════════════════════════
-router.post('/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.post('/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const { password } = req.body ?? {};
@@ -498,25 +484,23 @@ router.post('/seed/rotate', authMiddleware, roleMiddleware(['super_admin']), asy
       seedHash: newSeedHash,
       message: 'নতুন সার্ভার সিড তৈরি হয়েছে।',
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // Admin banner control
-router.get('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (_req: Request, res: Response) => {
+router.get('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await query("SELECT value FROM admin_settings WHERE key = 'global_banner'");
     const banner = result.rows[0]?.value
       ? JSON.parse(result.rows[0].value)
       : { enabled: false, type: 'info', message: '', dismissible: true };
     res.json({ success: true, banner });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
-router.patch('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+router.patch('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const banner = req.body;
     await query(
@@ -526,15 +510,14 @@ router.patch('/config/banner', adminLimiter, authMiddleware, roleMiddleware(['su
       [JSON.stringify(banner)]
     );
     res.json({ success: true, banner });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 export default router;
 
 // ── Admin self-service: password change ────────────────────────
-router.post('/change-password', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support', 'auditor']), async (req: Request, res: Response) => {
+router.post('/change-password', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const { currentPassword, newPassword } = req.body ?? {};
@@ -573,24 +556,22 @@ router.post('/change-password', adminLimiter, authMiddleware, roleMiddleware(['s
     await invalidateCache([`auth:${self.userId}`]).catch(() => {});
 
     res.json({ success: true, message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন হয়েছে।' });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ── Admin self-service: 2FA status ─────────────────────────────
-router.get('/2fa/status', authMiddleware, roleMiddleware(['super_admin', 'finance', 'support', 'auditor']), async (req: Request, res: Response) => {
+router.get('/2fa/status', authMiddleware, roleMiddleware(['super_admin', 'finance', 'support', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const result = await query('SELECT two_factor_enabled FROM users WHERE id = $1', [self.userId]);
     res.json({ success: true, enabled: result.rows[0]?.two_factor_enabled === true });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ── Admin user search (for bonus grants, support) ─────────────
-router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response) => {
+router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const q = String(req.query.q || '').trim().toLowerCase();
     if (q.length < 2) return res.status(400).json({ success: false, error: 'Query too short.' });
@@ -603,8 +584,7 @@ router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super
       [`%${q}%`]
     );
     res.json({ success: true, users: result.rows });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -613,17 +593,16 @@ router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super
 // ══════════════════════════════════════════════════════════════
 
 // GET /api/admin/ip-whitelist — List all whitelisted IPs
-router.get('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const entries = await getWhitelistedIps();
     res.json({ success: true, entries });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // POST /api/admin/ip-whitelist — Add an IP to whitelist
-router.post('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), validateBody(ipWhitelistAddSchema), async (req: Request, res: Response) => {
+router.post('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), validateBody(ipWhitelistAddSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const { ipAddress, reason } = req.body;
@@ -635,12 +614,12 @@ router.post('/ip-whitelist', adminLimiter, authMiddleware, roleMiddleware(['supe
     if (msg.includes('unique constraint') || msg.includes('duplicate')) {
       return res.status(409).json({ success: false, error: 'This IP is already whitelisted.' });
     }
-    res.status(500).json({ success: false, error: msg });
+    next(err);
   }
 });
 
 // DELETE /api/admin/ip-whitelist/:ip — Remove an IP from whitelist
-router.delete('/ip-whitelist/:ip', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response) => {
+router.delete('/ip-whitelist/:ip', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const ip = req.params.ip as string;
     const removed = await removeIpFromWhitelist(ip);
@@ -648,11 +627,10 @@ router.delete('/ip-whitelist/:ip', adminLimiter, authMiddleware, roleMiddleware(
       return res.status(404).json({ success: false, error: 'IP not found in whitelist.' });
     }
     res.json({ success: true, message: `IP ${ip} removed from whitelist.` });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
-router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response) => {
+router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'support']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const q = String(req.query.q || '').trim().toLowerCase();
     if (q.length < 2) return res.status(400).json({ success: false, error: 'Query too short.' });
@@ -665,8 +643,7 @@ router.get('/users/search', adminLimiter, authMiddleware, roleMiddleware(['super
       [`%${q}%`]
     );
     res.json({ success: true, users: result.rows });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -678,18 +655,17 @@ import { customRateService } from '../services/custom-rate.service';
 import { depositService } from '../services/deposit.service';
 
 // GET /api/admin/rates — list active custom rates
-router.get('/rates', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/rates', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const pair = req.query.pair as string | undefined;
     const rates = await customRateService.listCustomRates(pair);
     res.json({ success: true, data: rates });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // GET /api/admin/deposits/queue — pending deposit queue
-router.get('/deposits/queue', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/deposits/queue', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const queue = await prisma.depositTransaction.findMany({
       where: { status: { in: ['rate_locked', 'awaiting_payment', 'payment_detected', 'confirming'] } },
@@ -697,34 +673,31 @@ router.get('/deposits/queue', adminLimiter, authMiddleware, roleMiddleware(['sup
       take: 100,
     });
     res.json({ success: true, count: queue.length, data: queue });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // POST /api/admin/deposits/:depositId/force-complete — manually complete a deposit
-router.post('/deposits/:depositId/force-complete', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.post('/deposits/:depositId/force-complete', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { depositId } = req.params;
     await depositService.confirmDeposit(depositId as string, 999);
     res.json({ success: true, message: 'Deposit force-completed' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // POST /api/admin/deposits/expire-old — manually expire timed-out deposits
-router.post('/deposits/expire-old', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (_req: Request, res: Response) => {
+router.post('/deposits/expire-old', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const count = await depositService.expireOldDeposits();
     res.json({ success: true, count });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // POST /api/admin/rates/custom — set a custom rate override
-router.post('/rates/custom', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+router.post('/rates/custom', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { pair, customRate, buySpread, sellSpread, justification, validUntil } = req.body;
     if (!pair || !customRate || !buySpread || !sellSpread || !justification) {
@@ -746,13 +719,12 @@ router.post('/rates/custom', adminLimiter, authMiddleware, roleMiddleware(['supe
       true
     );
     res.json({ success: true, data: result });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
 // POST /api/admin/rates/revert — revert a custom rate to market
-router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response) => {
+router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { pair, justification } = req.body;
     if (!pair || !justification) {
@@ -764,8 +736,7 @@ router.post('/rates/revert', adminLimiter, authMiddleware, roleMiddleware(['supe
     }
     await customRateService.revertToMarketRate(user.id, pair, justification);
     res.json({ success: true, message: 'Reverted to market rate' });
-  } catch (err) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err) { next(err);
   }
 });
 
@@ -781,13 +752,13 @@ import {
 import mlRoutes from './ml-routes';
 
 // GET /api/admin/settings — list all admin settings
-router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/settings', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const result = await query('SELECT key, value, description, updated_at FROM admin_settings ORDER BY key ASC');
     res.json({ success: true, data: result.rows });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
@@ -801,7 +772,7 @@ router.put('/settings/bulk', adminLimiter, authMiddleware, roleMiddleware(['supe
     value: z.string().max(4000),
     description: z.string().max(500).optional(),
   })).min(1).max(50),
-})), async (req: Request, res: Response) => {
+})), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const adminId = (req as Request & { user: AuthPayload }).user?.userId;
     const { updates } = req.body as { updates: Array<{ key: string; value: string; description?: string }> };
@@ -818,12 +789,12 @@ router.put('/settings/bulk', adminLimiter, authMiddleware, roleMiddleware(['supe
     res.json({ success: true, updated: updates.length });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
 // PUT /api/admin/settings/:key — update a setting (super_admin only)
-router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({ value: z.string() })), async (req: Request, res: Response) => {
+router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), validateBody(z.object({ value: z.string() })), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { key } = req.params;
     const { value } = req.body;
@@ -831,13 +802,13 @@ router.put('/settings/:key', adminLimiter, authMiddleware, roleMiddleware(['supe
     res.json({ success: true, message: 'Setting updated' });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
 // GET /api/admin/settings/groups — curated grouping for the UI
 // (avoids dumping every row of admin_settings into a single table).
-router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     // Pull every key and group by prefix.
     const r = await query('SELECT key, value, description, updated_at FROM admin_settings ORDER BY key ASC');
@@ -866,18 +837,18 @@ router.get('/settings/groups', adminLimiter, authMiddleware, roleMiddleware(['su
     res.json({ success: true, groups });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
 // GET /api/admin/settings/admin-2fa-status — check if admin 2FA is required
-router.get('/settings/admin-2fa-status', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/settings/admin-2fa-status', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const required = await getAdminSettingBool('admin_2fa_required', false);
     res.json({ success: true, required });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
@@ -897,7 +868,7 @@ router.get('/settings/admin-2fa-status', adminLimiter, authMiddleware, roleMiddl
 //  real Binance Pay deposits. Production deposits still flow through
 //  wallet-derivation + deposit-monitor + reconciliation.
 
-router.post('/testing/credit-coins', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.post('/testing/credit-coins', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const adminId = (req as Request & { user: AuthPayload }).user?.userId;
     if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -914,11 +885,11 @@ router.post('/testing/credit-coins', adminLimiter, authMiddleware, roleMiddlewar
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === 'USER_NOT_FOUND') return res.status(404).json({ success: false, error: 'User not found' });
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
-router.post('/testing/ensure-wallet', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.post('/testing/ensure-wallet', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const body = req.body as { userId?: string };
     if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
@@ -926,11 +897,11 @@ router.post('/testing/ensure-wallet', adminLimiter, authMiddleware, roleMiddlewa
     res.json({ success: true, walletId: w.walletId, currency: w.currency });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
-router.get('/testing/wallet/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/testing/wallet/:userId', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = String(req.params.userId);
     const user = await query(
@@ -956,7 +927,7 @@ router.get('/testing/wallet/:userId', adminLimiter, authMiddleware, roleMiddlewa
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
@@ -971,7 +942,7 @@ router.get('/testing/wallet/:userId', adminLimiter, authMiddleware, roleMiddlewa
 //  GET  /api/admin/ip/reports        — aggregate report (cache stats,
 //                                      top abusive, recent lookups)
 
-router.get('/ip/check', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (req: Request, res: Response) => {
+router.get('/ip/check', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const ip = String(req.query.ip || '').trim();
     if (!ip) return res.status(400).json({ success: false, error: 'ip query param required' });
@@ -979,21 +950,21 @@ router.get('/ip/check', adminLimiter, authMiddleware, roleMiddleware(['super_adm
     res.json({ success: true, result });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
-router.get('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response) => {
+router.get('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rows = await listBlocklist();
     res.json({ success: true, entries: rows, total: rows.length });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
-router.post('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.post('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const adminId = (req as Request & { user: AuthPayload }).user?.userId;
     if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -1018,11 +989,11 @@ router.post('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['supe
     res.json({ success: true, id: r.id });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
-router.delete('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response) => {
+router.delete('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const adminId = (req as Request & { user: AuthPayload }).user?.userId;
     const ip = String(req.query.ip || '').trim();
@@ -1042,16 +1013,16 @@ router.delete('/ip/blocklist', adminLimiter, authMiddleware, roleMiddleware(['su
     res.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });
 
-router.get('/ip/reports', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response) => {
+router.get('/ip/reports', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor', 'support']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const report = await getIpReputationReport();
     res.json({ success: true, report });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
+    next(err);
   }
 });

@@ -1,3 +1,4 @@
+import { NextFunction } from 'express';
 /**
  * =============================================================
  *  ADMIN EMAIL ROUTES - manage recipients + templates + queue
@@ -42,7 +43,7 @@ router.use(adminMiddleware);
 //  RECIPIENTS
 // =============================================================
 
-router.get('/recipients', async (_req: Request, res: Response) => {
+router.get('/recipients', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const r = await query(
       `SELECT id, email, display_name, role, is_enabled,
@@ -54,12 +55,11 @@ router.get('/recipients', async (_req: Request, res: Response) => {
        ORDER BY email ASC`
     );
     res.json({ success: true, recipients: r.rows });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
-router.post('/recipients', async (req: Request, res: Response) => {
+router.post('/recipients', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { email, display_name, role, is_enabled, notes, toggles } = req.body || {};
     if (!email || !email.includes('@')) {
@@ -114,12 +114,11 @@ router.post('/recipients', async (req: Request, res: Response) => {
     const m = err instanceof Error ? err.message : String(err);
     if (m.includes('duplicate key')) {
       return res.status(409).json({ success: false, error: 'Email already exists' });
-    }
-    res.status(500).json({ success: false, error: m });
+    } next(err);
   }
 });
 
-router.patch('/recipients/:id', async (req: Request, res: Response) => {
+router.patch('/recipients/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = parseInt(String(req.params.id), 10);
     const body = req.body || {};
@@ -150,12 +149,11 @@ router.patch('/recipients/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Recipient not found' });
     }
     res.json({ success: true, recipient: r.rows[0] });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
-router.delete('/recipients/:id', async (req: Request, res: Response) => {
+router.delete('/recipients/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = parseInt(String(req.params.id), 10);
     const r = await query(`DELETE FROM admin_email_config WHERE id = $1`, [id]);
@@ -163,8 +161,7 @@ router.delete('/recipients/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Recipient not found' });
     }
     res.json({ success: true });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -172,7 +169,7 @@ router.delete('/recipients/:id', async (req: Request, res: Response) => {
 //  TEMPLATES
 // =============================================================
 
-router.get('/templates', async (_req: Request, res: Response) => {
+router.get('/templates', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const r = await query(
       `SELECT id, event_type, display_name, subject_template, body_html_template, body_text_template,
@@ -180,12 +177,11 @@ router.get('/templates', async (_req: Request, res: Response) => {
        FROM admin_email_templates ORDER BY event_type`
     );
     res.json({ success: true, templates: r.rows });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
-router.patch('/templates/:event', async (req: Request, res: Response) => {
+router.patch('/templates/:event', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const event = String(req.params.event);
     const body = req.body || {};
@@ -211,13 +207,12 @@ router.patch('/templates/:event', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Template not found' });
     }
     res.json({ success: true, template: r.rows[0] });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // Preview template with sample data
-router.post('/templates/:event/preview', async (req: Request, res: Response) => {
+router.post('/templates/:event/preview', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const event = String(req.params.event);
     const context = req.body?.context || {};
@@ -238,8 +233,7 @@ router.post('/templates/:event/preview', async (req: Request, res: Response) => 
         body_text: renderTemplate(tpl.body_text_template, context),
       },
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -247,7 +241,7 @@ router.post('/templates/:event/preview', async (req: Request, res: Response) => 
 //  QUEUE
 // =============================================================
 
-router.get('/queue', async (req: Request, res: Response) => {
+router.get('/queue', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const status = String(req.query.status || 'all');
     const event = String(req.query.event || '');
@@ -280,12 +274,11 @@ router.get('/queue', async (req: Request, res: Response) => {
       `SELECT status, COUNT(*)::int AS count FROM email_queue GROUP BY status`
     );
     res.json({ success: true, queue: r.rows, stats: stats.rows });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
-router.post('/queue/:id/retry', async (req: Request, res: Response) => {
+router.post('/queue/:id/retry', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = parseInt(String(req.params.id), 10);
     const r = await query(
@@ -300,18 +293,16 @@ router.post('/queue/:id/retry', async (req: Request, res: Response) => {
     // Try draining immediately so the user sees feedback fast
     drainEmailQueue().catch(() => { /* silent */ });
     res.json({ success: true, id: r.rows[0].id, status: r.rows[0].status });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // Manual drain trigger
-router.post('/queue/drain', async (_req: Request, res: Response) => {
+router.post('/queue/drain', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const stats = await drainEmailQueue();
     res.json({ success: true, ...stats });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -319,7 +310,7 @@ router.post('/queue/drain', async (_req: Request, res: Response) => {
 //  TEST EMAIL + SMTP STATUS
 // =============================================================
 
-router.post('/test', async (req: Request, res: Response) => {
+router.post('/test', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const recipient = String(req.body?.recipient || '');
     if (!recipient.includes('@')) {
@@ -345,12 +336,11 @@ router.post('/test', async (req: Request, res: Response) => {
       html: '<div style="font-family:system-ui;max-width:600px;margin:0 auto;padding:24px;background:#0a0a0a;color:#fafafa;border-radius:12px"><h1 style="color:#22c55e">Test email OK</h1><p>SMTP is working correctly. Sent from CryptoFlip admin panel.</p><p style="color:#888;font-size:12px">' + new Date().toISOString() + '</p></div>',
     });
     res.json({ success: true, sent: true, recipient });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
-router.get('/smtp-status', async (_req: Request, res: Response) => {
+router.get('/smtp-status', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const cfg = getSmtpConfig();
     if (!cfg) {
@@ -366,8 +356,7 @@ router.get('/smtp-status', async (_req: Request, res: Response) => {
       fromName: cfg.fromName,
       auth: cfg.user ? 'configured' : 'none',
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 

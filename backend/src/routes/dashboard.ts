@@ -1,3 +1,4 @@
+import { NextFunction } from 'express';
 /**
  * ═══════════════════════════════════════════════════════════════
  *  DASHBOARD ROUTES — ইউজার ও এডমিন ড্যাশবোর্ড API
@@ -32,7 +33,7 @@ const router = Router();
 //  GET /api/dashboard/stats/:userId — ইউজারের পরিসংখ্যান
 //  C1 FIX: ownership guard — must be self OR admin.
 // ══════════════════════════════════════════════════════════════
-router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userIdParam = req.params.userId as string;
     const self = (req as Request & { user: AuthPayload }).user;
@@ -155,8 +156,7 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
       success: true,
       data,
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -164,7 +164,7 @@ router.get('/stats/:userId', authMiddleware, async (req: Request, res: Response)
 //  GET /api/dashboard/chart/:userId — দৈনিক P&L চার্ট ডেটা
 //  শেষ ৩০ দিনের প্রতিদিনের লাভ/লোকসান
 // ══════════════════════════════════════════════════════════════
-router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userId } = req.params;
     // C1 FIX: ownership guard.
@@ -206,15 +206,14 @@ router.get('/chart/:userId', authMiddleware, async (req: Request, res: Response)
     });
 
     res.json({ success: true, data: withCumulative });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/history/:userId — বেট ইতিহাস
 // ══════════════════════════════════════════════════════════════
-router.get('/history/:userId', authMiddleware, async (req: Request, res: Response) => {
+router.get('/history/:userId', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userId } = req.params;
     // C1 FIX: ownership guard.
@@ -248,15 +247,14 @@ router.get('/history/:userId', authMiddleware, async (req: Request, res: Respons
         totalPages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
       },
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/admin/live — লাইভ প্ল্যাটফর্ম স্ট্যাটস
 // ══════════════════════════════════════════════════════════════
-router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const cacheKey = 'cache:stats:active';
     const data = await getOrSet(cacheKey, 15, async () => {
@@ -296,15 +294,14 @@ router.get('/admin/live', authMiddleware, roleMiddleware(['super_admin', 'suppor
       success: true,
       data,
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/admin/users — সব ইউজারের তালিকা
 // ══════════════════════════════════════════════════════════════
-router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response) => {
+router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'support', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const page  = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
@@ -354,15 +351,14 @@ router.get('/admin/users', authMiddleware, roleMiddleware(['super_admin', 'suppo
         totalPages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
       },
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  PATCH /api/dashboard/admin/users/:id — ইউজার ফ্রিজ/আনফ্রিজ
 // ══════════════════════════════════════════════════════════════
-router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin']), validateBody(adminUserUpdateSchema), async (req: Request, res: Response) => {
+router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin']), validateBody(adminUserUpdateSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const { status: userStatus, balance } = req.body;
@@ -398,8 +394,7 @@ router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin'])
       success: true,
       message: userStatus === 'suspended' || userStatus === 'banned' ? 'ইউজার ফ্রিজ করা হয়েছে।' : 'ইউজার আনফ্রিজ করা হয়েছে।',
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -411,20 +406,19 @@ router.patch('/admin/users/:id', authMiddleware, roleMiddleware(['super_admin'])
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/wheel — দৈনিক হুইল স্ট্যাটাস
 // ══════════════════════════════════════════════════════════════
-router.get('/wheel', authMiddleware, async (req: Request, res: Response) => {
+router.get('/wheel', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const status = await getWheelStatus(self.userId);
     res.json({ success: true, data: status });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/dashboard/wheel/spin — দৈনিক হুইল স্পিন করো
 // ══════════════════════════════════════════════════════════════
-router.post('/wheel/spin', authMiddleware, validateBody(wheelSpinSchema), async (req: Request, res: Response) => {
+router.post('/wheel/spin', authMiddleware, validateBody(wheelSpinSchema), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const { clientSeed } = req.body;
@@ -438,35 +432,33 @@ router.post('/wheel/spin', authMiddleware, validateBody(wheelSpinSchema), async 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/leaderboard — ইউজারের জন্য লিডারবোর্ড
 // ══════════════════════════════════════════════════════════════
-router.get('/leaderboard', authMiddleware, async (req: Request, res: Response) => {
+router.get('/leaderboard', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const period = (req.query.period as 'daily' | 'weekly') || 'daily';
     const entries = await getLeaderboard(period);
     const position = await getLeaderboardPosition(self.userId, period);
     res.json({ success: true, data: { entries, position } });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/rakeback — ইউজারের রেকব্যাক স্ট্যাটাস
 // ══════════════════════════════════════════════════════════════
-router.get('/rakeback', authMiddleware, async (req: Request, res: Response) => {
+router.get('/rakeback', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const status = await getRakebackStatus(self.userId);
     res.json({ success: true, data: status });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/dashboard/rakeback/claim — রেকব্যাক ক্লেইম
 // ══════════════════════════════════════════════════════════════
-router.post('/rakeback/claim', authMiddleware, async (req: Request, res: Response) => {
+router.post('/rakeback/claim', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const status = await claimRakeback(self.userId);
@@ -479,20 +471,19 @@ router.post('/rakeback/claim', authMiddleware, async (req: Request, res: Respons
 // ══════════════════════════════════════════════════════════════
 //  GET /api/dashboard/challenges — ইউজারের চ্যালেঞ্জ প্রোগ্রেস
 // ══════════════════════════════════════════════════════════════
-router.get('/challenges', authMiddleware, async (req: Request, res: Response) => {
+router.get('/challenges', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const progress = await getUserChallengeProgress(self.userId);
     res.json({ success: true, data: progress });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
 // ══════════════════════════════════════════════════════════════
 //  POST /api/dashboard/challenges/:id/claim — চ্যালেঞ্জ রিওয়ার্ড ক্লেইম
 // ══════════════════════════════════════════════════════════════
-router.post('/challenges/:id/claim', authMiddleware, async (req: Request, res: Response) => {
+router.post('/challenges/:id/claim', authMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const self = (req as Request & { user: AuthPayload }).user;
     const challengeId = req.params.id as string;

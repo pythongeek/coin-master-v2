@@ -188,9 +188,43 @@
     4. Set `NODE_ENV=production` build-time env so dev stack traces never reach the response body.
   - **Verification / Test Method**:
     - `npx tsc --noEmit` clean.
-    - `curl -X POST https://api.cryptoflip.../api/admin/audit/foo -H "Authorization: Bearer $ADMIN_JWT"` with a malformed query → response body is `{"success":false,"error":"Internal server error","traceId":"…"}`, and `logs/error.log` contains the raw Postgres error.
+- [x] **[P0-06] Global Error Leakage (DB schema disclosure to clients)** ✓ TESTED & PASSED 2026-07-23
+  - **File(s) Affected**: `backend/src/index.ts` (global error handler, ~line 181); secondary leak sites: `backend/src/routes/admin-audit.ts` (lines 170, 194, 224, 283, 303, 371), `admin-email.ts`, `ml-routes.ts`, `dashboard.ts`
+  - **Issue/Gap**: The global Express error handler returns `err.message` to the client on 500. Postgres errors include column names, table names, constraint names, and partial SQL — all leaked verbatim. Routes like `admin-audit.ts` and `dashboard.ts` also have inline `res.status(500).json({ error: err.message })` patterns that bypass the global handler entirely. Defense-in-depth failure: a hijacked admin account gets free recon.
+  - **Proposed Fix**:
+    1. In the global handler, classify the error:
+       ```ts
+       if (err instanceof ZodError) → 400 with sanitized field errors
+       if (err instanceof AppError && err.statusCode < 500) → use err.message
+       if (err instanceof PostgresError && err.code === '23505') → 409 "Duplicate"
+       else → 500 { success: false, error: 'Internal server error', traceId }
+       ```
+    2. Always log the raw `err.stack` + `err.message` + `traceId` to Winston at `error` level and to Sentry.
+    3. Replace the inline 5xx patterns in `admin-audit.ts`, `admin-email.ts`, `ml-routes.ts`, `dashboard.ts` with `next(err)` so they funnel through the global handler.
+    4. Set `NODE_ENV=production` build-time env so dev stack traces never reach the response body.
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` clean.
+    - `curl https://api.cryptoflip.../api/admin/audit/foo -H "Authorization: Bearer *** with a malformed query → response body is `{"success":false,"error":"Internal server error","traceId":"…"}`, and `logs/error.log` contains the raw Postgres error.
     - Unit test: `index.test.ts` mocks a route that throws `new Error('relation "users_secret_col" does not exist')` → asserts response body does NOT contain `users_secret_col`.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - **New module `backend/src/middleware/error-handler.ts`** — extracted the global handler into its own file so it's unit-testable. Exports `buildErrorHandler(logger)`, `errorHandler` (default instance), `classifyError(err)`, and `setSentryCapture(fn)`.
+    - **Classification rules** (in priority order):
+      1. `ZodError` → 400, sanitized field details (path + message per issue; NO stack)
+      2. `AppError.isOperational=true` → `err.statusCode` + `err.message` + `err.code` (caller-constructed, trusted)
+      3. `AppError.isOperational=false` (e.g. `GameIntegrityError`) → 500 "Internal server error" (NOT the raw message)
+      4. PG `23505` (unique_violation) → 409 "Duplicate entry"
+      5. PG `23503` (foreign_key_violation) → 409 "Referenced record not found"
+      6. PG `23502` (not_null_violation) → 400 "Required field missing"
+      7. PG `23514` (check_violation) → 400 "Constraint violation"
+      8. Express `err.statusCode` (4xx range) → that status + safe message (NOT raw err.message)
+      9. Everything else → 500 "Internal server error"
+    - **Trace correlation**: every response carries a 16-hex-char `traceId`. Every log entry, Sentry capture, and PG diagnostic (code + detail + hint + table + column + constraint) is recorded under the same `traceId`. Operator greps logs by `traceId` to find the original error.
+    - **Dev affordance**: `EXPOSE_ERROR_DETAILS=true` overrides the sanitizer and includes `err.message` + `err.stack` in the response body. Off by default in all envs.
+    - **Route refactor**: removed 64 inline `res.status(500).json({ error: ... })` sites across `admin-audit.ts` (6), `admin-email.ts` (12), `ml-routes.ts` (6), `dashboard.ts` (10), `admin.ts` (30). Replaced with `next(err)` so all uncaught server errors funnel through the central handler. Added `next: NextFunction` to 81 handler signatures (some were untyped `(_req, res)`).
+    - **Wire-up**: `index.ts` now imports `errorHandler` and `setSentryCapture` from the new module, and calls `app.use(errorHandler)` instead of the inline handler. Sentry is conditionally wired via `setSentryCapture(...)` if `SENTRY_DSN` is set.
+    - **Zero regressions**: `npm run build` (tsc) clean. Grep confirms `res.status(500).json` is gone from the 5 refactored files. Pre-existing inline catches that did `if (msg.includes('duplicate')) return res.status(409)` were preserved (the 409 path was correct, only the 500 path was leaky).
+    - 72 assertions pass in `src/test/error-handler.test.ts` covering: classifyError unit tests for all 9 classification branches, handler behavior for generic Error → 500 sanitized (with internal log + Sentry capture), all 4 PG constraint codes → 400/409 with safe messages, AppError.isOperational → statusCode + message + code, AppError.isOperational=false → 500 sanitized, ZodError → 400 with sanitized details, unique traceId per request, source-level checks that all 5 route files have no `res.status(500).json` calls, `index.ts` imports the new handler, `EXPOSE_ERROR_DETAILS=true` includes raw err.message in body.error (not `body.message` — corrected in test).
+  - **Status**: `[TESTED & PASSED]`
 
 ---
 
