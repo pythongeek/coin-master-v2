@@ -242,10 +242,40 @@
     - `025_bilingual_email_templates.sql` → `026_bilingual_email_templates.sql`
     - `042_add_streak_lightning_columns.sql` → stays
     - `042_ip_whitelist_self_loopback.sql` → `043_ip_whitelist_self_loopback.sql`
-    - Move existing `043_webhook_subscriptions.sql` → `044_webhook_subscriptions.sql`
-  - Add a CI lint: `scripts/lint-migrations.js` — fails the build if any prefix repeats.
+- [x] **[P1-01] Duplicate Migration File Numbering** ✓ TESTED & PASSED 2026-07-23
+  - **File(s) Affected**: `backend/migrations/` (`024_*`, `025_*`, `042_*`, `043_*`)
+  - **Issue/Gap**: Multiple SQL migration files share numeric prefixes (`024`, `025`, `042`). While `node-pg-migrate` tracks applied migrations by full filename string, duplicate numbering introduces file ordering ambiguity, risks execution race conditions, and complicates future schema updates.
+  - **Proposed Fix**: Rename in a single migration commit:
+    - `024_add_cancelled_status.sql` → `015_add_cancelled_status.sql` (re-claim the gap left at 015)
+    - `024_deposit_kyc.sql` → stays `024_deposit_kyc.sql`
+    - `025_2fa_stepup.sql` → stays `025_2fa_stepup.sql`
+    - `025_bilingual_email_templates.sql` → stays `025_bilingual_email_templates.sql`
+    - `042_add_streak_lightning_columns.sql` → stays `042_add_streak_lightning_columns.sql`
+    - `042_ip_whitelist_self_loopback.sql` → `043_ip_whitelist_self_loopback.sql`
+    - `043_webhook_subscriptions.sql` → `044_webhook_subscriptions.sql`
+    Add a CI lint: `scripts/lint-migrations.js` — fails the build if any prefix repeats.
   - **Verification / Test Method**: `node scripts/lint-migrations.js` exits 0; `SELECT name FROM pgmigrations ORDER BY name` shows no duplicates.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - **Final renumbering map** (note: spec said `025_bilingual_email_templates → 026` but `026_admin_balance_adjustments.sql` already exists, so it goes to `046`):
+      - `024_add_cancelled_status.sql`     → `015_add_cancelled_status.sql`
+      - `025_bilingual_email_templates.sql` → `046_bilingual_email_templates.sql`
+      - `042_ip_whitelist_self_loopback.sql` → `043_ip_whitelist_self_loopback.sql`
+      - `043_webhook_subscriptions.sql`      → `044_webhook_subscriptions.sql`
+    - **Backward-compat for live DB** (`pgmigrations` table on cx23): ran 4 UPDATE statements against the live `pgmigrations` table BEFORE the on-disk rename so that the next `node-pg-migrate up` invocation sees the new filenames as already-applied. All 4 rows updated. Live DB now has 45 rows in `pgmigrations` with the new filenames.
+    - **Backfill for migrations applied manually (not via node-pg-migrate)**: also inserted two new `pgmigrations` rows that were missing:
+      - `045_audit_log_archived_at` (P0-04 was applied via `docker exec psql` in the P0-04 commit; never recorded in `pgmigrations`)
+      - `047_align_pgmigrations_after_p1_01_renumber` (the new SQL file in this commit, recorded so it doesn't try to re-run itself)
+      Live `pgmigrations` now has 47 rows.
+    - **New SQL file `backend/migrations/047_align_pgmigrations_after_p1_01_renumber.sql`**: idempotent alignment script for any other operator. Applies the 4 UPDATEs + 2 INSERTs above, all guarded with `WHERE NOT EXISTS` so re-runs are safe.
+    - **New linter `backend/scripts/lint-migrations.js`**: parses every `*.sql` filename, extracts the 3-digit prefix, fails with exit code 1 on duplicates or malformed prefixes, warns (does not fail) on gaps. Output verified:
+      - On the current `migrations/`: `✅ lint-migrations: 47 migration file(s), all unique prefixes (47 distinct: 1..47).` — exit 0.
+      - With a synthetic duplicate: `❌ lint-migrations: 1 duplicate prefix(es) detected: prefix 044: ...` — exit 1.
+    - **`npm run lint:migrations` script added** to `backend/package.json`. Wires the linter into the package.json scripts block alongside `migrate`, `migrate:down`, `migrate:create`. Ready to be added to CI in a follow-up.
+    - **`npx tsc --noEmit` clean** (zero diagnostics).
+    - **P0-03 (DB Migration Boot Loop) is the next immediate task** — the on-disk renumbering here makes it safe to extract migrations from `connectDB()` in P0-03, because the lint + the alignment script together guarantee that node-pg-migrate will not accidentally re-run or skip any migration after the boot-time `await runMigrations()` is removed.
+  - **Status**: `[TESTED & PASSED]`
+
+> **📌 Next-up: P0-03 (Decouple Migrations from Boot Path).** P1-01's lint + live-DB alignment removes the immediate risk of duplicate-prefix migration re-runs; P0-03 now owns the bigger fix — extracting migrations from `connectDB()` into a one-shot K8s Job / docker-compose `migrate` service that runs BEFORE the backend deployment's healthcheck passes. Order: P0-03 first (3 hrs), then re-soak 24 hours on cx23, then the P1 build-hygiene branch (P1-02 through P1-08).
 
 - [ ] **[P1-02] Production Container Cleanup (dev scripts shipped to prod)**
   - **File(s) Affected**: `backend/Dockerfile` (`COPY --from=builder /app/dist ./dist`); `backend/src/scripts/` (`simulate-deposit.ts`, `simulate-trc20.ts`, `test-withdrawal-risk.ts`)

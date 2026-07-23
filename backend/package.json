@@ -13,6 +13,7 @@
     "migrate": "node-pg-migrate up --no-check-order --migrations-dir migrations",
     "migrate:down": "node-pg-migrate down --migrations-dir migrations",
     "migrate:create": "node-pg-migrate create --migrations-dir migrations",
+    "lint:migrations": "node scripts/lint-migrations.js migrations",
     "price:sync": "npx ts-node src/jobs/price-sync.ts",
     "deposit:monitor": "npx ts-node src/jobs/deposit-monitor.ts",
     "prisma:generate": "prisma generate",
