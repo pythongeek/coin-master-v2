@@ -37,7 +37,24 @@ RUN adduser --system --uid 1001 backend
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev && npm cache clean --force
 
-COPY --from=builder --chown=backend:nodejs /app/dist ./dist
+# ── Selective copy: keep only the production-runtime artifacts.
+# `npm run build` (which now uses tsconfig.build.json) compiles only
+# what's needed: services, routes, middleware, config, utils,
+# schemas, jobs, controllers, migrate-cli, and the entry index.js.
+# Dev scripts (src/scripts/**) and tests (src/test/**) are excluded.
+# Mirrors the copy list here so a stray build that does include
+# those directories still wouldn't ship them to prod.
+RUN mkdir -p ./dist
+COPY --from=builder --chown=backend:nodejs /app/dist/index.js ./dist/index.js
+COPY --from=builder --chown=backend:nodejs /app/dist/services ./dist/services
+COPY --from=builder --chown=backend:nodejs /app/dist/routes ./dist/routes
+COPY --from=builder --chown=backend:nodejs /app/dist/middleware ./dist/middleware
+COPY --from=builder --chown=backend:nodejs /app/dist/config ./dist/config
+COPY --from=builder --chown=backend:nodejs /app/dist/utils ./dist/utils
+COPY --from=builder --chown=backend:nodejs /app/dist/schemas ./dist/schemas
+COPY --from=builder --chown=backend:nodejs /app/dist/jobs ./dist/jobs
+COPY --from=builder --chown=backend:nodejs /app/dist/controllers ./dist/controllers
+COPY --from=builder --chown=backend:nodejs /app/dist/migrate-cli ./dist/migrate-cli
 COPY --chown=backend:nodejs migrations ./migrations
 COPY --chown=backend:nodejs prisma ./prisma
 COPY --chown=backend:nodejs tesseract-lang ./tesseract-lang

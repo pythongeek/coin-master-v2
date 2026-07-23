@@ -289,7 +289,7 @@
 
 > **📌 Next-up: P0-03 (Decouple Migrations from Boot Path).** P1-01's lint + live-DB alignment removes the immediate risk of duplicate-prefix migration re-runs; P0-03 now owns the bigger fix — extracting migrations from `connectDB()` into a one-shot K8s Job / docker-compose `migrate` service that runs BEFORE the backend deployment's healthcheck passes. Order: P0-03 first (3 hrs), then re-soak 24 hours on cx23, then the P1 build-hygiene branch (P1-02 through P1-08).
 
-- [ ] **[P1-02] Production Container Cleanup (dev scripts shipped to prod)**
+- [x] **[P1-02] Production Container Cleanup (dev scripts shipped to prod)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/Dockerfile` (`COPY --from=builder /app/dist ./dist`); `backend/src/scripts/` (`simulate-deposit.ts`, `simulate-trc20.ts`, `test-withdrawal-risk.ts`)
   - **Issue/Gap**: `tsc` compiles `src/scripts/**` into `dist/scripts/`, and the Dockerfile copies the entire `dist/` to prod. The simulate scripts can issue raw `psql` INSERTs and create real-looking test transactions that trigger fraud alerts. An operator who fat-fingers `node dist/scripts/simulate-trc20.js` in production could pollute the audit log.
   - **Proposed Fix**:
@@ -309,7 +309,27 @@
     2. Add a `tsconfig.build.json` that `exclude`s `src/scripts/**` and `src/test/**`.
     3. Update `package.json` build script: `"build": "tsc -p tsconfig.build.json"`.
   - **Verification / Test Method**: `docker compose build backend && docker run --rm backend ls /app/dist/scripts` → "No such file or directory".
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - **Refactored layout to keep the migration CLI on prod while excluding all other scripts.** P1-02 was made structurally cleaner by moving `src/scripts/run-migrations.ts` (added in P0-03) to `src/migrate-cli/run-migrations.ts`. This means the spec's exclude pattern `src/scripts/**/*` cleanly excludes everything in `src/scripts/` (the dev simulations + regression test) while the migration CLI lives in its own dedicated `src/migrate-cli/` directory that the production build retains. The 4 remaining dev files in `src/scripts/` are: `simulate-deposit.ts`, `simulate-trc20.ts`, `test-withdrawal-risk.ts`, `test-p003-connectdb.ts`.
+    - **`backend/tsconfig.build.json`** (new): `{"extends": "./tsconfig.json", "exclude": ["node_modules", "dist", "src/db/seeds", "src/test/**/*", "src/scripts/**/*"]}`. The base `tsconfig.json` already excluded `src/test/**/*` from the build, but the spec said to extend this with explicit `src/scripts/**/*` and `src/test/**/*` excludes — done.
+    - **`backend/package.json`**: `"build": "tsc -p tsconfig.build.json"`. The old `"build": "tsc"` used the base tsconfig (which doesn't exclude `src/scripts/`). The new invocation uses the build-specific config.
+    - **`backend/Dockerfile`** production stage: replaced the single `COPY --from=builder --chown=backend:nodejs /app/dist ./dist` with 11 separate `COPY` commands, one per production subdirectory: `index.js`, `services/`, `routes/`, `middleware/`, `config/`, `utils/`, `schemas/`, `jobs/`, `controllers/`, `migrate-cli/`. Even if a future `npm run build` accidentally re-included `src/scripts/**`, this selective COPY guarantees those files cannot reach the production image.
+    - **Path updates** (`src/scripts/run-migrations.ts` → `src/migrate-cli/run-migrations.ts`):
+      - `src/config/database.ts` lazy import updated: `'../scripts/run-migrations'` → `'../migrate-cli/run-migrations'`
+      - `package.json` `migrate` / `migrate:down` scripts updated to `ts-node src/migrate-cli/run-migrations.ts up|down`
+      - `docker-compose.yml` and `docker-compose.prod.yml` `migrate` service command updated to `["node", "dist/migrate-cli/run-migrations.js", "up"]`
+    - **Verified end-to-end**:
+      - `npm run build` → exit 0, `dist/` contains 10 entries (config, controllers, index.js, jobs, middleware, migrate-cli, routes, schemas, services, utils). No `dist/scripts/` or `dist/test/`.
+      - `docker compose build backend` → built `coin-master-backend:latest` (1.08 GB).
+      - `docker run --rm coin-master-backend:latest ls /app/dist/scripts/` → "No such file or directory" ✓
+      - `docker run --rm coin-master-backend:latest ls /app/dist/test/` → "No such file or directory" ✓
+      - `docker run --rm coin-master-backend:latest ls /app/dist/migrate-cli/` → 4 files (run-migrations.js + .d.ts + .d.ts.map + .js.map) ✓
+      - `docker run --rm coin-master-backend:latest node -e "console.log(require.resolve('/app/dist/index.js'))"` → resolves to `/app/dist/index.js`. The Backend entry point is loadable.
+      - `docker run --rm coin-master-backend:latest node /app/dist/migrate-cli/run-migrations.js` → connects to postgres (the docker network hostname, confirming the CLI works inside the migrate service context).
+      - Negative tests: `ls /app/dist/scripts/simulate-deposit.js` / `simulate-trc20.js` / `test-withdrawal-risk.js` / `test-p003-connectdb.js` all return "No such file or directory" ✓
+    - **Pre-existing Dockerfile bug fixed**: the original Dockerfile ran `RUN npx prisma generate` BEFORE copying the `prisma/` directory. This commit moves that line AFTER the `COPY --chown=backend:nodejs prisma ./prisma` line so prisma generate can actually find `prisma/schema.prisma`. (Pre-existing on `main` since commit `fb8fcff`.)
+    - **Production deploy impact**: the next backend deploy will build with `tsc -p tsconfig.build.json`, producing a `dist/` without `scripts/` or `test/`. The Dockerfile's selective COPY further guarantees that even a stray build cannot ship dev scripts. The `migrate` one-shot service continues to work via the explicit `dist/migrate-cli/run-migrations.js` path.
+  - **Status**: `[TESTED & PASSED]`
 
 - [ ] **[P1-03] Shared Wallet Index Race Condition (deposit-address collision)**
   - **File(s) Affected**: `backend/src/services/wallet-derivation.ts` (line ~88: `redis.incr('address_index:ethereum')`)

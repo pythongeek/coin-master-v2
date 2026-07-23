@@ -87,7 +87,7 @@ services:
       - .env
     environment:
       - NODE_ENV=production
-    command: ["node", "dist/scripts/run-migrations.js", "up"]
+    command: ["node", "dist/migrate-cli/run-migrations.js", "up"]
     depends_on:
       postgres:
         condition: service_healthy

@@ -4,7 +4,7 @@
  *
  *  Standalone migration runner. Invoked by `npm run migrate`, by
  *  the dedicated `migrate` one-shot service in docker-compose, or
- *  manually via `npx ts-node scripts/run-migrations.ts`. The backend
+ *  manually via `npx ts-node src/migrate-cli/run-migrations.ts`. The backend
  *  process no longer runs migrations on boot — that path used to
  *  call `process.exit(1)` on any future bad migration and trigger
  *  an endless restart loop on the orchestrator.
@@ -32,7 +32,7 @@ import fs from 'fs';
 // Paths (resolved relative to THIS file, never to process.cwd())
 // ---------------------------------------------------------------------------
 
-// This file lives at backend/src/scripts/run-migrations.ts. Going up
+// This file lives at backend/src/migrate-cli/run-migrations.ts. Going up
 // two levels gets us to the backend repo root.
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MIGRATIONS_DIR = path.resolve(__dirname, '..', '..', 'migrations');
@@ -110,7 +110,7 @@ if (require.main === module) {
   const direction: 'up' | 'down' = arg === 'down' ? 'down' : 'up';
   if (arg && arg !== 'up' && arg !== 'down') {
     console.error(`[migrate] Unknown argument: ${arg}`);
-    console.error('[migrate] Usage: ts-node scripts/run-migrations.ts [up|down]');
+    console.error('[migrate] Usage: ts-node src/migrate-cli/run-migrations.ts [up|down]');
     process.exit(2);
   }
 

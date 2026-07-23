@@ -20,7 +20,7 @@ export const db = new Pool({
 // loop on the orchestrator.
 //
 // Migrations are now driven by the dedicated CLI runner
-// `backend/scripts/run-migrations.ts`, invoked by `npm run migrate`,
+// `backend/src/migrate-cli/run-migrations.ts`, invoked by `npm run migrate`,
 // and by the dedicated `migrate` one-shot service in docker-compose
 // (which the backend `depends_on` with `service_completed_successfully`).
 //
@@ -57,7 +57,7 @@ export async function connectDB(): Promise<void> {
     if (shouldRunMigrationsOnBoot()) {
       // Lazy-import to avoid loading node-pg-migrate in production
       // paths that never enable this flag.
-      const { runMigrationsCli } = await import('../scripts/run-migrations');
+      const { runMigrationsCli } = await import('../migrate-cli/run-migrations');
       const code = await runMigrationsCli();
       if (code !== 0) {
         throw new Error(`migrations exited with code ${code}`);
