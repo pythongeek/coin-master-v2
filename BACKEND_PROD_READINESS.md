@@ -419,7 +419,7 @@
     - **Future cleanup (out of P1-04 scope)**: If the operator wants to actually remove Prisma, the path is to refactor all 13 files to use the existing `query()` helper from `backend/src/config/database.ts` (raw SQL), then remove the `prisma` and `@prisma/client` packages and the `npx prisma generate` lines in the Dockerfile. That work is a multi-day effort and should be its own dedicated task with its own tests.
   - **Status**: `[TESTED & PASSED]`
 
-- [ ] **[P1-05] Missing Webhook Dead-Letter Queue (silent delivery failures)**
+- [x] **[P1-05] Missing Webhook Dead-Letter Queue (silent delivery failures)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/services/webhook.ts` (`worker.on('failed', ...)` ~line 122)
   - **Issue/Gap**: BullMQ webhook jobs have exponential backoff (2s→32s, 5 attempts) and 10s timeout, but on the 5th failure the job is dropped with `console.warn`. No DLQ, no Sentry, no PagerDuty. A webhook recipient down for an hour means the operator never knows — event data is silently lost.
   - **Proposed Fix**:
@@ -431,7 +431,7 @@
     - `npx tsc --noEmit` clean.
     - Unit test: `webhook.test.ts` mocks a recipient that returns 500 → after 5 attempts, the payload appears in `webhook:dlq` and Sentry receives an event.
     - Manual: kill the test webhook server → trigger 5 events → confirm DLQ row appears in `GET /api/admin/webhooks/dlq`.
-  - **Status**: `[NOT STARTED]`
+  - **Status**: `[TESTED & PASSED]`
 
 - [ ] **[P1-06] `/metrics` Endpoint Has No Authentication**
   - **File(s) Affected**: `backend/src/index.ts` (`app.use('/metrics', metricsRoutes)` ~line 161); `backend/src/routes/metrics.ts`
