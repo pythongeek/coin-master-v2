@@ -19,6 +19,7 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1094.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@prisma/client": "5.22.0",
     "@sentry/node": "^10.64.0",
