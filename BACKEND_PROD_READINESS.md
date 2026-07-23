@@ -376,7 +376,7 @@
       - 9. Runtime G: Tron and Solana sequences start at 1 independently of Ethereum
     - **Production deploy impact**: the next backend deploy will start using Postgres sequences instead of Redis. Existing wallets (no `deposit_address_index` previously) are now backfilled by migration 048. Future FLUSHALL on Redis has zero effect on deposit-address derivation — the sequence persists in Postgres.
   - **Status**: `[TESTED & PASSED]`
-- [ ] **[P1-04] Unused Dependency Removal (reduce attack surface ~6 MB)**
+- [x] **[P1-04] Unused Dependency Removal (reduce attack surface ~6 MB)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/package.json`
   - **Issue/Gap**: Four packages in `dependencies` are unused at runtime:
     - `prisma` + `@prisma/client` (~6 MB, 0 runtime usage — `tron-deposit-monitor.ts` imports `PrismaClient` but falls back to raw SQL)
@@ -391,7 +391,33 @@
     - `grep -rn "from 'commander'" backend/src/` → zero hits.
     - `npm ls prisma @prisma/client eventsource commander` → only devDeps.
     - `docker compose build backend` → image shrinks by ~6 MB.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - **Spec-premise correction (CRITICAL)**: A live audit of `backend/src/` before this commit found that the spec's premise about Prisma was wrong:
+      - **`eventsource`**: 0 hits in `src/` ✓ safe to remove (per spec).
+      - **`commander`**: 0 hits in `src/` ✓ safe to remove (per spec).
+      - **`@prisma/client`**: **HEAVILY USED** — 13 files import `PrismaClient`, `Decimal`, `Prisma`, `DepositStatus`, or `RateSourceType` from it. The 4 spec-quoted examples are real users:
+        - `src/services/tron-deposit-monitor.ts:7,30,40,50` — 4 active `prisma.depositTransaction.findMany/update/findFirst` calls. **Not "falls back to raw SQL" as the spec claimed.**
+        - `src/jobs/deposit-monitor.ts:7` — uses `prisma.depositTransaction`.
+        - `src/controllers/deposit.controller.ts:159-160` — `new PrismaClient()` instance.
+        - `src/routes/admin.ts:16,37` — `new PrismaClient()`.
+        - `src/services/rate-lock.service.ts:9`, `wallet.service.ts:8`, `deposit.service.ts:11`, `custom-rate.service.ts:8`, `price-feed.service.ts:8` — all use `prisma.<model>`.
+        - `src/jobs/price-sync.ts:19-20` — `new PrismaClient()`.
+        - The Dockerfile runs `npx prisma generate` twice (build + production stage) to generate the `@prisma/client` runtime artifacts. Removing the `prisma` and `@prisma/client` packages would break the build at the `npx prisma generate` step.
+      - **Decision**: this commit removes only `eventsource` and `commander` (the two packages the spec correctly identified as unused). It does NOT remove `prisma` or `@prisma/client` because doing so would break 13 active call sites and the Docker build. The "Partial" implementation is what the spec's data actually supports; the "Full" path would require a multi-day refactor of 13 files from PrismaClient to raw SQL, which is well beyond P1-04's scope.
+    - **Changes**:
+      - `npm uninstall eventsource commander` executed. Output: `removed 2 packages`. `package.json` dependencies block no longer contains them. `package-lock.json` regenerated.
+      - `@prisma/client` and `prisma` left in `dependencies` (active runtime + build-time usage).
+    - **Verified end-to-end**:
+      - `grep -rn "eventsource" backend/src/` → 0 hits ✓
+      - `grep -rn "commander" backend/src/` → 0 hits ✓
+      - `grep -rn "@prisma/client" backend/src/` → 13 hits (the active usages above) — left in place intentionally.
+      - `npx tsc --noEmit` clean (zero diagnostics).
+      - `npm run build` exit 0, `dist/` layout unchanged.
+      - `docker compose build backend` builds successfully (pre-existing prisma generate step runs cleanly because the package is still installed).
+      - Docker image size: 1.08 GB (unchanged from P1-02). The 2 small removed packages (eventsource + commander) save ~50 KB total, not the "~6 MB" the spec claimed because Prisma was never unused.
+    - **Actual attack-surface reduction**: ~50 KB (eventsource 30KB + commander 20KB unpacked). The "~6 MB" claim in the spec was based on the false premise that Prisma was unused; since Prisma is in active use, that figure is not real.
+    - **Future cleanup (out of P1-04 scope)**: If the operator wants to actually remove Prisma, the path is to refactor all 13 files to use the existing `query()` helper from `backend/src/config/database.ts` (raw SQL), then remove the `prisma` and `@prisma/client` packages and the `npx prisma generate` lines in the Dockerfile. That work is a multi-day effort and should be its own dedicated task with its own tests.
+  - **Status**: `[TESTED & PASSED]`
 
 - [ ] **[P1-05] Missing Webhook Dead-Letter Queue (silent delivery failures)**
   - **File(s) Affected**: `backend/src/services/webhook.ts` (`worker.on('failed', ...)` ~line 122)
