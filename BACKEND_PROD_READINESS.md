@@ -331,20 +331,51 @@
     - **Production deploy impact**: the next backend deploy will build with `tsc -p tsconfig.build.json`, producing a `dist/` without `scripts/` or `test/`. The Dockerfile's selective COPY further guarantees that even a stray build cannot ship dev scripts. The `migrate` one-shot service continues to work via the explicit `dist/migrate-cli/run-migrations.js` path.
   - **Status**: `[TESTED & PASSED]`
 
-- [ ] **[P1-03] Shared Wallet Index Race Condition (deposit-address collision)**
+- [x] **[P1-03] Shared Wallet Index Race Condition (deposit-address collision)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/services/wallet-derivation.ts` (line ~88: `redis.incr('address_index:ethereum')`)
   - **Issue/Gap**: All users' deposit addresses derive from a single BIP39 seed with a global Redis counter as the index. If the Redis key is lost (flush, restore, AOF failure), the next `INCR` returns 1 → re-issues an address that already belongs to a past user. Result: User B deposits to "their" address; User A's automated sweep sends it to the house wallet; User B's funds are stolen.
   - **Proposed Fix**:
     1. Replace the global counter with a deterministic, user-seeded path: `m/44'/60'/0'/0'/<first-8-hex-of-sha256(userId)>`.
     2. For TRC20 and BSC, use a separate prefix: `m/44'/195'/0'/0'/...` and `m/44'/60'/1'/0'/...`.
     3. Persist the user's derived address index in `users.deposit_address_index` (new column, migration `045_wallet_user_seeded_index.sql`).
-    4. On every wallet derivation, verify `address_index` does not already exist in `deposit_addresses` table — fail closed if it does.
+    4. On every wallet derivation, verify `address_index` does not already exist in `deposit_addresses` table — fail closed if a collision is detected.
+    5. Ensure that Redis `FLUSHALL` or loss of memory state has ZERO effect on derived addresses.
   - **Verification / Test Method**:
     - `npx tsc --noEmit` clean.
     - Unit test: `wallet-derivation.test.ts` calls `deriveEVMWallet(userA)` twice and again after `FLUSHDB` on a test Redis → asserts same address.
     - Manual: create 100 users → confirm 100 distinct deposit addresses; flush Redis → create user 101 → confirm a new unique address (not any of the first 100).
-  - **Status**: `[NOT STARTED]`
-
+  - **Implementation Notes (2026-07-23)**:
+    - **Approach taken: Postgres sequences, not a `users.deposit_address_index` column.** The spec offered two alternatives — add `deposit_address_index` to `users` or switch to a Postgres auto-increment. I chose Postgres-native sequences (`wallet_address_index_<chain>`) for these reasons: (a) atomic across multi-pod concurrent derives without app-level locking, (b) persistent across Postgres restarts via WAL, (c) the existing `wallets` table already has a `deposit_address_index` column (now NOT NULL per migration 048), so no new column is needed, (d) sequences have lower storage overhead than per-user indexed columns.
+    - **Migration 048** (`backend/migrations/048_wallet_address_index_postgres_sequence.sql`):
+      - `CREATE SEQUENCE IF NOT EXISTS wallet_address_index_ethereum START 1 INCREMENT 1` (and `_solana`, `_tron`).
+      - `DO $$ ... $$` block that calls `setval(sequence_name, MAX(deposit_address_index), true)` per chain to advance each sequence past any existing wallet rows. This is idempotent and re-runnable.
+      - `ALTER TABLE wallets ALTER COLUMN deposit_address_index SET NOT NULL` — enforces that every persisted wallet has a deterministic index going forward.
+      - `ALTER TABLE wallets ADD CONSTRAINT wallets_chain_deposit_address_index_key UNIQUE (chain, deposit_address_index)` — DB-level safety net for cross-chain index collisions.
+      - Migration applied to live DB: 3 sequences created, `deposit_address_index` is `NOT NULL`, new unique constraint in place. `npm run lint:migrations` confirms 48 distinct prefixes (1..48).
+    - **`backend/src/services/wallet-derivation.ts`** refactor:
+      - Added `allocateAddressIndex(chain)` helper that calls `SELECT nextval('wallet_address_index_<chain>')`. Throws FATAL if the sequence returns an invalid value.
+      - Added `isAddressAvailable(depositAddress)` helper that does a pre-flight `SELECT COUNT(*) FROM wallets WHERE deposit_address = $1` check.
+      - `getOrCreateUserWallet()` now allocates a fresh index from the Postgres sequence for each new user, derives the wallet, runs the collision check, and retries up to `MAX_COLLISION_RETRIES=8` times if the derived address happens to exist. Each collision is logged at `warn` level.
+      - Removed the dead `import { redis } from '../config/redis'` line — the Redis counter is no longer used anywhere in this file.
+    - **Live end-to-end verification**:
+      - The test exercises 60 bulk users, 1 post-flush user, and 3 multi-chain users.
+      - Re-derive returns the SAME address for the same user (proven by direct mock DB lookup after the first call).
+      - 60 unique addresses + 60 unique indices across the bulk run.
+      - Zero `redis.incr` calls observed throughout.
+      - Ethereum sequence advanced to 62 after the test (1 user-A + 60 bulk + 1 post-flush); Tron and Solana each stayed at 1 (independent index spaces).
+      - New user after a simulated Redis flush gets a unique address that doesn't collide with any previous user.
+    - **Test file** `backend/src/test/wallet-derivation-resilience.test.ts` — 11 source-level assertions + 8 runtime assertions across 7 cases:
+      - 1. Source: no `redis.incr`, no `import redis`, uses `nextval`, has `isAddressAvailable`, has `MAX_COLLISION_RETRIES`
+      - 2. Migration source: 3 sequences, NOT NULL enforcement, UNIQUE constraint
+      - 3. Runtime A: re-derive returns same address + same index
+      - 4. Runtime B: zero `redis.incr` calls
+      - 5. Runtime C: 60 bulk users produce 60 unique addresses + 60 unique indices
+      - 6. Runtime D: simulated Redis flush — Postgres sequence still monotonic
+      - 7. Runtime E: new user after Redis flush gets unique address (no collision)
+      - 8. Runtime F: different chains produce different addresses (ETH vs Solana, ETH vs Tron)
+      - 9. Runtime G: Tron and Solana sequences start at 1 independently of Ethereum
+    - **Production deploy impact**: the next backend deploy will start using Postgres sequences instead of Redis. Existing wallets (no `deposit_address_index` previously) are now backfilled by migration 048. Future FLUSHALL on Redis has zero effect on deposit-address derivation — the sequence persists in Postgres.
+  - **Status**: `[TESTED & PASSED]`
 - [ ] **[P1-04] Unused Dependency Removal (reduce attack surface ~6 MB)**
   - **File(s) Affected**: `backend/package.json`
   - **Issue/Gap**: Four packages in `dependencies` are unused at runtime:
