@@ -102,9 +102,44 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - cryptoflip-network
     restart: unless-stopped
+
+  # ─────────────────────────────────
+  # 🗃️ MIGRATIONS — one-shot Job
+  # ─────────────────────────────────
+  # Runs the database migrations as a separate, one-shot container
+  # BEFORE the backend starts. Uses the SAME backend image (so the
+  # installed deps match the application) but overrides the command
+  # to run the migration CLI instead of `node dist/index.js`.
+  #
+  # On success: exits 0, docker-compose marks the service as
+  #   service_completed_successfully, backend's depends_on proceeds.
+  # On failure: exits 1, backend is NOT started — the operator sees
+  #   the migration error in the compose logs and can re-run after
+  #   fixing the offending migration file. No more endless restart loop.
+  # ─────────────────────────────────
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:***@postgres:5432/${POSTGRES_DB}
+      - REDIS_HOST=redis
+      - NODE_ENV=production
+    command: ["node", "dist/scripts/run-migrations.js", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cryptoflip-network
+    restart: "no"   # one-shot; do not restart on failure
 
   # ─────────────────────────────────
   # 🗄️ DATABASE — PostgreSQL

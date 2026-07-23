@@ -11,42 +11,63 @@ export const db = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Migration runner — replaces inline schema changes
-async function runMigrations(): Promise<void> {
-  const { execSync } = await import('child_process');
-  // path imports removed -- using process.cwd()
-  // url import removed -- using process.cwd()
-
-  const projectRoot = process.cwd();
-  
-
-  try {
-    execSync(
-      'npx node-pg-migrate up --no-check-order --migrations-dir migrations',
-      {
-        cwd: projectRoot,
-        env: process.env,
-        stdio: 'inherit',
-      }
+// Migration runner — P0-03: REMOVED from connectDB().
+//
+// `runMigrations()` used to be called inline inside `connectDB()` on
+// every backend boot. A syntax error in any future migration would
+// throw, propagate to `connectDB()`'s catch, and call
+// `process.exit(1)` — putting the backend into an endless restart
+// loop on the orchestrator.
+//
+// Migrations are now driven by the dedicated CLI runner
+// `backend/scripts/run-migrations.ts`, invoked by `npm run migrate`,
+// and by the dedicated `migrate` one-shot service in docker-compose
+// (which the backend `depends_on` with `service_completed_successfully`).
+//
+// The backend's `connectDB()` no longer touches migrations. If you
+// need to run migrations on boot for a local dev convenience, set
+// `RUN_MIGRATIONS_ON_BOOT=true` — this is OFF by default and logs a
+// deprecation warning when enabled (the supported path is the
+// standalone CLI).
+function shouldRunMigrationsOnBoot(): boolean {
+  const raw = (process.env.RUN_MIGRATIONS_ON_BOOT || '').toLowerCase();
+  if (raw === 'true' || raw === '1' || raw === 'yes') {
+    console.warn(
+      '[db] WARNING: RUN_MIGRATIONS_ON_BOOT=true — running migrations ' +
+      'during backend boot. This is for local-dev convenience only; ' +
+      'the supported production path is `npm run migrate` in a separate ' +
+      'container / K8s Job. See BACKEND_PROD_READINESS.md P0-03.',
     );
-  } catch (err) {
-    console.error('Database migration failed:', err);
-    throw err;
+    return true;
   }
+  return false;
 }
 
-// কানেকশন টেস্ট + মাইগ্রেশন রান
+// কানেকশন টেস্ট
 export async function connectDB(): Promise<void> {
   try {
     const client = await db.connect();
-
-    await runMigrations();
 
     const result = await client.query('SELECT NOW() as now, version()');
     client.release();
 
     console.log('PostgreSQL connected!');
     console.log(`Server time: ${result.rows[0].now}`);
+
+    if (shouldRunMigrationsOnBoot()) {
+      // Lazy-import to avoid loading node-pg-migrate in production
+      // paths that never enable this flag.
+      const { runMigrationsCli } = await import('../scripts/run-migrations');
+      const code = await runMigrationsCli();
+      if (code !== 0) {
+        throw new Error(`migrations exited with code ${code}`);
+      }
+    } else {
+      console.log(
+        '[db] Migrations skipped on boot (RUN_MIGRATIONS_ON_BOOT=false). ' +
+        'Run `npm run migrate` from a separate container / K8s Job.',
+      );
+    }
   } catch (error) {
     console.error('PostgreSQL connection failed:', error);
     process.exit(1);

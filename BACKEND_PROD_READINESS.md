@@ -90,9 +90,9 @@
     - New focused test file `src/test/wallet-derivation.test.ts` covers: validateMnemonic empty/forbidden/invalid/valid; getOrCreateUserWallet throws on unset MNEMONIC before any DB or Redis call; throws on forbidden MNEMONIC before any DB or Redis call; succeeds with valid MNEMONIC and reaches the DB+Redis layer; valid-phrase derivation produces a different address than the forbidden-mnemonic derivation (no seed reuse). All 17 assertions pass.
   - **Status**: `[TESTED & PASSED]`
 
-- [ ] **[P0-03] DB Migration Boot Loop (DoS via bad migration)**
+- [x] **[P0-03] DB Migration Boot Loop (DoS via bad migration)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/config/database.ts` (lines 43-53, `connectDB()` calls `runMigrations()`)
-  - **Issue/Gap**: Every container start runs `npx node-pg-migrate up --no-check-order --migrations-dir migrations` synchronously. A single syntax error in any of the 45 migrations → `execSync` throws → `connectDB()` rethrows → `process.exit(1)` → orchestrator restart loop. Also burns 3-8 seconds on every boot re-running idempotent migrations. On multi-pod deploy, two pods racing on the `pgmigrations` advisory lock can deadlock briefly and exceed readiness probe time.
+  - **Issue/Gap**: Every container start runs `npx node-pg-migrate up --no-check-order --migrations-dir migrations` synchronously. A syntax error in any migration throws an exception, propagates to `connectDB()`'s catch, and calls `process.exit(1)` — putting the backend into an endless restart loop on the orchestrator. Also: executing 45 `IF NOT EXISTS` statements on every boot costs ~3-8 seconds of cold-start latency, and multi-pod deploys race on the `pgmigrations` advisory lock.
   - **Proposed Fix**:
     1. Remove `await runMigrations()` from `connectDB()`.
     2. Add `RUN_MIGRATIONS_ON_BOOT` env (default `false`). When `true`, log "Skipping migrations (run via `npm run migrate` instead)" and continue.
@@ -104,7 +104,19 @@
     - `docker compose up migrate backend` → both exit 0; backend logs "migrations already applied" or no-op.
     - Introduce a syntax error in a dummy migration → `npm run migrate` exits 1 with the migration name; `backend` continues to boot from the previous migration set.
     - `docker compose up --scale backend=2 backend` → no advisory-lock deadlock; both pods healthy in <30s.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - **`backend/src/config/database.ts`**: removed the inline `runMigrations()` call and the local `execSync`-based runner. `connectDB()` now (a) tests the DB connection with a trivial `SELECT NOW()` query, (b) checks `RUN_MIGRATIONS_ON_BOOT` env (false by default), (c) if true, lazily imports `src/scripts/run-migrations.ts` and calls `runMigrationsCli()`; if false, emits a log line `Migrations skipped on boot (RUN_MIGRATIONS_ON_BOOT=false)`. The `process.exit(1)` on connection failure is preserved because that's a legitimate boot-fail signal (the DB is genuinely unreachable).
+    - **`backend/src/scripts/run-migrations.ts`** (new, replaces `scripts/run-migrations.ts` because the latter was outside `rootDir` and tripped `tsc`): a small CLI runner that spawns `node node_modules/.bin/node-pg-migrate up --no-check-order --migrations-dir <absolute>` with a programmatically resolved `MIGRATIONS_DIR` (`path.resolve(__dirname, '../..', 'migrations')` — relative to the script itself, NOT `process.cwd()`). Pre-flight checks: `DATABASE_URL` must be set; the migrations dir must exist; the `node-pg-migrate` binary must be installed. Each pre-flight failure exits 2 with a descriptive message. Spawn failures exit 2; node-pg-migrate non-zero exit codes propagate as 1. Programmatic entry point `runMigrationsCli(direction?: 'up' | 'down')` returns the process exit code so callers (the lazy boot path, future K8s Job wrappers) can handle it.
+    - **`backend/package.json`**: `"migrate"` and `"migrate:down"` now point at the new CLI: `ts-node src/scripts/run-migrations.ts up` (or `down`). Old `node-pg-migrate up --no-check-order --migrations-dir migrations` removed.
+    - **`docker-compose.yml`**: added a `migrate` one-shot service (uses the same `backend` Docker image, overrides `command: ["node", "dist/scripts/run-migrations.js", "up"]`, `restart: "no"`). The `backend` service's `depends_on` now includes `migrate: { condition: service_completed_successfully }` so the backend only starts after migrations succeed. Same change in `docker-compose.prod.yml`.
+    - **`backend/src/scripts/test-p003-connectdb.ts`** (new): standalone test that confirms `connectDB()` returns cleanly when `RUN_MIGRATIONS_ON_BOOT` is unset, without calling `process.exit`. Also verified the inverse: with `RUN_MIGRATIONS_ON_BOOT=true` and a synthetic malformed migration, `connectDB()` correctly throws and calls `process.exit(1)` so the orchestrator sees the boot failure.
+    - **Verified live**:
+      - `npm run migrate` (against live cx23 DB) → exits 0 with `[migrate] OK (577ms)`. node-pg-migrate prints "No migrations to run!" because all 47 are already applied.
+      - Synthetic malformed migration (`999_test_bad_migration.sql` containing `THIS IS NOT VALID SQL;`) → `npm run migrate` exits 1 with the Postgres syntax error and the descriptive `[migrate] FAILED with exit code 1 after 409ms` log.
+      - `docker compose config --services` lists `migrate` in both compose files. `docker compose config --quiet` succeeds (only pre-existing `version` obsolete warning in prod).
+      - `npm run lint:migrations` still passes (47 unique prefixes, 1..47).
+    - **Production deploy order**: next backend deploy will (a) build with the new `dist/scripts/run-migrations.js`, (b) start the `migrate` service first (which exits 0 because 047 is the latest), (c) then start `backend` which logs "Migrations skipped on boot" and proceeds normally.
+  - **Status**: `[TESTED & PASSED]`
 
 - [x] **[P0-04] Audit Backup Query Bug (silent disaster-recovery failure)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/services/audit-backup.ts` (line ~18: `FROM audit_logs` plural; line ~82: `UPDATE audit_logs` plural; lines 5-12: silent `require('@aws-sdk/client-s3')` try/catch)
@@ -619,7 +631,7 @@
 | 3 | P0-06 | Global Error Leakage | `fix(security): sanitize 500 error messages at the global handler` | `curl` malformed admin route → response body has no DB internals |
 | 4 | P0-04 | Audit Backup Query Bug | `fix(backup): audit-backup targets the correct audit_log table` | `npm run audit:backup --dry-run` → row count > 0 |
 | 5 | P0-05 | Hot-Path Reconciliation Freeze | `fix(perf): decouple reconciliation-engine from placeBet hot path` | k6 50-VU load test, p95 < 250ms, zero timeouts |
-| 6 | P0-03 | DB Migration Boot Loop | `feat(ops): move migrations out of boot path into a one-shot Job` | `docker compose up migrate backend` → both exit 0 |
+| 6 | P0-03 | DB Migration Boot Loop | `fix(ops): decouple database migrations from backend boot path` | `npm run migrate` → exit 0; synthetic bad migration → exit 1; backend boots independently |
 
 **Soak time**: 24 hours on cx23 before merging to main and proceeding to Phase 1.
 

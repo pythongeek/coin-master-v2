@@ -59,6 +59,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - cryptoflip-network
     logging:
@@ -66,6 +68,32 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # ─────────────────────────────────
+  # 🗃️ MIGRATIONS — one-shot Job
+  # ─────────────────────────────────
+  # See docker-compose.yml for full rationale. This is the prod-side
+  # equivalent — one-shot container that runs `npm run migrate` (via
+  # the compiled CLI at dist/scripts/run-migrations.js) before the
+  # backend starts. Exits 0 on success; non-zero prevents the
+  # backend from booting at all.
+  # ─────────────────────────────────
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    command: ["node", "dist/scripts/run-migrations.js", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cryptoflip-network
+    restart: "no"
 
   # ─────────────────────────────────
   # 🗄️ DATABASE — PostgreSQL
