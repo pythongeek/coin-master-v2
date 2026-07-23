@@ -11,7 +11,76 @@ import { redis } from '../config/redis';
 // Solana: m/44'/501'/index'/0'
 // Tron: m/44'/195'/0'/0/index
 
-const MNEMONIC = process.env.MNEMONIC || 'test test test test test test test test test test test junk';
+// ---------------------------------------------------------------------------
+// P0-02: Fail-closed on missing or default-test MNEMONIC.
+//
+// If MNEMONIC is unset, empty, or equal to the well-known Ethereum test
+// mnemonic ("abandon … about"), every deposit address on every chain is
+// derived from publicly-known seed material. Any attacker who recognizes
+// the test mnemonic can sweep user deposits before they are credited.
+//
+// Refusing to derive wallets under those conditions prevents the
+// "missing env var in a fresh container" footgun from becoming a
+// total-loss event. The validation runs the first time
+// `getOrCreateUserWallet()` is invoked — the earliest point where a
+// deposit address would actually be derived.
+// ---------------------------------------------------------------------------
+
+const FORBIDDEN_MNEMONIC = 'test test test test test test test test test test test junk';
+
+function readMnemonicFromEnv(): string {
+  const raw = process.env.MNEMONIC;
+  if (!raw || raw.trim() === '') {
+    throw new Error(
+      'FATAL: MNEMONIC environment variable is required and must not be the well-known test mnemonic. Refusing to derive wallets.'
+    );
+  }
+  const trimmed = raw.trim();
+  if (trimmed === FORBIDDEN_MNEMONIC) {
+    throw new Error(
+      'FATAL: MNEMONIC environment variable is set to the well-known Ethereum test mnemonic ("abandon … about"). Refusing to derive wallets — replace with a real, operator-controlled BIP39 seed.'
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Validate a candidate BIP39 mnemonic phrase.
+ *
+ * Uses ethers v6's `Mnemonic.fromPhrase()`, which parses the phrase,
+ * checks the wordlist membership of each token, validates the
+ * checksum bit, and throws on anything malformed. Returns the
+ * normalized phrase on success.
+ *
+ * This is the canonical validation helper used by `getOrCreateUserWallet`
+ * (via `requireMnemonic()` below) and is also exported for use by
+ * callers that already have a phrase in hand (e.g. admin tools, tests).
+ */
+export function validateMnemonic(mnemonic: string): string {
+  if (typeof mnemonic !== 'string' || mnemonic.trim() === '') {
+    throw new Error('FATAL: mnemonic is empty.');
+  }
+  const trimmed = mnemonic.trim();
+  if (trimmed === FORBIDDEN_MNEMONIC) {
+    throw new Error(
+      'FATAL: refused to validate the well-known test mnemonic. Use an operator-controlled BIP39 seed.'
+    );
+  }
+  // ethers.Mnemonic.fromPhrase throws on: invalid word count, unknown
+  // words, or checksum failure. We let that exception propagate.
+  ethers.Mnemonic.fromPhrase(trimmed);
+  return trimmed;
+}
+
+// Lazy, fail-closed lookup of MNEMONIC. Resolved on first wallet
+// derivation request; result is memoized for the process lifetime.
+let cachedMnemonic: string | null = null;
+function requireMnemonic(): string {
+  if (cachedMnemonic !== null) return cachedMnemonic;
+  const candidate = readMnemonicFromEnv();
+  cachedMnemonic = validateMnemonic(candidate);
+  return cachedMnemonic;
+}
 
 const USDT_CONTRACT_EVM = process.env.USDT_CONTRACT_EVM || '0xdAC17F958D2ee523a2206206994597C13D831ec7';
 const USDC_CONTRACT_EVM = process.env.USDC_CONTRACT_EVM || '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
@@ -64,9 +133,18 @@ export function deriveTronWallet(mnemonic: string, index: number): DerivedWallet
 }
 
 /**
- * Get or derive a deposit wallet address for a user on a specific chain
+ * Get or derive a deposit wallet address for a user on a specific chain.
+ *
+ * Fails closed (throws) on first call if MNEMONIC is unset, empty, or
+ * equal to the well-known test mnemonic. Subsequent calls succeed once
+ * the mnemonic has been validated once.
  */
 export async function getOrCreateUserWallet(userId: string, chain: 'ethereum' | 'solana' | 'tron'): Promise<DerivedWallet> {
+  // Resolve and validate the operator-supplied mnemonic before doing any
+  // wallet math. requireMnemonic() throws on the three failure modes
+  // listed above, and on any BIP39 malformation.
+  const MNEMONIC = requireMnemonic();
+
   // 1. Check if wallet already exists in DB
   const existing = await query(
     'SELECT deposit_address, deposit_address_index FROM wallets WHERE user_id = $1 AND chain = $2 AND token_address IS NULL',

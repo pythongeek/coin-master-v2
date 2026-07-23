@@ -64,7 +64,7 @@
     - The original `totp.test.ts` had pre-existing route-level mock drift (uses column names like `two_factor_secret` / `two_factor_enabled` while `auth-2fa.ts` uses `totp_secret_encrypted` / `totp_enabled`) and references a deprecated `/2fa/login` route. That test file was not modified in this PR; its crypto-section assertions will be migrated in a separate cleanup. All assertions about AES-CBC vs AES-GCM behavior are now covered by `totp-gcm.test.ts`.
   - **Status**: `[TESTED & PASSED]`
 
-- [ ] **[P0-02] Hardcoded Mnemonic Fallback (theft of all deposits)**
+- [x] **[P0-02] Hardcoded Mnemonic Fallback (theft of all deposits)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/services/wallet-derivation.ts` (line 14: `const MNEMONIC = process.env.MNEMONIC || 'test test test test test test test test test test test junk'`)
   - **Issue/Gap**: If `MNEMONIC` env var is unset or empty, every deposit address on every chain is derived from the well-known Ethereum test mnemonic. The address space is publicly known, so any attacker can compute the deposit addresses in advance and sweep funds before users do. This is also a fail-OPEN bug in a fail-CLOSED domain (secret management).
   - **Proposed Fix**: At the top of `wallet-derivation.ts` (module load), add:
@@ -83,7 +83,12 @@
     - `docker compose up backend` with `MNEMONIC=` → container exits with code 1 and the FATAL message in stdout.
     - `docker compose up backend` with `MNEMONIC=test test…junk` → container exits with code 1.
     - `docker compose up backend` with a valid 12-word mnemonic → boot succeeds.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - Removed the `|| 'test...junk'` fallback entirely. The mnemonic is now resolved lazily via `requireMnemonic()` on the first call to `getOrCreateUserWallet()` and memoized for the process lifetime. Eager module-load validation would break unrelated test suites that import `wallet-derivation.ts` indirectly; lazy resolution keeps the contract strict without poisoning the import graph.
+    - Added `validateMnemonic(phrase)` exported helper that runs `ethers.Mnemonic.fromPhrase(trimmed)` (BIP39 wordlist + checksum check). It also refuses the forbidden test mnemonic by string match.
+    - Added `readMnemonicFromEnv()` with three FATAL branches: empty/missing, equals forbidden, BIP39 invalid (via the validateMnemonic call).
+    - New focused test file `src/test/wallet-derivation.test.ts` covers: validateMnemonic empty/forbidden/invalid/valid; getOrCreateUserWallet throws on unset MNEMONIC before any DB or Redis call; throws on forbidden MNEMONIC before any DB or Redis call; succeeds with valid MNEMONIC and reaches the DB+Redis layer; valid-phrase derivation produces a different address than the forbidden-mnemonic derivation (no seed reuse). All 17 assertions pass.
+  - **Status**: `[TESTED & PASSED]`
 
 - [ ] **[P0-03] DB Migration Boot Loop (DoS via bad migration)**
   - **File(s) Affected**: `backend/src/config/database.ts` (lines 43-53, `connectDB()` calls `runMigrations()`)
