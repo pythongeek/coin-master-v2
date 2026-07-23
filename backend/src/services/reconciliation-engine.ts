@@ -27,8 +27,23 @@ const TOLERANCE = 1e-8;
 
 /**
  * Reconciles the balances of a user and their wallets against transaction, bet, squad, and rain logs.
- * If any critical mismatch is found, logs an alert in ledger_alerts and freezes the user account.
- * 
+ *
+ * P0-05 contract:
+ *   - When called inline (with `existingClient`), the caller is responsible
+ *     for transaction boundaries. This is no longer done from `placeBet()`.
+ *   - When called standalone (without `existingClient`), this function
+ *     opens its own SERIALIZABLE transaction, runs all the ledger checks,
+ *     writes any `ledger_alerts` rows, optionally freezes the user, and
+ *     commits/rolls back.
+ *   - `ledger_alerts` rows are written REGARDLESS of the freeze setting.
+ *     The admin dashboard surfaces them; the freeze is opt-in.
+ *   - Auto-freeze is controlled by the admin setting
+ *     `reconciliation_auto_freeze` (off by default in prod — a single
+ *     legacy-test mismatch must not lock a freshly-registered user out).
+ *     When off, only the alert row is written; when on, `users.is_active`
+ *     is set to `false` (this is the live "freeze" mechanism — the live
+ *     DB has no `is_frozen` column).
+ *
  * @param userId - The user ID to reconcile.
  * @param existingClient - Optional PoolClient for running inside an existing database transaction.
  */
@@ -315,12 +330,13 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
     }
 
     // 4. Freeze account if compromised AND an admin has enabled auto-freeze.
-    // P3-7-fix: ledger-alert rows are written regardless (admin dashboard
-    // surfaces them). Auto-freeze is opt-in via admin_settings
-    // `reconciliation_auto_freeze` — off by default in prod so a single
-    // legacy-test mismatch doesn't lock a freshly-registered user out
-    // of the game. Set to 'true' from the admin panel if you want the
-    // old behavior of freezing on the first mismatch.
+    // P0-05: alerts are already written above — this block ONLY decides
+    // whether to additionally flip `users.is_active = false` (the live
+    // "freeze" mechanism — the live DB has no `is_frozen` column).
+    // Auto-freeze is opt-in via admin_settings `reconciliation_auto_freeze`
+    // and defaults to OFF in prod so a single legacy-test mismatch
+    // doesn't lock a freshly-registered user out of the game. The admin
+    // dashboard can also surface alerts and freeze manually.
     let frozen = false;
     if (isCompromised && userRow.is_active) {
       try {
@@ -338,6 +354,8 @@ export async function reconcileUser(userId: string, existingClient?: PoolClient)
         }
       } catch {
         // On error reading the setting, default to NO freeze (safer).
+        // The ledger_alerts rows were already written above, so the
+        // mismatch is still visible to the admin dashboard.
       }
     }
 

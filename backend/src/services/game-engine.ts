@@ -48,6 +48,97 @@ import {
 } from './bonus';
 import { getVipRakebackPercent } from './vip';
 
+// ─────────────────────────────────────────────────────────────────
+// P0-05: Reconciliation coalescing cache.
+//
+// `placeBet()` previously called `reconcileUser()` *inline* inside
+// the SERIALIZABLE transaction, holding the user + wallets
+// `FOR UPDATE` row locks for the entire reconcile query burst. Under
+// concurrent betting (30 bets/min × N users) the lock contention
+// caused 30s timeouts on subsequent bets, and reconciliation could
+// flip the user's freeze flag in the middle of an active round.
+//
+// New contract:
+//   - `placeBet()` does NOT call `reconcileUser()` inline.
+//   - After COMMIT, a `setImmediate(() => reconcileUser(userId))`
+//     fires (outside the transaction).
+//   - An in-process 60s TTL cache per `userId` suppresses duplicate
+//     reconcile calls when an active player triggers many bets.
+//   - The authoritative periodic reconcile remains
+//     `startReconciliationLoop()` in `services/reconciliation.ts`
+//     (payment-gateway recovery) and any explicit admin trigger.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Coalescing cache: at most one pending reconcile per userId, with
+ * a 60s sliding window. When a reconcile is queued and a previous
+ * call for the same user is still pending (or completed < 60s ago),
+ * the new request is suppressed.
+ *
+ * Values: { queuedAt: number; completedAt?: number } | undefined
+ */
+const RECONCILE_COALESCE_WINDOW_MS = 60_000;
+const reconcileCache = new Map<string, { queuedAt: number; completedAt: number }>();
+
+function shouldScheduleReconcile(userId: string): boolean {
+  const now = Date.now();
+  const entry = reconcileCache.get(userId);
+  if (!entry) return true;
+  // Already queued (no completedAt) → coalesce.
+  if (!entry.completedAt) return false;
+  // Recently completed → coalesce.
+  if (now - entry.completedAt < RECONCILE_COALESCE_WINDOW_MS) return false;
+  return true;
+}
+
+function markReconcileQueued(userId: string): void {
+  reconcileCache.set(userId, { queuedAt: Date.now(), completedAt: 0 });
+}
+
+function markReconcileCompleted(userId: string): void {
+  const entry = reconcileCache.get(userId);
+  if (entry) {
+    entry.completedAt = Date.now();
+  }
+}
+
+/**
+ * Post-commit reconciliation dispatcher. Fire-and-forget; never
+ * throws into the bet response path. Errors are logged at `error`
+ * level and the cache entry is cleared regardless of outcome so
+ * subsequent bets can retry.
+ */
+export function schedulePostCommitReconcile(userId: string): void {
+  if (!shouldScheduleReconcile(userId)) return;
+  markReconcileQueued(userId);
+  setImmediate(() => {
+    reconcileUser(userId)
+      .then((result) => {
+        markReconcileCompleted(userId);
+        if (!result.isValid) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[reconcile] post-commit mismatch user=${userId} ` +
+            `frozen=${result.frozen} mismatch=${result.userBalance.mismatch}`,
+          );
+        }
+      })
+      .catch((err) => {
+        reconcileCache.delete(userId);
+        // eslint-disable-next-line no-console
+        console.error(
+          `[reconcile] post-commit reconcile failed for user=${userId}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      });
+  });
+}
+
+/** Test-only: clear the coalescing cache. Not exported via routes. */
+export function _resetReconcileCacheForTests(): void {
+  reconcileCache.clear();
+}
+
 // ── ইনপুট ও আউটপুটের ধরন ───────────────────────────────────────
 export interface BetRequest {
   userId: string;
@@ -506,10 +597,20 @@ export async function placeBet(req: BetRequest): Promise<BetResponse> {
 
     // Run reconciliation check AFTER creditWagering so bonus/wager counters are committed
     // and the ledger matches the actual balance columns.
+    //
+    // P0-05: reconciliation NO LONGER runs inline inside this SERIALIZABLE
+    // transaction. Previously `reconcileUser()` held the user + wallets
+    // FOR UPDATE row locks for the full reconcile query burst, which under
+    // concurrent betting caused 30s timeouts on subsequent bets and could
+    // flip the freeze flag mid-round. Reconciliation is now scheduled
+    // post-COMMIT (see schedulePostCommitReconcile below).
     await creditWagering(req.userId, req.amount, txClient);
-    await reconcileUser(req.userId, client);
 
     await client.query('COMMIT');
+
+    // Post-commit reconciliation dispatcher: fires outside the
+    // transaction, fire-and-forget, with 60s coalescing per userId.
+    schedulePostCommitReconcile(req.userId);
 
     // Invalidate caches for updated stats and leaderboards
     const keysToInvalidate = [`cache:stats:${req.userId}`, 'cache:leaderboards', 'cache:stats:active'];

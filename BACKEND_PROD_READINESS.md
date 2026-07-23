@@ -143,11 +143,11 @@
     - 42 assertions pass in `src/test/audit-backup.test.ts` covering source-level checks (correct table name, correct columns, BACKUP_MODE env, real @aws-sdk import, no try/catch wrap, to_regclass assertion, package.json declaration), runtime checks (BACKUP_MODE=local/s3/both/invalid, table-existence assertion) and S3 path verification (correct bucket, correct key prefix, exactly one PutObject call).
   - **Status**: `[TESTED & PASSED]`
 
-- [ ] **[P0-05] Hot-Path Reconciliation Freeze (DoS under bet load)**
+- [x] **[P0-05] Hot-Path Reconciliation Freeze (DoS under bet load)** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/services/game-engine.ts` (`placeBet()` calls `reconcileUser()` inline); `backend/src/services/reconciliation-engine.ts`
   - **Issue/Gap**: `placeBet()` invokes `reconcileUser()` inside the SERIALIZABLE transaction. Each reconciliation reads multiple tables, computes sums, may write `ledger_alert` rows, and can flip a freeze flag. Under concurrent betting (30 bets/min × dozens of users), the reconciliation lock holds the user-row lock for tens of milliseconds, queueing every subsequent bet for that user. Symptom: after a single big win, all subsequent bets from any user time out at 30s. P3-7-fix-2 partially mitigated this via IP whitelist, but the underlying hot-path call remains.
   - **Proposed Fix**:
-    1. Remove `reconcileUser()` from `placeBet()`. Replace with `setImmediate(() => reconcileUser(userId).catch(logErr))` **after** the SERIALIZABLE transaction commits (fire-and-forget, never inside the lock).
+    1. Remove `reconcileUser()` from `placeBet()`. Replace with `setImmediate(() => reconcileUser(userId).catch(logErr))` (fire-and-forget, never inside the lock).
     2. The existing `startReconciliationLoop()` already runs every 5 min (`backend/src/services/reconciliation.ts`) — keep it as the authoritative periodic job.
     3. If a reconcile finds a `bonus_balance_mismatch`, write a `ledger_alert` row (audit-only) instead of immediately freezing the user. Freezing should happen via a separate, debounced background task.
     4. Add an in-process LRU cache `reconcileCache.get(userId)` with 60s TTL to suppress duplicate reconcile calls from `setImmediate` bursts.
@@ -156,7 +156,21 @@
     - Load test: `k6 run tests/load/bet-storm.js --vus 50 --duration 60s` — p95 placeBet latency < 250 ms, zero timeouts, zero freeze-state flips on a clean account.
     - Integration test: placeBet → win big → confirm next placeBet on same user succeeds within 100 ms (no freeze cascade).
     - Run `npm run reconcile:once` after the test → confirm a `ledger_alert` row exists but `users.is_frozen` remains `false`.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-23)**:
+    - **Spec premise correction**: The spec mentioned `users.is_frozen = true` as the freeze mechanism, but the live DB has NO `is_frozen` column — `users.is_active = false` is the actual freeze mechanism (`SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name LIKE '%frozen%'` returns 0 rows). Code already used this mechanism via the opt-in `reconciliation_auto_freeze` admin setting; P0-05 keeps that contract.
+    - **`game-engine.ts` changes**:
+      - Removed the inline `await reconcileUser(req.userId, client)` call from inside the SERIALIZABLE transaction (was at line 510, between `creditWagering()` and `client.query('COMMIT')`).
+      - Added `schedulePostCommitReconcile(userId)` (exported). After `COMMIT`, the function is called. It is fire-and-forget: errors are logged at `error` level and never propagate into the bet response path.
+      - Added a 60s coalescing cache (module-level `Map<userId, {queuedAt, completedAt}>`). A reconcile that completed within the last 60s suppresses new ones; an in-flight reconcile is also coalesced (only one pending per userId).
+      - Exported `_resetReconcileCacheForTests()` for test isolation.
+      - Implementation is fire-and-forget via `setImmediate(() => reconcileUser(userId).then(...).catch(...))`.
+    - **`reconciliation-engine.ts` changes**:
+      - Updated doc comment to spell out the new contract: alerts always written, freeze opt-in via `reconciliation_auto_freeze`, the freeze column is `users.is_active` (no `is_frozen`).
+      - Reordered comments to make it explicit that the alert INSERTs run BEFORE the freeze block and are NOT gated by `shouldFreeze`.
+      - No structural code changes — the existing alert-before-freeze logic was already correct (this was implemented in P3-7-fix-2 per the doc comments).
+    - **`reconciliation.ts` (payment-gateway cron) UNCHANGED**: `startReconciliationLoop()` and the 5-minute `setInterval` remain as the authoritative periodic worker for payment-reconciliation (different concern from user balance reconciliation).
+    - 24 assertions pass in `src/test/game-engine-reconcile.test.ts` covering source-level checks (no inline `reconcileUser(...client)`, schedulePostCommitReconcile exported, 60_000 ms coalescing window, setImmediate dispatch, post-COMMIT call order, ledger_alerts+reconciliation_auto_freeze contract, cron unchanged) and runtime checks (first reconcile fires once per userId, duplicate reconciles within 60s coalesced, different userIds fire independently, _resetReconcileCacheForTests re-arms, reconcileUser writes alerts without freezing when auto-freeze unset, reconcileUser writes alerts AND freezes when auto-freeze = 'true').
+  - **Status**: `[TESTED & PASSED]`
 
 - [ ] **[P0-06] Global Error Leakage (DB schema disclosure to clients)**
   - **File(s) Affected**: `backend/src/index.ts` (global error handler, ~line 181); secondary leak sites: `backend/src/routes/admin-audit.ts` (lines 170, 194, 224, 283, 303, 371), `admin-email.ts`, `ml-routes.ts`, `dashboard.ts`
