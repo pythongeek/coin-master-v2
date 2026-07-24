@@ -200,8 +200,12 @@ if (_envLoadResult.loaded > 0) {
   console.log(`[env-loader] injected ${_envLoadResult.loaded} vars from: ${_envLoadResult.files.join(", ")}`);
 }
 
-app.use('/api/admin/config', adminPublicRoutes);
 // Protected admin routes (order matters: withdrawals before catch-all adminRoutes)
+//
+// P1-10: removed the prior `app.use('/api/admin/config', adminPublicRoutes)` duplicate.
+// adminPublicRoutes is now mounted exactly once — at /api/public below — so anonymous
+// users no longer accidentally reach a path that is named under /api/admin/*.
+
 app.use('/api/admin/withdrawals', adminWithdrawalsRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin/balance', adminBalanceRoutes);

@@ -3,11 +3,13 @@
  *  PUBLIC ADMIN CONFIG — game-math-relevant subset (no auth)
  * ═══════════════════════════════════════════════════════════════
  *
- *  Mounted at `/api/admin/config/public` (in index.ts, BEFORE the
- *  protected /api/admin router — see comment there). This router is
- *  separate from routes/admin.ts because Express router-level
- *  `router.use()` middleware applies to all subsequent routes in that
- *  router — you can't escape it by source-code ordering.
+ *  Mounted at `/api/public` (in index.ts). Until P1-10 there was also a
+ *  duplicate mount at `/api/admin/config`; that was removed because it
+ *  shadowed admin paths under the same prefix and bypassed the
+ *  gateway-token isolation in middleware.ts. This router is separate
+ *  from routes/admin.ts because Express router-level `router.use()`
+ *  middleware applies to all subsequent routes in that router —
+ *  you can't escape it by source-code ordering.
  *
  *  IMPORTANT: Only expose fields that are safe to share publicly.
  *  Do NOT add fields like `maxBet`, `rainBudget`, `adminWallet`, etc.
