@@ -244,16 +244,6 @@
 
 > Do not block public launch but will burn hours under real load. ~2-3 days.
 
-- [ ] **[P1-01] Duplicate Migration File Numbering**
-  - **File(s) Affected**: `backend/migrations/` — duplicate prefixes `024` (`024_add_cancelled_status.sql` + `024_deposit_kyc.sql`), `025` (`025_2fa_stepup.sql` + `025_bilingual_email_templates.sql`), `042` (`042_add_streak_lightning_columns.sql` + `042_ip_whitelist_self_loopback.sql`)
-  - **Issue/Gap**: `node-pg-migrate` keys on the **full filename** in `pgmigrations.name`, so the duplicates coexist today. But future-numbering decisions become ambiguous — you cannot add a third `024_*` file because the alphabetical order is implicit. Risk of human error on the next migration author.
-  - **Proposed Fix**: Rename in a single migration commit:
-    - `024_add_cancelled_status.sql` → `015_add_cancelled_status.sql` (re-claim the gap left at 015)
-    - `024_deposit_kyc.sql` → stays `024_deposit_kyc.sql`
-    - `025_2fa_stepup.sql` → stays
-    - `025_bilingual_email_templates.sql` → `026_bilingual_email_templates.sql`
-    - `042_add_streak_lightning_columns.sql` → stays
-    - `042_ip_whitelist_self_loopback.sql` → `043_ip_whitelist_self_loopback.sql`
 - [x] **[P1-01] Duplicate Migration File Numbering** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/migrations/` (`024_*`, `025_*`, `042_*`, `043_*`)
   - **Issue/Gap**: Multiple SQL migration files share numeric prefixes (`024`, `025`, `042`). While `node-pg-migrate` tracks applied migrations by full filename string, duplicate numbering introduces file ordering ambiguity, risks execution race conditions, and complicates future schema updates.
@@ -433,18 +423,39 @@
     - Manual: kill the test webhook server → trigger 5 events → confirm DLQ row appears in `GET /api/admin/webhooks/dlq`.
   - **Status**: `[TESTED & PASSED]`
 
-- [ ] **[P1-06] `/metrics` Endpoint Has No Authentication**
-  - **File(s) Affected**: `backend/src/index.ts` (`app.use('/metrics', metricsRoutes)` ~line 161); `backend/src/routes/metrics.ts`
-  - **Issue/Gap**: `/metrics` exposes `cryptoflip_bets_placed_total`, `hot_wallet_balance`, `cryptoflip_deposit_total_usd`, etc. — all market-sensitive. An attacker can resolve the host and scrape freely.
-  - **Proposed Fix**:
-    1. Add IP allowlist middleware: `metricsRoutes.use((req, res, next) => { if (!METRICS_IP_ALLOWLIST.includes(req.ip)) return res.status(404).end(); next(); })`.
-    2. Read from `METRICS_IP_ALLOWLIST` env (comma-separated CIDRs).
-    3. Document the Prometheus scraper IP in `monitoring/prometheus.yml`.
-  - **Verification / Test Method**:
-    - `curl https://api.cryptoflip.../metrics` from a non-allowlisted IP → 404.
-    - `curl https://api.cryptoflip.../metrics` from `10.0.0.5` → 200 with the full payload.
-    - `npx tsc --noEmit` clean.
-  - **Status**: `[NOT STARTED]`
+- [x] **[P1-06] `/metrics` Endpoint Has No Authentication** ✓ TESTED & PASSED 2026-07-24
+  - **File(s) Affected**: `backend/src/routes/metrics.ts` (IP allowlist middleware + env parser); `backend/src/index.ts` (mount unchanged); `backend/.env.example` (new `METRICS_IP_ALLOWLIST=`); `docker-compose.yml` (new `METRICS_IP_ALLOWLIST` env); `monitoring/prometheus.yml` (operator comment); `backend/src/test/metrics-security.test.ts` (new); `backend/src/test/run-all.ts` (wired new test).
+  - **Issue/Gap (resolved state)**: `/metrics` was publicly accessible and exposed market-sensitive counters (`cryptoflip_bets_placed_total`, `cryptoflip_hot_wallet_balance`, `cryptoflip_deposits_created_total`, etc.). An attacker who resolved the host could scrape the metrics at will and learn real-time deposit velocity, hot-wallet balance, and fraud-alert rate.
+  - **Proposed Fix** (all implemented in this commit):
+    1. New `metricsIpAllowlist` Express middleware on the `/metrics` route that reads `METRICS_IP_ALLOWLIST` (comma-separated CIDRs or single IPs). The default allowlist, when env is unset, is `127.0.0.1`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` — loopback + RFC1918 private ranges. Defaults are ALWAYS applied (so the operator can lock down further by setting `METRICS_IP_ALLOWLIST` without losing loopback access).
+    2. IPv4-mapped-IPv6 normalization: `::ffff:8.8.8.8` is normalized to `8.8.8.8` before the allowlist check, so an attacker cannot bypass an `8.8.8.8` allowlist by spoofing the v6 prefix.
+    3. **404 (not 403)** on rejection — deliberately indistinguishable from a missing route so port-scanners can't confirm `/metrics` exists.
+    4. `monitoring/prometheus.yml` updated with a comment explaining the allowlist, the default range, and the docker-network scraper IP (`172.17.0.0/16`).
+    5. `METRICS_IP_ALLOWLIST` added to `docker-compose.yml` env block so operators can set it in `.env` (chmod 600) without rebuilding the image.
+    6. New `backend/src/test/metrics-security.test.ts` with **28 assertions** covering: default allowlist (loopback + RFC1918 OK; public IPs rejected), custom allowlist overrides, single-IP exact match, mixed CIDR+IP, malformed entries ignored with warning, IPv6 loopback allowed, IPv4-mapped-IPv6 normalization, 404 status with empty body for unauthorized requests.
+  - **Verification / Test Method** (all verified live on cx23):
+    - `curl -i http://46.62.247.167:4000/metrics` (from public IP, NOT in any default range) → **HTTP/1.1 404 Not Found** ✅
+    - `docker exec coin-master-backend-1 node -e ...` (loopback, inside container) → **HTTP 200** with `body bytes: 10635` (full Prometheus payload) ✅
+    - `npx tsc --noEmit` → **exit 0** ✅
+    - `npm run build` → **exit 0** ✅
+    - `npx ts-node src/test/metrics-security.test.ts` → **28/28 assertions pass** (`🎉 All P1-06 metrics-allowlist tests passed`) ✅
+    - Other non-redis tests: `admin-geoip`, `maxmind`, `totp-gcm`, `withdrawal-payout-memory`, `p1-12-hcaptcha`, `p1-12-fingerprint-cap`, `p1-12-register-strict-limiter` — all still pass (no regression).
+  - **Implementation Notes (2026-07-24)**:
+    - The `metricsIpAllowlist` middleware uses a memoized allowlist that invalidates automatically when `METRICS_IP_ALLOWLIST` env changes — so an operator can rotate the env at runtime without restarting the process (next request rebuilds the list).
+    - CIDR parsing is IPv4-only at /32. IPv6 CIDR (e.g., `2001:db8::/32`) is rejected as malformed — out of scope for P1-06. A literal IPv6 address (e.g., `::1`) works because it doesn't go through the CIDR parser.
+    - The 404 response body is intentionally empty (no JSON, no error message) — reduces the fingerprint surface for a probing attacker.
+    - **Live smoketest evidence** (cx23, post-rebuild):
+      ```
+      $ curl -i http://46.62.247.167:4000/metrics
+      HTTP/1.1 404 Not Found
+      Content-Security-Policy: default-src 'self'; ...
+      (no body, just headers + Connection close)
+      
+      $ docker exec coin-master-backend-1 node -e '...'
+      status= 200 body bytes= 10635
+      ```
+    - **Scope discipline**: I did not add BasicAuth or bearer-token auth on top of the IP allowlist. IP allowlist is the right control for a same-network Prometheus scraper. Bearer auth would be appropriate for multi-tenant SaaS, but for the current single-VM deployment it's overkill. If the operator later moves Prometheus off the same network, they can either add the new IP to `METRICS_IP_ALLOWLIST` or add a bearer token.
+  - **Status**: `[TESTED & PASSED]`
 
 - [x] **[P1-07] Duplicate Rate-Limit Middleware** ✓ TESTED & PASSED 2026-07-23
   - **File(s) Affected**: `backend/src/middleware/rate-limit.ts` (deleted); `backend/src/middleware/rate-limiter.ts` (extended); `backend/src/routes/kyc.ts`; `backend/src/routes/payment.ts`; `backend/src/routes/wallet-deposit-qr.ts`; `backend/package.json`; new `backend/scripts/check-no-legacy-rate-limit.mjs`

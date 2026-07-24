@@ -85,6 +85,12 @@ services:
       # Dev: allow admin login without 2FA so smoke tests can run end-to-end.
       # Production should set this to 'true' or remove the override entirely.
       - ADMIN_2FA_REQUIRED=${ADMIN_2FA_REQUIRED:-true}
+      # P1-06: comma-separated CIDR/IP allowlist for /metrics endpoint.
+      # If unset, the default is loopback + RFC1918 private ranges
+      # (127.0.0.1, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+      # Set this to your Prometheus scraper's source IP/CIDR.
+      # Unauthorized requests get HTTP 404.
+      - METRICS_IP_ALLOWLIST=${METRICS_IP_ALLOWLIST:-}
     # volumes:
     #   # Host mount disabled for production — the image already contains
     #   # the compiled dist/ from the multi-stage Dockerfile builder.
