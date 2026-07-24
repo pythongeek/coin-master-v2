@@ -9,7 +9,7 @@ on:
 jobs:
   # ─── BACKEND ─────────────────────────────────────────────────
   backend:
-    name: Backend (lint + typecheck + build + test)
+    name: Backend (migrations lint + lint + typecheck + build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -22,10 +22,22 @@ jobs:
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      # P2-01: migration filename linter — fails the build if any two
+      # .sql files share a numeric prefix. Runs BEFORE the build so a
+      # bad PR is rejected at the cheapest possible step.
+      - name: Migration prefix lint
+        run: npm run lint:migrations
+      # P2-03: dependency security audit — fails the build on
+      # vulnerabilities at high severity or worse. `audit-level=high`
+      # mirrors the production `.npmrc` setting.
+      - name: npm audit (high+ severity)
+        run: npm audit --audit-level=high
       - name: Lint
         run: npm run lint
         continue-on-error: true
-      - name: TypeScript
+      # P2-02: strict TypeScript gate. The `tsconfig.json` has
+      # `noEmitOnError: true`, so any type error fails the build.
+      - name: TypeScript (strict, noEmitOnError)
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
