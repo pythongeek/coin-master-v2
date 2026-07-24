@@ -30,6 +30,17 @@ export const registerSchema = z.object({
   fingerprint: z
     .string()
     .optional(),
+  /**
+   * P1-12 — hCaptcha token (optional in the schema, REQUIRED at the
+   * route level when HCAPTCHA_SECRET is set in env). The schema keeps
+   * it optional so dev / unit tests can post without a captcha; the
+   * `hcaptchaMiddleware` enforces presence only when the server is
+   * actually configured to verify hCaptcha.
+   */
+  hcaptchaToken: z
+    .string()
+    .max(4096, 'hcaptchaToken too long')
+    .optional(),
 });
 
 export const loginSchema = z.object({

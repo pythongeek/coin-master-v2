@@ -242,6 +242,33 @@ export const registerLimiter: RequestHandler = rateLimit({
 });
 
 /**
+ * Auth — registration strict (P1-12).
+ *
+ * 3 attempts / minute / IP. Tight burst limit on top of the broader
+ * `registerLimiter` (10/hour). The original 5/min `authLimiter` was
+ * too loose for an endpoint that grants a welcome bonus — automated
+ * signup bots could drain the bonus pool at 5 accounts/min/IP.
+ *
+ * Why both limiters? `authLimiter` (5/min) protects all auth endpoints
+ * (login, register, 2fa) with a shared quota, and `registerStrictLimiter`
+ * (3/min) is a **dedicated** tighter quota for the bonus-granting
+ * signup endpoint. A user that hits `registerStrictLimiter` won't
+ * also drain their login quota, and vice-versa.
+ *
+ * Pairs with `fingerprintFraudCap` (3 accounts / device / 24h) to
+ * cap both per-IP and per-device signup rates.
+ */
+export const registerStrictLimiter: RequestHandler = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  limit: 3,
+  store: new RedisStore(),
+  keyGenerator: (req) => `register-strict:${req.ip ?? req.socket.remoteAddress ?? 'unknown'}`,
+  handler: withAuditHandler('/api/auth/register.strict', 3),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
+
+/**
  * Auth — password reset (P1-07 migration).
  *
  * 3 attempts / hour, keyed by IP.

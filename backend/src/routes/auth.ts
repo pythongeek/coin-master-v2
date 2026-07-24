@@ -23,7 +23,8 @@ import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
 import { getAdminSettingBool } from '../services/admin-settings.service';
 import { validateBody } from '../middleware/validation';
-import { authLimiter } from '../middleware/rate-limiter';
+import { authLimiter, registerStrictLimiter } from '../middleware/rate-limiter';
+import { hcaptchaMiddleware } from '../middleware/hcaptcha';
 import {
   registerSchema,
   loginSchema,
@@ -35,6 +36,7 @@ import { isIpWhitelisted } from '../services/ip-whitelist';
 import { isBlockedEmailDomain } from '../config/blocked-email-domains';
 import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
 import { recordDeviceUse } from '../services/device-fingerprint';
+import { checkFingerprintRegistrationCap } from '../services/fingerprint-fraud-cap';
 import { detectSelfReferral, recordSelfReferralVerdict, SelfReferralCheck } from '../services/affiliate-guard';
 import { alertDeviceCluster, alertSelfReferral } from '../services/fraud-alerts';
 import { recalculateRisk } from '../services/ai-risk-engine';
@@ -44,7 +46,22 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/register — নতুন অ্যাকাউন্ট তৈরি
 // ══════════════════════════════════════════════════════════════
-router.post('/register', authLimiter, validateBody(registerSchema), async (req: Request, res: Response) => {
+//
+//  P1-12 layered defense against automated signup + bonus abuse:
+//   1. `registerStrictLimiter` (3/min/IP) — tight burst limit (Redis Lua bucket).
+//   2. `hcaptchaMiddleware` — fails closed only when HCAPTCHA_SECRET is
+//      set in env; bypasses in dev/test so unit tests can run.
+//   3. `checkFingerprintRegistrationCap` — fails with HTTP 429 when
+//      the device fingerprint already has `cap` accounts in the
+//      last 24h. Caps work per device, complementing the per-IP
+//      `fraud_max_accounts_per_ip_24h` cap already in this handler.
+//
+router.post(
+  '/register',
+  registerStrictLimiter,
+  validateBody(registerSchema),
+  hcaptchaMiddleware,
+  async (req: Request, res: Response) => {
   try {
     const { username, email, password, referralCode, fingerprint } = req.body;
     const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
@@ -163,6 +180,29 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
         shouldFlag = true;
         fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ${ipCount}টি অ্যাকাউন্ট তৈরি করা হয়েছে (ক্যাপ ${ipCap}) — নজরে রাখা হচ্ছে।`);
       }
+    }
+
+    // 3. P1-12 — Per-device fingerprint cap (24h).
+    //    Independent of the IP cap: a botnet rotating IPs still has
+    //    the same browser/device fingerprint, so this caps signup
+    //    regardless of network identity. Admin-tunable via
+    //    admin_settings.fraud_max_accounts_per_fingerprint_24h (default 3).
+    const fpCap = await checkFingerprintRegistrationCap(fingerprint, ipAddress);
+    if (!fpCap.allowed) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, details)
+         VALUES ('fraud', 'signup.blocked.fingerprint_rate_limit', 'error', $1)`,
+        [JSON.stringify({
+          ip: ipAddress,
+          fingerprint_hash: fpCap.fingerprintHash,
+          count_24h: fpCap.countInLast24h,
+          cap: fpCap.cap,
+        })],
+      );
+      return res.status(429).json({
+        success: false,
+        error: `Too many accounts created from this device recently (${fpCap.countInLast24h} in last 24h, cap ${fpCap.cap}). Please try again later.`,
+      });
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
