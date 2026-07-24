@@ -13,6 +13,8 @@ const testFiles = [
   'rbac.test.ts',
   'security.test.ts',
   'totp.test.ts',
+  'totp-gcm.test.ts',
+  'totp-key-derivation.test.ts',
   'kyc.test.ts',
   'wallet.test.ts',
   'withdrawal.test.ts',

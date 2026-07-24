@@ -1,6 +1,7 @@
 /**
- * ═══════════════════════════════════════════════════════════════
+ * ══════════════════════════════════════════════════════════════
  *  TOTP (RFC 6238) utilities — base32 / HOTP / verify.
+ * ══════════════════════════════════════════════════════════════
  *
  *  Encryption of TOTP secrets is delegated to `secret-vault.ts`,
  *  which uses AES-256-GCM with a 16-byte IV + 16-byte auth tag.
@@ -12,18 +13,34 @@
  *  AES-256-CBC and stored ciphertexts as `iv:ciphertext` hex.
  *  On read, `decryptSecretWithMigration` first tries GCM
  *  (base64-encoded `iv|authTag|ciphertext` blob); on failure it
- *  falls back to legacy CBC and invokes the supplied callback
- *  so the caller can persist the value re-encrypted with GCM.
+ *  falls back to legacy CBC via `decryptLegacyCBCSecret` (which
+ *  itself uses the deprecated `getLegacyEncryptionKey` from
+ *  `secret-vault.ts`) and invokes the supplied callback so the
+ *  caller can persist the value re-encrypted with GCM.
+ *
+ *  P1-08 — Key derivation unification:
+ *    - All key derivation for AES (modern and legacy) lives in
+ *      `services/secret-vault.ts`. This file does NOT call
+ *      `crypto.createHash` directly anymore — the only `createHash`
+ *      reference is the legacy-CBC-internal HOTP HMAC-SHA1, which
+ *      is unrelated to encryption key derivation.
+ *    - The encryption API stays unchanged: `encryptSecret` /
+ *      `decryptSecret` / `decryptSecretWithMigration` all keep the
+ *      same shape, so existing callers (`auth-2fa.ts`,
+ *      `routes/admin.ts`, etc.) and tests don't change.
+ *
  *  After the one-shot re-encryption window (operator-managed),
- *  remove the `decryptSecretLegacyCBC` branch and the
- *  `decryptSecretWithMigration` helper.
- * ═══════════════════════════════════════════════════════════════
+ *  remove the legacy CBC fallback entirely — at that point every
+ *  stored secret will be GCM and the migration fast-path becomes
+ *  a no-op.
+ * ══════════════════════════════════════════════════════════════
  */
 
 import crypto from 'crypto';
 import {
   encryptSecret as vaultEncrypt,
   decryptSecret as vaultDecrypt,
+  decryptLegacyCBCSecret,
 } from '../services/secret-vault';
 
 // ---------------------------------------------------------------------------
@@ -49,7 +66,7 @@ export function decryptSecret(cipherText: string): string {
 
 /**
  * Read a stored TOTP secret, transparently handling legacy
- * AES-256-CBC ciphertexts by re-encrypting with AES-256-GCM
+ * AES-256-CBC ciphertexts by re-encrypting with AES-GCM
  * and persisting back to the DB via `persistReencrypted`.
  *
  * @param cipherText the stored value (GCM base64 OR legacy CBC `iv:ciphertext` hex)
@@ -72,9 +89,9 @@ export async function decryptSecretWithMigration(
     // Fall through to legacy CBC attempt.
   }
 
-  // Legacy path: AES-256-CBC with hex `iv:ciphertext` layout.
-  // The historical key derivation was sha256(JWT_SECRET).
-  const plain = decryptSecretLegacyCBC(cipherText);
+  // Slow path: legacy AES-256-CBC + sha256(JWT_SECRET) derivation,
+  // both delegated to `secret-vault.ts`.
+  const plain = decryptLegacyCBCSecret(cipherText);
 
   // Re-encrypt under AES-GCM and hand back to the caller for
   // persistence. If persistence fails, we still return the plaintext
@@ -94,48 +111,6 @@ export async function decryptSecretWithMigration(
   }
 
   return plain;
-}
-
-// ---------------------------------------------------------------------------
-// Legacy AES-256-CBC helpers — kept ONLY for migration-on-read of
-// pre-P0-01 ciphertexts. Do NOT use for new writes.
-// ---------------------------------------------------------------------------
-
-const LEGACY_ALGORITHM = 'aes-256-cbc';
-const LEGACY_KEY_DERIVATION = 'sha256';
-
-/**
- * @deprecated Only used internally by `decryptSecretWithMigration`.
- * Derives the legacy AES key as sha256(JWT_SECRET).
- */
-function getLegacyEncryptionKey(): Buffer {
-  const secret = process.env.JWT_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new Error(
-      'FATAL: JWT_SECRET environment variable is required and must be at least 32 characters. Refusing to start.',
-    );
-  }
-  return crypto.createHash(LEGACY_KEY_DERIVATION).update(secret).digest();
-}
-
-/**
- * @deprecated Only used internally by `decryptSecretWithMigration`.
- * Decrypts a legacy AES-256-CBC `iv:ciphertext` hex string.
- */
-function decryptSecretLegacyCBC(cipherText: string): string {
-  const parts = cipherText.split(':');
-  if (parts.length !== 2) {
-    throw new Error('Invalid legacy encrypted format');
-  }
-  const iv = Buffer.from(parts[0], 'hex');
-  const encryptedText = Buffer.from(parts[1], 'hex');
-  if (iv.length !== 16) {
-    throw new Error('Invalid legacy IV length');
-  }
-  const decipher = crypto.createDecipheriv(LEGACY_ALGORITHM, getLegacyEncryptionKey(), iv);
-  let decrypted = decipher.update(encryptedText, undefined, 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
 }
 
 // ---------------------------------------------------------------------------
