@@ -149,6 +149,35 @@ export function decryptLegacyCBCSecret(cipherText: string): string {
   return decrypted;
 }
 
+/**
+ * Decrypt a blob produced by `encryptSecret` and return the plaintext
+ * as a NodeJS `Buffer` (NOT a UTF-8 string). Caller MUST zero the
+ * buffer with `.fill(0)` immediately after use — V8 does not zero JS
+ * `string` heap blocks when their references drop, and even Buffer
+ * instances are subject to GC-allocator behaviour that may leave the
+ * underlying memory readable via process-core dumps. Pair with the
+ * `try { ... } finally { buf.fill(0); }` pattern.
+ *
+ * P1-09 hot-wallet path uses this for the private key. For non-secret
+ * plaintext (e.g. an API key shown to the admin UI), keep using
+ * `decryptSecret` (string).
+ */
+export function decryptSecretToBuffer(ciphertext: string): Buffer {
+  const blob = Buffer.from(ciphertext, 'base64');
+  if (blob.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+    throw new Error('Invalid encrypted secret');
+  }
+  const iv = blob.subarray(0, IV_LENGTH);
+  const authTag = blob.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+  const encrypted = blob.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+  const decipher = crypto.createDecipheriv(ALGORITHM, getEncryptionKey(), iv);
+  decipher.setAuthTag(authTag);
+  // Concat directly to a Buffer so callers can `.fill(0)` the entire
+  // plaintext span. Returning a string would force a copy into V8's
+  // external (UTF-16) heap, which the JS GC cannot zero.
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+}
+
 export function isSecretVaultConfigured(): boolean {
   return !!process.env.KYC_SECRET_ENCRYPTION_KEY;
 }

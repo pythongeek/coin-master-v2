@@ -143,8 +143,14 @@ export class TronMcpService {
     return (value / 10 ** decimals).toFixed(decimals).replace(/\.?0+$/, '');
   }
 
-  private hotWalletAddressFromKey(privateKey: string): string {
+  private hotWalletAddressFromKey(privateKey: string | Buffer): string {
+    // Accept Buffer so callers with a secret Bytes (NodeJS Buffer) can
+    // stay Buffer-only end-to-end and rely on `.fill(0)` after use
+    // instead of forcing a string copy. TronWeb's API accepts either.
     const { TronWeb } = require('tronweb');
+    if (Buffer.isBuffer(privateKey)) {
+      return TronWeb.address.fromPrivateKey(privateKey.toString('hex'));
+    }
     return TronWeb.address.fromPrivateKey(privateKey);
   }
 
@@ -224,7 +230,7 @@ export class TronMcpService {
   async buildUsdtTransfer(
     toAddress: string,
     amountUsdt: number,
-    privateKey: string
+    privateKey: string | Buffer
   ): Promise<{ signedTx: any; txId: string }> {
     const decimals = 6;
     const rawAmount = Math.round(amountUsdt * 10 ** decimals);
@@ -265,7 +271,7 @@ export class TronMcpService {
   async estimateEnergy(
     toAddress: string,
     amountUsdt: number,
-    privateKey: string
+    privateKey: string | Buffer
   ): Promise<{ energy: number; transaction?: any }> {
     const decimals = 6;
     const rawAmount = Math.round(amountUsdt * 10 ** decimals);

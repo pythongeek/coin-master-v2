@@ -15,6 +15,7 @@ const testFiles = [
   'totp.test.ts',
   'totp-gcm.test.ts',
   'totp-key-derivation.test.ts',
+  'withdrawal-payout-memory.test.ts',
   'kyc.test.ts',
   'wallet.test.ts',
   'withdrawal.test.ts',
