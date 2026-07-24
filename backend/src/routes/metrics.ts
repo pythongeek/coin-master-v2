@@ -77,6 +77,21 @@ export const kycPendingGauge = new Gauge({
   help: 'Number of pending KYC verifications',
 });
 
+// ── P1-13: TronGrid endpoint failure counter ──────────────────
+//
+// Incremented by `services/tron-mcp.service.ts` whenever an endpoint
+// failover is triggered (network error, timeout, or HTTP 5xx on the
+// primary endpoint). Labeled by `endpoint` (URL host) and `status_code`
+// (HTTP code or 'network_error' for non-HTTP failures). Operators
+// should alert on a non-zero rate of these counters as they indicate
+// TronGrid MCP degradation and could precede a full TRC-20 deposit
+// detection outage.
+export const trongridEndpointFailuresTotal = new Counter({
+  name: 'trongrid_endpoint_failures_total',
+  help: 'Total number of failed TronGrid MCP/RPC requests by endpoint and reason',
+  labelNames: ['endpoint', 'status_code'],
+});
+
 // ─────────────────────────────────────────────────────────────────
 // P1-06: IP allowlist logic
 // ─────────────────────────────────────────────────────────────────
