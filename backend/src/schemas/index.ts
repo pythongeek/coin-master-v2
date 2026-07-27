@@ -414,6 +414,24 @@ export const initiateQrDepositSchema = z.object({
   chainKey: z.enum(['BSC', 'TRC20', 'ERC20']).optional(),
 });
 
+/**
+ * P2-10 — Single source of truth for valid `chainKey` values.
+ *
+ * Used by:
+ *   - `binance-pay-qr.service.ts` (defense-in-depth at the service
+ *     boundary, in case a future caller bypasses the route validation)
+ *   - `admin-payments-qr.ts` (validates the `:chainKey` URL param
+ *     before SQL — previously unvalidated, a latent risk if admin
+ *     routes were ever exposed by accident)
+ *
+ * Values must match the `chain_key` column constraint in migration
+ * `019_multi_chain_qr.sql` and the live `deposit_chain_config` rows
+ * (BSC, ERC20, TRC20). The DB-side column is `VARCHAR(20) NOT NULL
+ * UNIQUE`, so this Zod enum is the application-side mirror.
+ */
+export const chainKeyEnum = z.enum(['BSC', 'TRC20', 'ERC20']);
+export type ChainKey = z.infer<typeof chainKeyEnum>;
+
 export const qrReceiptUploadSchema = z.object({
   orderId: z.string().min(10, 'orderId required'),
   imageBase64: z.string().min(100, 'imageBase64 required'),

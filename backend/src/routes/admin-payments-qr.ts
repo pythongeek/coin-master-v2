@@ -24,6 +24,7 @@ import { authMiddleware, AuthPayload, roleMiddleware } from '../middleware/auth'
 import { adminLimiter } from '../middleware/rate-limiter';
 import { query, withTransaction } from '../config/database';
 import { handlePaymentWebhook } from '../services/payment';
+import { chainKeyEnum } from '../schemas';
 
 const router = Router();
 
@@ -615,7 +616,19 @@ router.post(
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
     try {
-      const chainKey = String(req.params.chainKey || '').toUpperCase();
+      // P2-10 — validate chainKey against the enum BEFORE any SQL.
+      // Previously the raw URL param went straight into a WHERE
+      // clause; an admin who typo'd /chains/INVALID/toggle would
+      // silently UPDATE 0 rows and the cache would still be cleared.
+      const rawChainKey = String(req.params.chainKey || '').toUpperCase();
+      const chainKeyParse = chainKeyEnum.safeParse(rawChainKey);
+      if (!chainKeyParse.success) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid chainKey '${req.params.chainKey}'. Must be one of BSC, TRC20, ERC20 (case-insensitive).`,
+        });
+      }
+      const chainKey = chainKeyParse.data;
       const isEnabled = !!req.body?.isEnabled;
       const r = await query(
         `UPDATE deposit_chain_config SET is_enabled = $1, updated_at = NOW()
@@ -662,7 +675,18 @@ router.post(
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
     try {
-      const chainKey = String(req.params.chainKey || '').toUpperCase();
+      // P2-10 — validate chainKey against the enum BEFORE any SQL.
+      // Same rationale as /toggle above: raw URL params going
+      // straight into a WHERE clause is a latent risk.
+      const rawChainKey = String(req.params.chainKey || '').toUpperCase();
+      const chainKeyParse = chainKeyEnum.safeParse(rawChainKey);
+      if (!chainKeyParse.success) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid chainKey '${req.params.chainKey}'. Must be one of BSC, TRC20, ERC20 (case-insensitive).`,
+        });
+      }
+      const chainKey = chainKeyParse.data;
       const body = req.body || {};
       const sets: string[] = [];
       const vals: unknown[] = [];

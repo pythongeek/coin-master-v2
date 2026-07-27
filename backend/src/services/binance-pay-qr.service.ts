@@ -38,6 +38,7 @@ import { query, withTransaction } from '../config/database';
 import { emitPaymentUpdate } from './payment-socket.service';
 import { coinsToCurrency } from './rate-fetcher';
 import { getChainByKey, loadChainConfigs } from './chain-config.service';
+import { chainKeyEnum } from '../schemas';
 
 // ── Config (read at boot, env-overridable) ─────────────────────
 // Config (read at boot, env-overridable)
@@ -121,8 +122,25 @@ export interface QrOrderStatus {
 export async function initiateQrDeposit(
   input: InitiateQrDepositInput
 ): Promise<InitiateQrDepositResult> {
-  // 1) Resolve chain config (BSC default)
-  const requestedKey = (input.chainKey || 'BSC').toUpperCase();
+  // 1) Resolve chain config (BSC default).
+  //
+  // P2-10 defense-in-depth: validate chainKey against the Zod enum
+  // BEFORE doing any DB work. The route handler already validates
+  // via `validateBody(initiateQrDepositSchema)`, but a future internal
+  // caller could bypass the route and call this service directly.
+  // Validating here ensures the service is safe by construction.
+  //
+  // We normalize the input to uppercase before validating because the
+  // live DB stores BSC, ERC20, TRC20 (uppercase) but the previous code
+  // accepted lowercase inputs and silently matched them.
+  const normalizedChainKey = (input.chainKey ?? 'BSC').toUpperCase();
+  const chainKeyParse = chainKeyEnum.safeParse(normalizedChainKey);
+  if (!chainKeyParse.success) {
+    throw new Error(
+      `Invalid chainKey '${input.chainKey}'. Must be one of BSC, TRC20, ERC20 (case-insensitive).`,
+    );
+  }
+  const requestedKey = chainKeyParse.data;
   const chain = await getChainByKey(requestedKey);
   if (!chain) {
     throw new Error(`Chain '${requestedKey}' is not enabled. Available chains: BSC, TRC20, ERC20 (contact admin to enable).`);

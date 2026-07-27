@@ -1003,12 +1003,44 @@
     - **Operator workflow** (per the runbook): quarterly drill on a clone of the production schema, file the result in `docs/MIGRATION_ROLLBACK_DRILL.log`. Any non-zero exit opens an incident.
     - **Pre-condition caveat**: production DB was assembled incrementally with manual phase migrations (`backend/src/db/migrations-2.3.sql`, etc.), so a from-scratch replay of all 48 migrations would fail. The drill accepts this and tests only the LAST N, which is the production-relevant question.
 
-- [ ] **[P2-10] `binance-pay-qr.service.ts` Reads `chainKey` Without Enum Validation**
-  - **File(s) Affected**: `backend/src/services/binance-pay-qr.service.ts`; `backend/src/schemas/index.ts`
-  - **Issue/Gap**: Migration `019_multi_chain_qr.sql` adds `chain_key` ENUM, but code reads it as VARCHAR with no enum validation. Admin UI is currently the only writer, but this is a latent risk.
-  - **Proposed Fix**: Add `z.enum(['BSC', 'TRC20', 'ERC20']).parse(chainKey)` before INSERT in `binance-pay-qr.service.ts`.
-  - **Verification / Test Method**: `npx ts-node -e "import {createChainConfig} from './src/services/binance-pay-qr.service'; createChainConfig({chainKey: 'INVALID'})"` → throws ZodError.
-  - **Status**: `[NOT STARTED]`
+- [x] **[P2-10] `binance-pay-qr.service.ts` Reads `chainKey` Without Enum Validation** ✓ TESTED & PASSED 2026-07-24
+  - **File(s) Affected**: `backend/src/schemas/index.ts` (exported `chainKeyEnum` + `ChainKey` type); `backend/src/services/binance-pay-qr.service.ts` (defense-in-depth enum check at top of `initiateQrDeposit`); `backend/src/routes/admin-payments-qr.ts` (enum check at top of `/chains/:chainKey/toggle` + `/chains/:chainKey/config`); `backend/src/test/p2-10-chain-key-enum.test.ts` (NEW, ~30 assertions, all pass); `backend/src/test/run-all.ts` (wired the new test).
+  - **Issue/Gap (resolved state)**: The `chain_key` column in `deposit_chain_config` is `VARCHAR(20) NOT NULL UNIQUE` per migration 019, and the live DB holds exactly 3 rows (BSC, ERC20, TRC20). But the application code read `chainKey` as a free-form string in three places:
+    - The route `wallet-deposit-qr.ts` did validate via `initiateQrDepositSchema`, so the public deposit path was safe.
+    - **The admin routes `/chains/:chainKey/toggle` and `/chains/:chainKey/config` had NO validation** — raw URL param went straight into `WHERE chain_key = $1`. An admin who typo'd `/chains/INVALID/toggle` would silently UPDATE 0 rows and the cache would still be cleared.
+    - The service `initiateQrDeposit` did `.toUpperCase()` and used the result as a lookup key, but didn't validate against the enum. A future internal caller bypassing the route would not be protected.
+  - **Proposed Fix** (all implemented in this commit):
+    1. **Created `chainKeyEnum`** in `schemas/index.ts` as a single source of truth: `export const chainKeyEnum = z.enum(['BSC', 'TRC20', 'ERC20']);` with a `type ChainKey` companion type. Reused by all three call sites below.
+    2. **Defense-in-depth in `binance-pay-qr.service.ts`**: `initiateQrDeposit` now does `chainKeyEnum.safeParse((input.chainKey ?? 'BSC').toUpperCase())` BEFORE the DB lookup. Invalid input throws `Invalid chainKey 'X'. Must be one of BSC, TRC20, ERC20 (case-insensitive).` without touching the DB.
+    3. **Admin route validation**: `/chains/:chainKey/toggle` and `/chains/:chainKey/config` now do the same `safeParse` and return **HTTP 400 Bad Request** with the descriptive error message before any SQL.
+    4. **Case normalization**: callers may still pass lowercase `'bsc'` (the previous code accepted it); the route normalizes via `.toUpperCase()` before validation. The unit test covers both raw-lowercase (rejected) and uppercased-lowercase (accepted).
+  - **Verification / Test Method** (all verified live on cx23):
+    - `p2-10-chain-key-enum.test.ts` (NEW, ~30 assertions, all pass):
+      - `chainKeyEnum` accepts the 3 valid values (BSC, TRC20, ERC20) ✅
+      - `chainKeyEnum` rejects 14 invalid strings (empty, INVALID, BTC, POLYGON, TRX (network code not chain key), ETH (network code not chain key), BSC20 (close but wrong), spaces, 123) ✅
+      - `chainKeyEnum` rejects SQL-injection-shaped inputs (`'BSC; DROP TABLE...'`, `'BSC' OR '1'='1'`, null bytes, Unicode `\u0000`) ✅
+      - `chainKeyEnum` rejects nullish values (null, undefined, number, boolean, array, object, NaN) ✅
+      - `chainKeyEnum` rejects lowercase ('bsc') but accepts it AFTER `.toUpperCase()` normalization ✅
+      - `chainKeyEnum.options.length === 3` and `JSON.stringify(opts.sort()) === '["BSC","ERC20","TRC20"]'` ✅
+      - `chainKeyEnum.parse('INVALID')` throws ZodError ✅
+      - `TypeScript type: ChainKey = 'BSC' | 'TRC20' | 'ERC20'` compiles correctly ✅
+      - **End-to-end service test**: `initiateQrDeposit({chainKey: 'INVALID_CHAIN'})` throws "Invalid chainKey 'INVALID_CHAIN'..." ✅
+      - `initiateQrDeposit({chainKey: 'bsc'})` (lowercase) does NOT throw "Invalid chainKey" — it proceeds to the chain lookup ✅
+    - **Live cx23 curl** (using the cached super_admin JWT):
+      - `POST /api/admin/payments/chains/INVALID/toggle` → **HTTP 400 Bad Request** (previously: silent 404) ✅
+      - `POST /api/admin/payments/chains/BSC/toggle` → **HTTP 200 OK** ✅
+    - `npx tsc --noEmit` → exit 0 ✅
+    - `npm run build` → exit 0 ✅
+    - All 12 non-redis test suites pass ✅
+  - **Implementation Notes (2026-07-24)**:
+    - **No new runtime deps** — uses the existing `zod` package.
+    - **The fix is defense-in-depth at three layers**:
+      1. **Route layer**: `wallet-deposit-qr.ts` already used `validateBody(initiateQrDepositSchema)`. Now `admin-payments-qr.ts` also validates the URL param.
+      2. **Service layer**: `binance-pay-qr.service.ts` validates before any DB call.
+      3. **TypeScript type layer**: `type ChainKey = 'BSC' | 'TRC20' | 'ERC20'` enforces literal-string semantics at compile time.
+    - **Backward compatibility**: lowercase `'bsc'` is still accepted (case-normalized before validation). Existing callers and admin UI flows continue to work.
+    - **Why `safeParse` + throw instead of `parse`**: `parse` throws ZodError (an internal type); `safeParse` returns `{success, data}` which lets us build a cleaner error message and re-throw a regular `Error` for the route's catch handler.
+    - **The error message is intentionally descriptive**: includes the input that failed (`'INVALID_CHAIN'`) and the allowed set (BSC, TRC20, ERC20). Operators reading logs will know exactly what went wrong.
 
 - [ ] **[P2-11] `deposit-monitor.ts` Reads `'confirming'` Status, Schema Uses `'pending'`**
   - **File(s) Affected**: `backend/src/services/deposit-monitor.ts`; `backend/src/services/binance-pay-qr.service.ts`
