@@ -21,6 +21,8 @@ const testFiles = [
   'database-retry.test.ts',
   'openapi-filter.test.ts',
   'p2-10-chain-key-enum.test.ts',
+  'p2-11-deposit-status.test.ts',
+  'p2-14-socket-split.test.ts',
   'p1-12-hcaptcha.test.ts',
   'p1-12-fingerprint-cap.test.ts',
   'p1-12-register-strict-limiter.test.ts',

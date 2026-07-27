@@ -51,6 +51,7 @@ COPY --from=builder --chown=backend:nodejs /app/dist/routes ./dist/routes
 COPY --from=builder --chown=backend:nodejs /app/dist/middleware ./dist/middleware
 COPY --from=builder --chown=backend:nodejs /app/dist/config ./dist/config
 COPY --from=builder --chown=backend:nodejs /app/dist/utils ./dist/utils
+COPY --from=builder --chown=backend:nodejs /app/dist/constants ./dist/constants
 COPY --from=builder --chown=backend:nodejs /app/dist/schemas ./dist/schemas
 COPY --from=builder --chown=backend:nodejs /app/dist/jobs ./dist/jobs
 COPY --from=builder --chown=backend:nodejs /app/dist/controllers ./dist/controllers

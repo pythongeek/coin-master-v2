@@ -2,6 +2,7 @@ import { db, query } from '../config/database';
 import { reconcileUser } from './reconciliation-engine';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { DEPOSIT_STATUS } from '../constants/deposit';
 
 const CONFIRMATIONS_REQUIRED_EVM = 12;
 const CONFIRMATIONS_REQUIRED_TRON = 3;
@@ -23,7 +24,7 @@ export async function processNewBlock(chain: 'ethereum' | 'solana' | 'tron'): Pr
   const result = await query(
     `SELECT id, user_id, wallet_id, amount, confirmations, required_confirmations, tx_hash, status 
      FROM transactions 
-     WHERE status = 'confirming' AND metadata->>'chain' = $1`,
+     WHERE status = '${DEPOSIT_STATUS.CONFIRMING}' AND metadata->>'chain' = $1`,
     [chain]
   );
 
@@ -89,7 +90,7 @@ export async function registerIncomingDeposit(event: DepositEvent): Promise<stri
       `INSERT INTO transactions (
         id, user_id, wallet_id, type, amount, status, tx_hash, confirmations, required_confirmations, 
         from_address, to_address, metadata
-      ) VALUES ($1, $2, $3, 'deposit', $4, 'confirming', $5, 0, $6, $7, $8, $9)`,
+      ) VALUES ($1, $2, $3, 'deposit', $4, '${DEPOSIT_STATUS.CONFIRMING}', $5, 0, $6, $7, $8, $9)`,
       [
         txId,
         wallet.user_id,
@@ -111,7 +112,7 @@ export async function registerIncomingDeposit(event: DepositEvent): Promise<stri
       `INSERT INTO transactions (
         id, user_id, wallet_id, type, amount, status, tx_hash, confirmations, required_confirmations, 
         from_address, to_address, metadata
-      ) VALUES ($1, $2, $3, 'deposit', $4, 'confirming', $5, 1, $6, $7, $8, $9)`,
+      ) VALUES ($1, $2, $3, 'deposit', $4, '${DEPOSIT_STATUS.CONFIRMING}', $5, 1, $6, $7, $8, $9)`,
       [
         txId,
         wallet.user_id,
@@ -217,7 +218,7 @@ export async function completeDeposit(
         const bonusTxId = uuidv4();
         await client.query(
           `INSERT INTO transactions (id, user_id, wallet_id, type, amount, status, reference_id, reference_type, completed_at)
-           VALUES ($1, $2, $3, 'bonus', $4, 'completed', $5, 'deposit', NOW())`,
+           VALUES ($1, $2, $3, 'bonus', $4, '${DEPOSIT_STATUS.COMPLETED}', $5, 'deposit', NOW())`,
           [bonusTxId, userId, walletId, bonusAmount, txId]
         );
 
@@ -232,7 +233,7 @@ export async function completeDeposit(
     // 4. Set transaction status to completed
     await client.query(
       `UPDATE transactions 
-       SET status = 'completed', completed_at = NOW() 
+       SET status = '${DEPOSIT_STATUS.COMPLETED}', completed_at = NOW() 
        WHERE id = $1`,
       [txId]
     );
