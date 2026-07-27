@@ -18,6 +18,7 @@ const testFiles = [
   'withdrawal-payout-memory.test.ts',
   'metrics-security.test.ts',
   'tron-mcp.test.ts',
+  'database-retry.test.ts',
   'p1-12-hcaptcha.test.ts',
   'p1-12-fingerprint-cap.test.ts',
   'p1-12-register-strict-limiter.test.ts',

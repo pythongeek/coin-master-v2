@@ -55,11 +55,41 @@ if [ "${MODE}" = "full" ]; then
 fi
 
 # --- pg_dump custom-format compressed dump ---
+# P2-06: the `pgmigrations` table MUST be preserved in the dump.
+# The `pgmigrations` row is what node-pg-migrate uses to track
+# which migrations have been applied. If it is missing from a
+# restored backup, the next `npm run migrate` will re-apply all
+# 48 historical migrations — several of which have non-idempotent
+# ALTER TABLE statements (e.g. adding NOT NULL columns without a
+# DEFAULT). This causes silent data corruption on the restored DB.
+#
+# In the default full-dump mode (no `-t` flags), `pg_dump` captures
+# every table in the public schema, so `pgmigrations` is included
+# automatically. The risk is FUTURE selective-dump modes that pass
+# `--exclude-table` or a `-t` list that omits `pgmigrations` — see
+# `docs/DISASTER_RECOVERY.md` for the defensive contract.
+#
+# `-Fc` (custom format) + `-Z9` (max compression) keeps the dump
+# small while preserving data fidelity. We do NOT pass `-t pgmigrations`
+# here because that would restrict the dump to just that single
+# table and BREAK the full-dump semantics.
 DUMP_FILE="${BACKUP_DIR}/cryptoflip_${DATE}.dump"
 
 echo "Starting pg_dump..."
-docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" -u postgres "${CONTAINER}" \
+docker exec -e PGPASSWORD=*** -u postgres "${CONTAINER}" \
   pg_dump -Fc -Z9 -d "${POSTGRES_DB}" -U "${POSTGRES_USER}" > "${DUMP_FILE}"
+
+# --- P2-06: Defensive verification ---
+# Confirm the pgmigrations table is in the dump output. If this fails,
+# the backup is unsafe for restore. The check uses pg_restore -l to
+# list the table of contents without actually applying anything.
+echo "Verifying pgmigrations is in the dump..."
+if ! pg_restore -l "${DUMP_FILE}" 2>/dev/null | grep -q 'TABLE.*pgmigrations'; then
+  echo "ERROR: pgmigrations table is MISSING from backup ${DUMP_FILE}" >&2
+  echo "  This backup is unsafe for restore — re-run backup.sh or fix the schema glob." >&2
+  exit 1
+fi
+echo "pgmigrations verified in dump."
 
 echo "Dump completed: ${DUMP_FILE}"
 ls -lh "${DUMP_FILE}"

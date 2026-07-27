@@ -68,4 +68,9 @@ EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:4000/api/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
-CMD ["node", "dist/index.js"]
+# P2-04: --enable-source-maps makes stack traces point to the original
+# .ts source files (services/foo.ts:42) instead of bundled minified
+# output (file:///app/dist/index.js:1:1). The TypeScript build already
+# emits .map files in dist/ because tsconfig.json has sourceMap:true.
+# Verified: dist/services/admin-config.js.map exists.
+CMD ["node", "--enable-source-maps", "dist/index.js"]

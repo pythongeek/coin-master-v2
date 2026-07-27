@@ -43,35 +43,188 @@ function shouldRunMigrationsOnBoot(): boolean {
   return false;
 }
 
-// কানেকশন টেস্ট
-export async function connectDB(): Promise<void> {
-  try {
-    const client = await db.connect();
+// P2-05 — Categorize DB connection errors as transient (retry) or
+// fatal (exit immediately). Drives the exponential backoff loop
+// in `connectDB()`. The lists are based on the libpq / PostgreSQL
+// error codes documented at:
+//   https://www.postgresql.org/docs/current/errcodes-appendix.html
+//   https://node-postgres.com/apis/client#error-handling
 
-    const result = await client.query('SELECT NOW() as now, version()');
-    client.release();
+/**
+ * PostgreSQL SQLSTATE codes that indicate a TRANSIENT error — the
+ * connection might succeed if we wait and retry. The classic case is
+ * "the database is starting up" or "the pool is exhausted". These
+ * errors are NEVER a config bug; they reflect temporary server state.
+ */
+const TRANSIENT_PG_CODES = new Set<string>([
+  '08000', // connection_exception
+  '08003', // connection_does_not_exist
+  '08006', // connection_failure
+  '08001', // sqlclient_unable_to_establish_sqlconnection
+  '08004', // sqlserver_rejected_establishment_of_sqlconnection
+  '08007', // transaction_resolution_unknown
+  '57P03', // cannot_connect_now — DB is starting up
+  '53300', // too_many_connections — pool exhausted
+  '57P01', // admin_shutdown
+  '57P02', // crash_shutdown
+  '57P05', // idle_session_timeout
+]);
 
-    console.log('PostgreSQL connected!');
-    console.log(`Server time: ${result.rows[0].now}`);
+/**
+ * Node.js network-layer error codes that are TRANSIENT — typically
+ * mean "the host is unreachable right now" (DNS, refused, timeout).
+ * Same retry rationale as above.
+ */
+const TRANSIENT_NODE_CODES = new Set<string>([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'ETIMEOUT',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ECONNRESET',
+  'EPIPE',
+]);
 
-    if (shouldRunMigrationsOnBoot()) {
-      // Lazy-import to avoid loading node-pg-migrate in production
-      // paths that never enable this flag.
-      const { runMigrationsCli } = await import('../migrate-cli/run-migrations');
-      const code = await runMigrationsCli();
-      if (code !== 0) {
-        throw new Error(`migrations exited with code ${code}`);
-      }
-    } else {
-      console.log(
-        '[db] Migrations skipped on boot (RUN_MIGRATIONS_ON_BOOT=false). ' +
-        'Run `npm run migrate` from a separate container / K8s Job.',
-      );
-    }
-  } catch (error) {
-    console.error('PostgreSQL connection failed:', error);
-    process.exit(1);
+/**
+ * PostgreSQL SQLSTATE codes that indicate a FATAL error — retrying
+ * will always fail because the error is in our config (wrong password,
+ * missing database). Failing fast is correct.
+ */
+const FATAL_PG_CODES = new Set<string>([
+  '28P01', // invalid_password
+  '28000', // invalid_authorization_specification
+  '3D000', // invalid_catalog_name (database does not exist)
+  '3F000', // invalid_schema_name
+  '42P01', // duplicate_table / undefined_table
+  '42703', // undefined_column
+]);
+
+/**
+ * Classify a DB error as 'transient' (retry), 'fatal' (exit), or
+ * 'unknown' (retry as a precaution; if it persists, the retries
+ * will eventually exhaust and we'll exit). The classification uses
+ * the SQLSTATE code (PostgreSQL standard) and the Node.js error
+ * `code` field (e.g., ECONNREFUSED).
+ */
+export function classifyDbError(error: unknown): 'transient' | 'fatal' | 'unknown' {
+  if (!error || typeof error !== 'object') return 'unknown';
+  const e = error as { code?: string };
+  if (e.code) {
+    if (FATAL_PG_CODES.has(e.code)) return 'fatal';
+    if (TRANSIENT_PG_CODES.has(e.code)) return 'transient';
+    if (TRANSIENT_NODE_CODES.has(e.code)) return 'transient';
   }
+  return 'unknown';
+}
+
+/**
+ * P2-05 — Exponential backoff configuration. Five attempts with
+ * delays 1s, 2s, 4s, 8s, 16s. Total worst-case wait: 31 seconds.
+ *
+ * Operators can override via env (DB_RETRY_ATTEMPTS, DB_RETRY_BASE_MS)
+ * for testing or special environments. Defaults are production-safe.
+ */
+const RETRY_ATTEMPTS = parseInt(process.env.DB_RETRY_ATTEMPTS || '5', 10);
+const RETRY_BASE_MS = parseInt(process.env.DB_RETRY_BASE_MS || '1000', 10);
+
+/**
+ * Helper: sleep that respects the global Jest fake-timer test
+ * environment. Real production uses `setTimeout`; tests can override
+ * via `jest.useFakeTimers()`. We use `setTimeout` from
+ * `node:timers/promises` for an async-friendly delay.
+ */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Internal helper: try to connect + ping once. Returns the client on
+ * success, or throws on failure. The pool itself (the `db` constant)
+ * is created at module-load time — `db.connect()` is what fails when
+ * the DB is unreachable, because the lazy pool tries to open a real
+ * socket on first use.
+ */
+async function tryOnce(): Promise<void> {
+  const client = await db.connect();
+  try {
+    const result = await client.query('SELECT NOW() as now, version()');
+    const serverTime = result.rows[0]?.now;
+    console.log('PostgreSQL connected!');
+    if (serverTime) {
+      console.log(`Server time: ${serverTime}`);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * কানেকশন টেস্ট — P2-05 hardened with exponential backoff retry
+ * loop. Five attempts, doubling delay each time (1s, 2s, 4s, 8s,
+ * 16s). Classifies errors as transient (retry) vs fatal (exit
+ * immediately) using PostgreSQL SQLSTATE codes and Node.js error
+ * codes.
+ *
+ * Behavior:
+ *   - Transient error → log warning, wait, retry.
+ *   - Fatal error → log error, `process.exit(1)` immediately.
+ *   - Unknown error → treat as transient (log + retry). If the issue
+ *     is real, the retries will exhaust and we'll exit cleanly.
+ *   - All 5 retries exhausted → log fatal summary, `process.exit(1)`.
+ */
+export async function connectDB(): Promise<void> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+    try {
+      await tryOnce();
+      // Success — log and exit the loop.
+      if (attempt > 1) {
+        console.log(`[db] Connected after ${attempt} attempt(s).`);
+      }
+      // Migration boot (preserved from P0-03).
+      if (shouldRunMigrationsOnBoot()) {
+        const { runMigrationsCli } = await import('../migrate-cli/run-migrations');
+        const code = await runMigrationsCli();
+        if (code !== 0) {
+          throw new Error(`migrations exited with code ${code}`);
+        }
+      } else {
+        console.log(
+          '[db] Migrations skipped on boot (RUN_MIGRATIONS_ON_BOOT=false). ' +
+            'Run `npm run migrate` from a separate container / K8s Job.',
+        );
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+      const classification = classifyDbError(error);
+      if (classification === 'fatal') {
+        // Fatal — do not retry, exit immediately.
+        console.error(
+          `[db] FATAL database error on attempt ${attempt}/${RETRY_ATTEMPTS} — not retrying. ` +
+            `Error: ${(error as Error).message ?? String(error)}`,
+        );
+        process.exit(1);
+        return; // unreachable, but tsc-happy
+      }
+      if (attempt < RETRY_ATTEMPTS) {
+        const delayMs = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        console.warn(
+          `[db] Transient error on attempt ${attempt}/${RETRY_ATTEMPTS}: ` +
+            `${(error as Error).message ?? String(error)}. ` +
+            `Retrying in ${delayMs}ms...`,
+        );
+        await sleep(delayMs);
+      }
+    }
+  }
+  // Retries exhausted.
+  console.error(
+    `[db] FATAL: failed to connect to PostgreSQL after ${RETRY_ATTEMPTS} attempts. ` +
+      `Last error: ${(lastError as Error)?.message ?? String(lastError)}`,
+  );
+  process.exit(1);
 }
 
 // Helper: Query চালানোর জন্য
