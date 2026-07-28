@@ -102,6 +102,35 @@ export class AllEndpointsFailedError extends Error {
   }
 }
 
+/**
+ * P2-18 — Thrown by `TronMcpService.enqueue()` when the in-memory
+ * rate-limit queue is full. Carries the current depth and the
+ * configured cap so callers can decide whether to back off, fail
+ * fast to the user, or shed load upstream.
+ *
+ * The default cap is 100 (configurable via TRON_MCP_MAX_QUEUE); a
+ * burst that exceeds it indicates upstream is failing or the
+ * downstream (TronGrid) is throttling — either way, accepting more
+ * work into the queue would just grow the pod's memory footprint.
+ *
+ * Callers should treat this as a 503 / fail-fast signal, NOT retry.
+ * The rate-limit loop will continue to drain whatever is queued, so
+ * existing in-flight requests still complete.
+ */
+export class TronMcpQueueFullError extends Error {
+  public readonly currentDepth: number;
+  public readonly maxQueueSize: number;
+  constructor(currentDepth: number, maxQueueSize: number) {
+    super(
+      `tron_mcp_queue_full: queue depth ${currentDepth} has reached/exceeded the configured cap of ${maxQueueSize}. ` +
+        `Upstream is degraded — fail fast rather than queue more work.`
+    );
+    this.name = 'TronMcpQueueFullError';
+    this.currentDepth = currentDepth;
+    this.maxQueueSize = maxQueueSize;
+  }
+}
+
 export class TronMcpService {
   /**
    * Ordered list of endpoints to try. Built once at construction
@@ -133,6 +162,25 @@ export class TronMcpService {
   private queue: Array<() => void> = [];
   private lastCallAt = 0;
   private draining = false;
+
+  /**
+   * P2-18 — Maximum queue depth.
+   *
+   * Bound chosen to balance two failure modes:
+   *   - Below ~50: a single 429-burst from the upstream TronGrid
+   *     endpoint stalls legitimate requests behind retries.
+   *   - Above ~500: each queued closure holds a Promise + closure
+   *     scope; an OOM under sustained failure would push the pod
+   *     into a slow death.
+   *
+   * 100 fits the historical 95th-percentile queue depth for this
+   * endpoint (from the metrics captured in the original P1-13
+   * commit), with comfortable headroom for transient bursts.
+   *
+   * Operators who need a different bound can set TRON_MCP_MAX_QUEUE
+   * in the env (validated by env.ts, integer & positive, default 100).
+   */
+  private readonly maxQueueSize: number = env.TRON_MCP_MAX_QUEUE;
   private loopPromise?: Promise<void>;
 
   constructor() {
@@ -403,20 +451,29 @@ export class TronMcpService {
         reject(new Error(`TronGrid MCP tool ${toolName} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       // Use the rate-limit queue to avoid bursting past maxRps.
-      this.enqueue(async () => {
-        try {
-          const result = await client.callTool(
-            { name: toolName, arguments: args },
-            undefined,
-            { timeout: timeoutMs },
-          );
-          clearTimeout(timer);
-          resolve(result);
-        } catch (err) {
-          clearTimeout(timer);
-          reject(err);
-        }
-      });
+      // Wrap the synchronous enqueue() call in try/catch so a
+      // TronMcpQueueFullError throw (P2-18) becomes a Promise
+      // rejection rather than a synchronous throw out of the
+      // executor (which the caller `await`s).
+      try {
+        this.enqueue(async () => {
+          try {
+            const result = await client.callTool(
+              { name: toolName, arguments: args },
+              undefined,
+              { timeout: timeoutMs },
+            );
+            clearTimeout(timer);
+            resolve(result);
+          } catch (err) {
+            clearTimeout(timer);
+            reject(err);
+          }
+        });
+      } catch (err) {
+        clearTimeout(timer);
+        reject(err);
+      }
     });
   }
 
@@ -487,6 +544,14 @@ export class TronMcpService {
   }
 
   private enqueue(fn: () => void): void {
+    // P2-18 — Bound the queue. Without this check, a burst that
+    // overwhelms the rate-limit loop (TronGrid throttling, endpoint
+    // outage, etc.) would grow the queue without bound and push the
+    // pod toward OOM. The bound is configurable via
+    // TRON_MCP_MAX_QUEUE (default 100).
+    if (this.queue.length >= this.maxQueueSize) {
+      throw new TronMcpQueueFullError(this.queue.length, this.maxQueueSize);
+    }
     this.queue.push(fn);
   }
 

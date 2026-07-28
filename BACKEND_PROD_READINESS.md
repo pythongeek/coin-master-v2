@@ -1208,12 +1208,31 @@
     - Commit: `4782730`. Pushed to `origin/main`.
   - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
-- [ ] **[P2-18] `tron-mcp.service.ts` Unbounded Queue**
-  - **File(s) Affected**: `backend/src/services/tron-mcp.service.ts` (`private queue: Array<() => void> = []`)
+- [x] **[P2-18] `tron-mcp.service.ts` Unbounded Queue** ✓ TESTED & PASSED 2026-07-28
+  - **File(s) Affected**: `backend/src/services/tron-mcp.service.ts`; `backend/src/config/env.ts`; `backend/src/test/p2-18-queue-bound.test.ts`; `backend/src/test/run-all.ts`
   - **Issue/Gap**: The queue is unbounded — a burst load collects thousands of pending calls in memory. OOM risk under load.
   - **Proposed Fix**: `if (this.queue.length > 100) throw new Error('tron_mcp_queue_full')`. Or migrate to BullMQ.
   - **Verification / Test Method**: Inject 1000 pending calls via load test → 101st call throws `tron_mcp_queue_full`.
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-28)**:
+    - **`backend/src/services/tron-mcp.service.ts`** (+51 lines):
+      - New exported class `TronMcpQueueFullError extends Error` carrying `currentDepth: number` and `maxQueueSize: number` fields. The error message contains the stable client-side code string `tron_mcp_queue_full`. This is a typed error rather than a bare `Error` so callers can `instanceof`-check and handle differently from transient transport errors.
+      - `enqueue()` now bounds the queue: `if (this.queue.length >= this.maxQueueSize) throw new TronMcpQueueFullError(this.queue.length, this.maxQueueSize);` BEFORE the push.
+      - `executeCallOnEndpoint()` now wraps `this.enqueue(...)` in a try/catch so a synchronous `TronMcpQueueFullError` throw becomes a Promise rejection (the original code only handled async rejections via the inner closure).
+      - `maxQueueSize` is read from the new `env.TRON_MCP_MAX_QUEUE` (Zod-validated) instead of raw `process.env['TRON_MCP_MAX_QUEUE']`.
+    - **`backend/src/config/env.ts`** (+3 lines): added `TRON_MCP_MAX_QUEUE: z.coerce.number().int().positive().default(100)` so the bound is validated (positive integer, default 100) and is the same env-var convention used by `TRON_MCP_MAX_RPS`.
+    - **`backend/src/test/p2-18-queue-bound.test.ts`** (NEW, 200 lines): 17 assertions, 6 source-level + 11 runtime.
+      - Source-level: `TronMcpQueueFullError` class exported, carries `currentDepth` + `maxQueueSize`, message contains `tron_mcp_queue_full`, env schema has the validator, `enqueue()` has the bound check, `executeCallOnEndpoint()` has the try/catch wrap.
+      - Runtime: instantiate `TronMcpService`, default cap = 100, enqueue 100 items without starting the rate-limit loop (so nothing drains), assert `queue.length === 100`, then enqueue the 101st and assert it throws `TronMcpQueueFullError` with `currentDepth === 100` and `maxQueueSize === 100`. Also asserts that with cap = 5 (env override simulated), the 6th enqueue throws.
+      - **17/17 PASS.**
+    - **`backend/src/test/run-all.ts`** (+1 line): wires `p2-18-queue-bound.test.ts` into the runner.
+    - **Container rebuild**: backend image rebuilt, container boots clean, `/api/public/banner` returns 200, `/api/health` ok (DB 1ms, Redis 1ms).
+  - **Verification / Test Method**: Inject 1000 pending calls via load test → 101st call throws `tron_mcp_queue_full`.
+    - `npx tsc --noEmit` → exit 0.
+    - `npm run build` → exit 0.
+    - `npx ts-node --require ./src/test/setup.ts src/test/p2-18-queue-bound.test.ts` → 17/17 PASS.
+    - Live container rebuild → `/api/health` 200, `/api/public/banner` 200, container uptime stable.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
 - [ ] **[P2-19] No CI Step Validates Migrations Apply Cleanly**
   - **File(s) Affected**: `.github/workflows/ci.yml`

@@ -26,6 +26,7 @@ const testFiles = [
   'p2-15-rate-limit-fail-mode.test.ts',
   'p2-16-s3-dep-hygiene.test.ts',
   'p2-17-deposit-mode.test.ts',
+  'p2-18-queue-bound.test.ts',
   'p1-12-hcaptcha.test.ts',
   'p1-12-fingerprint-cap.test.ts',
   'p1-12-register-strict-limiter.test.ts',
