@@ -1295,6 +1295,22 @@
 
 ---
 
+## Live State Snapshot (2026-07-28)
+
+Verified against `coin-master-postgres-1` on cx23:
+
+- **Migration table**: `public.pgmigrations` (NOT `migrations`). Created automatically by `node-pg-migrate` (default table name); columns are `id` (PK), `name` (varchar 255, the file basename without `.sql`), `run_on` (timestamp). The legacy `migrations` table does NOT exist on the live DB (dropped during the P1-01 alignment; see migration `047_align_pgmigrations_after_p1_01_renumber.sql`).
+- **Applied migrations on disk ↔ DB**: **47 of 48 applied**. Only `048_wallet_address_index_postgres_sequence.sql` is on disk but not yet applied. Next backend deploy will run it via the migration Job service.
+- **Public table count**: 62 tables in `public` schema.
+- **Container health (post-P2-15 + P2-17)**: postgres ok (latency 1ms), redis ok (latency 1ms), binance polling enabled with keys configured, rate-limiter fail-CLOSED by default.
+
+Why this matters:
+- Any tooling, log reader, or migration status script that hardcodes the table name `migrations` will break. Use `pgmigrations` everywhere.
+- The audit-backup script (per P2-04 commit `45198f5`) was updated to dump `pgmigrations` along with `audit_log` so backups include the migration ledger.
+- This file is the canonical "what is on disk vs what is in DB" reference for the next operator handoff.
+
+---
+
 ## Cross-File Consistency Notes
 
 Items discovered by comparing the 6 audited files against each other:
