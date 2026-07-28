@@ -1147,12 +1147,25 @@
     - **No new runtime deps** — only the existing `socket.io`, `jsonwebtoken`, `uuid`, `pg`.
     - **Domain split rationale vs the task spec**: the task asked for 4 files (`socket-game`, `socket-chat`, `socket-payout`, `socket-rain`); I created 5 (added `socket-streak` for the streak:bank handler and `socket-lifecycle` for connection-level auth). Splitting the lifecycle from the rest is essential because the lifecycle module owns the `io.use(...)` JWT middleware which must run BEFORE any per-socket handler.
 
-- [ ] **[P2-15] `redis.ts` In-Memory Fallback Silently Degrades Rate Limiting**
-  - **File(s) Affected**: `backend/src/middleware/rate-limiter.ts` (in-memory fallback when Redis is down)
+- [x] **[P2-15] `redis.ts` In-Memory Fallback Silently Degrades Rate Limiting** ✓ TESTED & PASSED 2026-07-28
+  - **File(s) Affected**: `backend/src/middleware/rate-limiter.ts`; `backend/src/index.ts`; `backend/src/test/p2-15-rate-limit-fail-mode.test.ts`
   - **Issue/Gap**: When Redis goes down, the rate limiter falls back to an in-memory store. This is "fail-open" — limits are per-pod and lost on restart. For a financial app, fail-closed is safer.
   - **Proposed Fix**: When Redis is unavailable, return `503 Service Unavailable` for any rate-limited endpoint instead of falling through. Add a `RATE_LIMIT_FAIL_MODE` env (`closed` default, `open` for dev).
+  - **Implementation Notes (2026-07-28)**:
+    - **`backend/src/middleware/rate-limiter.ts`** (+84/-2 lines):
+      - New exported const `RATE_LIMIT_FAIL_MODE` = `process.env.RATE_LIMIT_FAIL_MODE === 'open' ? 'open' : 'closed'`. Default `'closed'` (production-safe). Read at module load (boot), not per-request.
+      - `RedisStore.increment` catch block now branches on the const: in `closed` mode it throws `new Error('rate_limiter_redis_unavailable')`; in `open` mode it falls through to the existing in-memory `Map` (P1-07 behavior, dev only).
+      - New exported `rateLimitErrorMiddleware(err, req, res, next)`: 4-arg Express error handler. If `err.message === 'rate_limiter_redis_unavailable'` and headers not yet sent, sends `res.status(503).json({ success: false, error: 'Rate limiter service unavailable. Please retry shortly.', code: 'rate_limiter_unavailable' })`. Otherwise `next(err)` to the global error handler.
+      - Local helper `failClosedHandler(err, _req, res, next)` implements the same logic for direct composition.
+    - **`backend/src/index.ts`** (+7/-1 lines): import `rateLimitErrorMiddleware`; mount it via `app.use(rateLimitErrorMiddleware)` **before** `app.use(errorHandler)` so the specific 503 wins over the generic 500 (verified during the fix; mounting AFTER errorHandler means the global handler eats the throw first).
+    - **`backend/src/test/p2-15-rate-limit-fail-mode.test.ts`** (NEW, 97 lines): 12 source-level assertions — env documented/exported, ternary `'open' | 'closed'`, default `'closed'`, fail-closed branch present, stable error message string, thrown Error (not return), in-memory fallback path preserved in open mode, error middleware exported, `res.status(503)`, stable client-side `code: 'rate_limiter_unavailable'`, env read at boot. **12/12 pass.**
   - **Verification / Test Method**: `docker stop coin-master-redis-1` → `POST /api/auth/login` returns 503.
-  - **Status**: `[NOT STARTED]`
+    - `npx tsc --noEmit` clean.
+    - `npx ts-node --require ./src/test/setup.ts src/test/p2-15-rate-limit-fail-mode.test.ts` → 12/12 PASS.
+    - `npm run build` → exit 0.
+    - Live `docker stop coin-master-redis-1` → `POST /api/auth/login` → HTTP 503 with body `{"success":false,"error":"Rate limiter service unavailable. Please retry shortly.","code":"rate_limiter_unavailable"}` ✓. `docker start coin-master-redis-1` → endpoint returns 401 (auth fail) again, proving Redis is re-attached and rate-limiter recovers.
+    - Commit: `e213516`. Pushed to `origin/main`.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
 - [ ] **[P2-16] `audit-backup.ts` `require('@aws-sdk/client-s3')` Without Declared Dependency**
   - **File(s) Affected**: `backend/src/services/audit-backup.ts`; `backend/package.json`
