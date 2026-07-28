@@ -20,6 +20,7 @@ import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
 import { errorHandler, setSentryCapture } from './middleware/error-handler';
+import { rateLimitErrorMiddleware } from './middleware/rate-limiter';
 import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
@@ -274,7 +275,14 @@ if (sentryEnabled && Sentry?.captureException) {
     Sentry.captureException(err, { extra: ctx });
   });
 }
+app.use(rateLimitErrorMiddleware);
 app.use(errorHandler);
+
+// P2-15 — Translate rate-limiter Redis failures to HTTP 503 when
+// RATE_LIMIT_FAIL_MODE=closed. Mounted BEFORE errorHandler so it
+// runs first; the 503 wins over the generic 500 from errorHandler.
+// For non-rate-limiter errors, rateLimitErrorMiddleware delegates
+// via next(err) so the global handler still runs.
 
 // ─── Socket.io ──────────────────────────────────────────────
 setupSocketHandlers(io);

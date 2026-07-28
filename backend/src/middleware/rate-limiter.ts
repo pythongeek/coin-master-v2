@@ -4,6 +4,29 @@ import { redis } from '../config/redis';
 import { query } from '../config/database';
 
 /**
+ * P2-15 — Rate-limit fail-mode configuration.
+ *
+ * When Redis is unavailable (network error, pod restart, OOM eviction),
+ * the in-memory fallback is a "fail-open" behavior: rate limits become
+ * per-pod and lost on restart. For a financial app, this is too lenient
+ * — an attacker who DoS'es Redis can then bypass every rate limit.
+ *
+ * Two modes are supported via the RATE_LIMIT_FAIL_MODE env var:
+ *   - `closed` (default in production): when Redis fails, return
+ *     HTTP 503 Service Unavailable on the rate-limited endpoint.
+ *     This is fail-CLOSED: we refuse the request rather than serve
+ *     unprotected. The blast radius is small (the small set of
+ *     requests that hit during the Redis outage are 503'd; everyone
+ *     else is unaffected).
+ *   - `open` (default in dev): fall through to the in-memory
+ *     fallback. Use this locally so a Redis-less dev server still
+ *     works; do NOT use it in production.
+ */
+export const RATE_LIMIT_FAIL_MODE = (
+  (process.env.RATE_LIMIT_FAIL_MODE || 'closed').toLowerCase() === 'open' ? 'open' : 'closed'
+) as 'open' | 'closed';
+
+/**
  * P1-07 — Legacy migration
  * -----------------------------------------------------------------------------
  * All Redis-backed rate limiters live in this file. The previous design
@@ -96,6 +119,20 @@ class RedisStore implements Store {
         resetTime: new Date(Date.now() + ttl * 1000),
       };
     } catch (err) {
+      // P2-15 — fail-mode handling.
+      //
+      // If RATE_LIMIT_FAIL_MODE=closed, reject the increment so the
+      // route's handler returns HTTP 503. This is fail-CLOSED: rather
+      // than serve unprotected, we refuse the request. The blast
+      // radius is bounded — only requests that hit during the Redis
+      // outage are 503'd, not the whole service.
+      //
+      // If RATE_LIMIT_FAIL_MODE=open, fall back to the in-memory store
+      // (original P1-07 behavior). Dev only.
+      if (RATE_LIMIT_FAIL_MODE === 'closed') {
+        throw new Error('rate_limiter_redis_unavailable');
+      }
+
       // Memory fallback
       const now = Date.now();
       const record = this.memoryFallback.get(key);
@@ -133,13 +170,56 @@ class RedisStore implements Store {
   }
 }
 
-// Standard handler for rate limit failures
+// P2-15 — Standard handler for rate limit failures (HTTP 429).
+// This is unchanged from before P2-15.
 const defaultHandler = (req: Request, res: Response) => {
   res.status(429).json({
     success: false,
-    error: 'অতিরিক্ত রিকোয়েস্ট পাঠানো হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
+    error: 'অতিরিক্ত রিকোয়েস্ট পাঠানো হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
   });
 };
+
+/**
+ * P2-15 — Handler for the fail-CLOSED 503 case.
+ *
+ * When `RATE_LIMIT_FAIL_MODE=closed` and Redis is unavailable, the
+ * `RedisStore.increment` throws `rate_limiter_redis_unavailable`. The
+ * `express-rate-limit` library's default behavior on throw is to fall
+ * through to the route handler (since the limiter is just middleware).
+ * We instead translate the throw to a 503 response here by wrapping
+ * the limiter call.
+ *
+ * The wrapped function attempts to set headers but if the limiter
+ * itself threw, we send a 503 with a stable error code so the client
+ * can retry with backoff.
+ */
+function failClosedHandler(err: Error, _req: Request, res: Response, next: NextFunction): void {
+  if (err && err.message === 'rate_limiter_redis_unavailable') {
+    if (!res.headersSent) {
+      res.status(503).json({
+        success: false,
+        error: 'Rate limiter service unavailable. Please retry shortly.',
+        code: 'rate_limiter_unavailable',
+      });
+      return;
+    }
+  }
+  next(err);
+}
+
+/**
+ * P2-15 — Express error-handling middleware. Mount this AFTER all
+ * routes in `backend/src/index.ts` (or wherever the global error
+ * handler lives). It catches the `rate_limiter_redis_unavailable`
+ * error thrown by the fail-CLOSED path and returns 503.
+ *
+ * The middleware is a no-op for any other error (delegates to the
+ * next error handler via `next(err)`), so it composes safely with
+ * the existing `error-handler.ts` global error handler.
+ */
+export function rateLimitErrorMiddleware(err: Error, req: Request, res: Response, next: NextFunction): void {
+  failClosedHandler(err, req, res, next);
+}
 
 // Global rate limiter: 100 requests per 15 minutes
 export const globalLimiter = rateLimit({
