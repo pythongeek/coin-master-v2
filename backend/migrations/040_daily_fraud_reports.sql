@@ -62,19 +62,50 @@ ON CONFLICT (key) DO NOTHING;
 --   {{ml_predictions}}   - HTML table of ML predictions fired
 --   {{recommendations}}  - bullet list
 --   {{total_signals}}    - count for the headline
-INSERT INTO admin_email_templates (event_type, display_name, subject_template, body_html_template, body_text_template, available_variables, subject_bn, body_html_bn, body_text_bn)
-VALUES (
-  'fraud.daily_digest',
-  'Daily Fraud Digest (08:00 UTC)',
-  'CryptoFlip Daily Fraud Digest — {{report_date}}',
-  '<h1>CryptoFlip Daily Fraud Digest — {{report_date}}</h1><p>Total new fraud signals in the last 24h: <strong>{{total_signals}}</strong></p><h2>Top 10 risk users</h2>{{top_risk_users}}<h2>New fraud clusters (24h)</h2>{{new_clusters}}<h2>Cluster actions (24h)</h2>{{cluster_actions}}<h2>Flagged withdrawals (24h)</h2>{{flagged_withdrawals}}<h2>KYC events (24h)</h2>{{kyc_events}}<h2>New fraud signals by type (24h)</h2>{{signal_counts}}<h2>ML model predictions (24h)</h2>{{ml_predictions}}<h2>Recommended actions</h2>{{recommendations}}',
-  'CryptoFlip Daily Fraud Digest — {{report_date}}\n\nTotal new fraud signals in last 24h: {{total_signals}}\n\n-- Top 10 risk users --\n{{top_risk_users}}\n\n-- New fraud clusters --\n{{new_clusters}}\n\n-- Cluster actions --\n{{cluster_actions}}\n\n-- Flagged withdrawals --\n{{flagged_withdrawals}}\n\n-- KYC events --\n{{kyc_events}}\n\n-- Signal counts by type --\n{{signal_counts}}\n\n-- ML predictions --\n{{ml_predictions}}\n\n-- Recommended actions --\n{{recommendations}}',
-  '["report_date","total_signals","top_risk_users","new_clusters","cluster_actions","flagged_withdrawals","kyc_events","signal_counts","ml_predictions","recommendations"]'::jsonb,
-  'CryptoFlip দৈনিক ফ্রড ডাইজেস্ট — {{report_date}}',
-  '<h1>CryptoFlip দৈনিক ফ্রড ডাইজেস্ট — {{report_date}}</h1><p>গত ২৪ ঘণ্টায় নতুন ফ্রড সিগন্যাল: <strong>{{total_signals}}</strong></p><h2>শীর্ষ ১০ ঝুঁকিপূর্ণ ব্যবহারকারী</h2>{{top_risk_users}}<h2>নতুন ফ্রড ক্লাস্টার</h2>{{new_clusters}}<h2>ক্লাস্টার কর্ম</h2>{{cluster_actions}}<h2>ফ্ল্যাগ করা উইথড্রয়াল</h2>{{flagged_withdrawals}}<h2>KYC ইভেন্ট</h2>{{kyc_events}}<h2>ফ্রড সিগন্যাল টাইপ অনুযায়ী</h2>{{signal_counts}}<h2>ML মডেল পূর্বাভাস</h2>{{ml_predictions}}<h2>সুপারিশকৃত কর্ম</h2>{{recommendations}}',
-  'CryptoFlip দৈনিক ফ্রড ডাইজেস্ট — {{report_date}}\n\nগত ২৪ ঘণ্টায় নতুন ফ্রড সিগন্যাল: {{total_signals}}\n\n(বাকি বিভাগগুলো ইংরেজি সংস্করণের মতোই)'
-)
-ON CONFLICT (event_type) DO NOTHING;
+-- P2-19: the bilingual columns (subject_bn, body_html_bn, body_text_bn)
+-- are added by migration 046, which runs AFTER 040. On a fresh DB,
+-- this INSERT would fail with "column subject_bn does not exist".
+-- Use a DO block with information_schema to insert only the columns
+-- that exist. The English-only fallback runs on fresh DBs; the full
+-- bilingual INSERT runs on DBs that have already applied 046.
+DO $$
+DECLARE
+  has_subject_bn boolean;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'admin_email_templates'
+      AND column_name = 'subject_bn'
+  ) INTO has_subject_bn;
+
+  IF has_subject_bn THEN
+    INSERT INTO admin_email_templates (event_type, display_name, subject_template, body_html_template, body_text_template, available_variables, subject_bn, body_html_bn, body_text_bn)
+    VALUES (
+      'fraud.daily_digest',
+      'Daily Fraud Digest (08:00 UTC)',
+      'CryptoFlip Daily Fraud Digest — {{report_date}}',
+      '<h1>CryptoFlip Daily Fraud Digest — {{report_date}}</h1><p>Total new fraud signals in the last 24h: <strong>{{total_signals}}</strong></p><h2>Top 10 risk users</h2>{{top_risk_users}}<h2>New fraud clusters (24h)</h2>{{new_clusters}}<h2>Cluster actions (24h)</h2>{{cluster_actions}}<h2>Flagged withdrawals (24h)</h2>{{flagged_withdrawals}}<h2>KYC events (24h)</h2>{{kyc_events}}<h2>New fraud signals by type (24h)</h2>{{signal_counts}}<h2>ML model predictions (24h)</h2>{{ml_predictions}}<h2>Recommended actions</h2>{{recommendations}}',
+      'CryptoFlip Daily Fraud Digest — {{report_date}}\n\nTotal new fraud signals in last 24h: {{total_signals}}\n\n-- Top 10 risk users --\n{{top_risk_users}}\n\n-- New fraud clusters --\n{{new_clusters}}\n\n-- Cluster actions --\n{{cluster_actions}}\n\n-- Flagged withdrawals --\n{{flagged_withdrawals}}\n\n-- KYC events --\n{{kyc_events}}\n\n-- Signal counts by type --\n{{signal_counts}}\n\n-- ML predictions --\n{{ml_predictions}}\n\n-- Recommended actions --\n{{recommendations}}',
+      '["report_date","total_signals","top_risk_users","new_clusters","cluster_actions","flagged_withdrawals","kyc_events","signal_counts","ml_predictions","recommendations"]'::jsonb,
+      'CryptoFlip দৈনিক ফ্রড ডাইজেস্ট — {{report_date}}',
+      '<h1>CryptoFlip দৈনিক ফ্রড ডাইজেস্ট — {{report_date}}</h1><p>গত ২৪ ঘণ্টায় নতুন ফ্রড সিগন্যাল: <strong>{{total_signals}}</strong></p><h2>শীর্ষ ১০ ঝুঁকিপূর্ণ ব্যবহারকারী</h2>{{top_risk_users}}<h2>নতুন ফ্রড ক্লাস্টার</h2>{{new_clusters}}<h2>ক্লাস্টার কর্ম</h2>{{cluster_actions}}<h2>ফ্ল্যাগ করা উইথড্রয়াল</h2>{{flagged_withdrawals}}<h2>KYC ইভেন্ট</h2>{{kyc_events}}<h2>ফ্রড সিগন্যাল টাইপ অনুযায়ী</h2>{{signal_counts}}<h2>ML মডেল পূর্বাভাস</h2>{{ml_predictions}}<h2>সুপারিশকৃত কর্ম</h2>{{recommendations}}',
+      'CryptoFlip দৈনিক ফ্রড ডাইজেস্ট — {{report_date}}\n\nগত ২৪ ঘণ্টায় নতুন ফ্রড সিগন্যাল: {{total_signals}}\n\n(বাকি বিভাগগুলো ইংরেজি সংস্করণের মতোই)'
+    )
+    ON CONFLICT (event_type) DO NOTHING;
+  ELSE
+    INSERT INTO admin_email_templates (event_type, display_name, subject_template, body_html_template, body_text_template, available_variables)
+    VALUES (
+      'fraud.daily_digest',
+      'Daily Fraud Digest (08:00 UTC)',
+      'CryptoFlip Daily Fraud Digest — {{report_date}}',
+      '<h1>CryptoFlip Daily Fraud Digest — {{report_date}}</h1><p>Total new fraud signals in the last 24h: <strong>{{total_signals}}</strong></p><h2>Top 10 risk users</h2>{{top_risk_users}}<h2>New fraud clusters (24h)</h2>{{new_clusters}}<h2>Cluster actions (24h)</h2>{{cluster_actions}}<h2>Flagged withdrawals (24h)</h2>{{flagged_withdrawals}}<h2>KYC events (24h)</h2>{{kyc_events}}<h2>New fraud signals by type (24h)</h2>{{signal_counts}}<h2>ML model predictions (24h)</h2>{{ml_predictions}}<h2>Recommended actions</h2>{{recommendations}}',
+      'CryptoFlip Daily Fraud Digest — {{report_date}}\n\nTotal new fraud signals in last 24h: {{total_signals}}\n\n-- Top 10 risk users --\n{{top_risk_users}}\n\n-- New fraud clusters --\n{{new_clusters}}\n\n-- Cluster actions --\n{{cluster_actions}}\n\n-- Flagged withdrawals --\n{{flagged_withdrawals}}\n\n-- KYC events --\n{{kyc_events}}\n\n-- Signal counts by type --\n{{signal_counts}}\n\n-- ML predictions --\n{{ml_predictions}}\n\n-- Recommended actions --\n{{recommendations}}',
+      '["report_date","total_signals","top_risk_users","new_clusters","cluster_actions","flagged_withdrawals","kyc_events","signal_counts","ml_predictions","recommendations"]'::jsonb
+    )
+    ON CONFLICT (event_type) DO NOTHING;
+  END IF;
+END $$;
 
 -- Seed the admin_email_config row for the P3-5 recipient. Without
 -- this row, queueEmail() rejects the email with "recipient not

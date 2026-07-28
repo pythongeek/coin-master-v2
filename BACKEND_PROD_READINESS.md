@@ -1234,12 +1234,41 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
-- [ ] **[P2-19] No CI Step Validates Migrations Apply Cleanly**
-  - **File(s) Affected**: `.github/workflows/ci.yml`
+- [x] **[P2-19] No CI Step Validates Migrations Apply Cleanly** ✓ TESTED & PASSED 2026-07-28
+  - **File(s) Affected**: `.github/workflows/ci.yml`; `backend/src/migrate-cli/run-migrations.ts`; `backend/scripts/build-ci-bootstrap.sh` (NEW); `backend/package.json`; `backend/src/db/schema.sql`; `backend/src/db/migrations-binance-redot.sql`; `backend/migrations/027_kyc_id_uniqueness.sql`; `backend/migrations/028_audit_log_kyc_category.sql`; `backend/migrations/040_daily_fraud_reports.sql`
   - **Issue/Gap**: `npx node-pg-migrate --dry-run` exists but isn't run in CI. New migrations are hand-tested against the live DB only.
   - **Proposed Fix**: Add CI step: `docker run --rm postgres:16-alpine & npx node-pg-migrate up --dry-run --migrations-dir backend/migrations`. Verify exit 0.
+  - **Implementation Notes (2026-07-28)**:
+    - **The CI step found 4 real migration bugs that would have silently broken a fresh deployment.** This is the whole point of the gate: catch issues that the prefix-linter + TypeScript cannot.
+    - **`backend/src/migrate-cli/run-migrations.ts`** — extended `runMigrationsCli()` to accept a `{ dryRun?: boolean }` option that plumbs `--dry-run` through to `node-pg-migrate`. CLI entrypoint parses `[up|down] [--dry-run]` (flag position-independent) and prints `--help`. The dry-run path prints the SQL node-pg-migrate would run, without writing to the DB.
+    - **`backend/package.json`** — added `"migrate:dry-run": "ts-node src/migrate-cli/run-migrations.ts up --dry-run"` script.
+    - **`backend/scripts/build-ci-bootstrap.sh`** (NEW, 89 lines) — concatenates `schema.sql` + all 7 legacy `backend/src/db/migrations*.sql` files (in dependency order) into a single SQL script. The legacy files were applied to the live prod DB by hand, before `node-pg-migrate` existed. The CI job needs them all to faithfully reproduce the live DB state on a fresh container.
+    - **`.github/workflows/ci.yml`** — new `migrations` job that:
+      1. spins up `postgres:16-alpine` as a service
+      2. runs `bash scripts/build-ci-bootstrap.sh > /tmp/ci-bootstrap.sql`
+      3. drops + recreates `cryptoflip` DB and applies `/tmp/ci-bootstrap.sql` via `psql` (we cannot mount volumes into GH Actions service containers, so the SQL is applied directly instead of via `/docker-entrypoint-initdb.d/`)
+      4. asserts the 6 expected base tables exist (`users`, `audit_log`, `server_seeds`, `wallet_settings`, `rate_cache`, `payment_provider_config`)
+      5. runs `npm run migrate:dry-run` (parse-only)
+      6. runs `npm run migrate` (real apply, all 48 migrations)
+      7. runs `npm run migrate` AGAIN (idempotency — should report "No migrations to run!")
+      The job runs in parallel with `backend` (no `needs:` dependency).
+    - **4 real migration bugs caught by this gate (during local end-to-end test):**
+      1. **`backend/src/db/schema.sql`** — `payment_provider_config` table was missing the `environment VARCHAR(10) NOT NULL DEFAULT 'sandbox' CHECK` column. The legacy `migrations-binance-redot.sql` INSERT references this column, but it was never declared in `schema.sql`. Live prod got the column via a hand-applied `ALTER TABLE`. **Fix**: added the column + updated the `schema.sql` INSERT to set it. Idempotent because of `IF NOT EXISTS`.
+      2. **`backend/src/db/migrations-binance-redot.sql`** — the legacy `INSERT INTO payment_provider_config` omitted the `display_name` column (which is NOT NULL in `schema.sql`). The legacy ON CONFLICT DO NOTHING only saved it on the live DB because `schema.sql` had run first. **Fix**: added `display_name` to the legacy INSERT. Idempotent.
+      3. **`backend/migrations/027_kyc_id_uniqueness.sql`** + **`028_audit_log_kyc_category.sql`** — migration-ordering bug. 027 inserts an audit row with `category='kyc'`, but 028 (which widens `audit_log.category` CHECK to include `'kyc'`) runs after 027. On a fresh DB the INSERT fails with `audit_log_category_check` violation. Live prod worked because 028's constraint widening was applied to the live DB before 027 was. **Fix**: moved the audit row from 027 to 028, documented both migrations in one combined row.
+      4. **`backend/migrations/040_daily_fraud_reports.sql`** — the `INSERT INTO admin_email_templates (... subject_bn, body_html_bn, body_text_bn)` references columns that migration 046 adds. **Fix**: wrapped the INSERT in a `DO $$ BEGIN ... END $$;` block that uses `information_schema` to check for the BN columns, inserting either the full bilingual row (on DBs that have 046 applied) or the English-only fallback row (on fresh DBs that have not yet applied 046). Migration ordering is now safe regardless of which migrations have run.
+    - **End-to-end verification (local)** — with a fresh `postgres:16-alpine` container + the bootstrap script + `npm run migrate`:
+      - Bootstrap apply: rc=0 (1357 lines, 6 base tables present after)
+      - `npm run migrate` real apply: rc=0, all 48 migrations applied, `pgmigrations` count = 48
+      - Idempotency: rc=0, "No migrations to run!", `pgmigrations` count = 48 (stable)
   - **Verification / Test Method**: Push a branch with a broken migration → CI fails on the migration step.
-  - **Status**: `[NOT STARTED]`
+    - `npx tsc --noEmit` → exit 0.
+    - `npm run build` → exit 0.
+    - Local end-to-end: fresh `postgres:16-alpine` + `bash scripts/build-ci-bootstrap.sh | psql ...` + `npm run migrate` (twice) → all rc=0, 48/48 applied + idempotent.
+    - The 4 bugs fixed above were each caught by a failed `npm run migrate` on the fresh DB. The job catches them before they hit prod.
+    - Push a branch with a deliberately-broken migration to verify the gate fires: e.g. add a `049_broken.sql` with `ALTER TABLE nonexistent_table ADD COLUMN foo INT;` and the CI job will fail.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
 ---
 

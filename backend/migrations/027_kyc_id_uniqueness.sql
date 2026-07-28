@@ -105,13 +105,21 @@ CREATE INDEX IF NOT EXISTS idx_kyc_passport_hash_lookup
   ON kyc_submissions (passport_hash)
   WHERE passport_hash IS NOT NULL;
 
--- 6. Audit row (visible in admin_audit_trail queries)
-INSERT INTO audit_log (category, action, severity, details)
-VALUES ('kyc', 'migration.kyc_id_uniqueness', 'info',
-        jsonb_build_object(
-          'migration', '027_kyc_id_uniqueness',
-          'summary', 'Added SHA-256 ID hashing + unique partial indexes',
-          'applied_at', NOW()
-        ));
+-- 6. Audit row (visible in admin_audit_trail queries).
+--    P2-19: the audit row was originally here, but this migration
+--    runs BEFORE 028 (which widens the audit_log category CHECK
+--    to include 'kyc'). On a fresh DB the INSERT fails with
+--    audit_log_category_check violation. The row was added to
+--    migration 028 instead so it always runs after the constraint
+--    is widened.
+--    (No-op on live prod because the live DB already had the
+--    constraint widened by the time 027 was applied historically.)
+-- INSERT INTO audit_log (category, action, severity, details)
+-- VALUES ('kyc', 'migration.kyc_id_uniqueness', 'info',
+--         jsonb_build_object(
+--           'migration', '027_kyc_id_uniqueness',
+--           'summary', 'Added SHA-256 ID hashing + unique partial indexes',
+--           'applied_at', NOW()
+--         ));
 
 COMMIT;

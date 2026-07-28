@@ -44,7 +44,10 @@ const NODE_PG_MIGRATE_BIN = fs.existsSync(NPM_BIN)
   : path.resolve(REPO_ROOT, 'node_modules', 'node-pg-migrate', 'bin', 'node-pg-migrate.js');
 
 /** Programmatic entry point. Returns the process exit code. */
-export async function runMigrationsCli(direction: 'up' | 'down' = 'up'): Promise<number> {
+export async function runMigrationsCli(
+  direction: 'up' | 'down' = 'up',
+  options: { dryRun?: boolean } = {},
+): Promise<number> {
   // ── Pre-flight checks ─────────────────────────────────────────
   if (!process.env.DATABASE_URL) {
     console.error('[migrate] FATAL: DATABASE_URL is not set.');
@@ -62,18 +65,30 @@ export async function runMigrationsCli(direction: 'up' | 'down' = 'up'): Promise
   }
 
   const startedAt = Date.now();
-  console.log(`[migrate] direction=${direction} dir=${MIGRATIONS_DIR}`);
+  const dryRunFlag = options.dryRun ? ' (dry-run)' : '';
+  console.log(`[migrate] direction=${direction}${dryRunFlag} dir=${MIGRATIONS_DIR}`);
+
+  // Build the node-pg-migrate argv.
+  //
+  // `--dry-run` is supported by node-pg-migrate directly: it prints
+  // the SQL it would run, but does NOT execute it. Useful in CI to
+  // catch SQL parse errors + dependency-on-previous-migration bugs
+  // without writing to the DB.
+  const args: string[] = [
+    NODE_PG_MIGRATE_BIN,
+    direction,
+    '--no-check-order',
+    '--migrations-dir', MIGRATIONS_DIR,
+    '--migration-file-language', 'sql',
+  ];
+  if (options.dryRun) {
+    args.push('--dry-run');
+  }
 
   return new Promise<number>((resolve) => {
     const child = spawn(
       process.execPath,                              // node
-      [
-        NODE_PG_MIGRATE_BIN,
-        direction,
-        '--no-check-order',
-        '--migrations-dir', MIGRATIONS_DIR,
-        '--migration-file-language', 'sql',
-      ],
+      args,
       {
         stdio: 'inherit',
         env: process.env,
@@ -91,9 +106,9 @@ export async function runMigrationsCli(direction: 'up' | 'down' = 'up'): Promise
     child.on('close', (code) => {
       const elapsedMs = Date.now() - startedAt;
       if (code === 0) {
-        console.log(`[migrate] OK (${elapsedMs}ms).`);
+        console.log(`[migrate] OK (${elapsedMs}ms${dryRunFlag}).`);
       } else {
-        console.error(`[migrate] FAILED with exit code ${code} after ${elapsedMs}ms.`);
+        console.error(`[migrate] FAILED with exit code ${code} after ${elapsedMs}ms${dryRunFlag}.`);
         console.error('[migrate] The backend container was NOT started — fix the migration');
         console.error('         and re-run this script before deploying.');
       }
@@ -106,15 +121,34 @@ export async function runMigrationsCli(direction: 'up' | 'down' = 'up'): Promise
 // CLI entrypoint — invoked when this file is run directly
 // ---------------------------------------------------------------------------
 if (require.main === module) {
-  const arg = process.argv[2];
-  const direction: 'up' | 'down' = arg === 'down' ? 'down' : 'up';
-  if (arg && arg !== 'up' && arg !== 'down') {
-    console.error(`[migrate] Unknown argument: ${arg}`);
-    console.error('[migrate] Usage: ts-node src/migrate-cli/run-migrations.ts [up|down]');
-    process.exit(2);
+  // Parse: [up|down] [--dry-run]
+  //
+  // We accept --dry-run in any position (after the direction, or
+  // before it). The flag is consumed by node-pg-migrate directly so
+  // the same parser semantics apply (it errors on unknown flags).
+  const rawArgs = process.argv.slice(2);
+  let direction: 'up' | 'down' = 'up';
+  let dryRun = false;
+
+  for (const a of rawArgs) {
+    if (a === '--dry-run') {
+      dryRun = true;
+    } else if (a === 'up' || a === 'down') {
+      direction = a;
+    } else if (a === '--help' || a === '-h') {
+      console.log('Usage: ts-node src/migrate-cli/run-migrations.ts [up|down] [--dry-run]');
+      console.log('  up      Apply pending migrations (default)');
+      console.log('  down    Roll back the last applied migration');
+      console.log('  --dry-run   Print SQL without executing (uses node-pg-migrate --dry-run)');
+      process.exit(0);
+    } else {
+      console.error(`[migrate] Unknown argument: ${a}`);
+      console.error('[migrate] Usage: ts-node src/migrate-cli/run-migrations.ts [up|down] [--dry-run]');
+      process.exit(2);
+    }
   }
 
-  runMigrationsCli(direction).then((code) => {
+  runMigrationsCli(direction, { dryRun }).then((code) => {
     process.exit(code);
   }).catch((err) => {
     console.error('[migrate] FATAL: unhandled error:', err);

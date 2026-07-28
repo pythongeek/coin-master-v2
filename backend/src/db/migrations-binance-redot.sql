@@ -30,10 +30,16 @@ CREATE TABLE IF NOT EXISTS payment_provider_config (
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO payment_provider_config (gateway, is_enabled, environment, daily_deposit_cap_usdt, min_deposit_usdt)
+-- P2-19: include display_name so this INSERT is compatible with
+-- the schema.sql payment_provider_config shape (display_name is
+-- NOT NULL). On live prod, this ON CONFLICT DO NOTHING was a
+-- no-op because the schema.sql INSERT had already created the row
+-- with display_name. On a fresh DB, the schema.sql INSERT wins
+-- (idempotent) and this statement becomes a no-op.
+INSERT INTO payment_provider_config (gateway, display_name, is_enabled, environment, daily_deposit_cap_usdt, min_deposit_usdt)
 VALUES
-  ('binance_pay', true, 'sandbox', 1000.00, 10.00),
-  ('redot_pay',   true, 'sandbox', 1000.00, 10.00)
+  ('binance_pay', 'Binance Pay', true, 'sandbox', 1000.00, 10.00),
+  ('redot_pay',   'Redot Pay',   true, 'sandbox', 1000.00, 10.00)
 ON CONFLICT (gateway) DO NOTHING;
 
 -- ════════════════════════════════════════════════════════════════

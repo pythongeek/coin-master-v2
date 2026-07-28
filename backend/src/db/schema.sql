@@ -356,6 +356,13 @@ CREATE TABLE IF NOT EXISTS payment_provider_config (
   gateway         VARCHAR(50) NOT NULL UNIQUE,
   display_name    VARCHAR(100) NOT NULL,
   is_enabled      BOOLEAN NOT NULL DEFAULT false,
+  -- P2-19: environment column added so the legacy
+  -- migrations-binance-redot.sql INSERT works. The original
+  -- schema.sql omitted it; live prod got the column via a
+  -- hand-applied ALTER TABLE. Adding it here is idempotent
+  -- (IF NOT EXISTS) and matches the live DB shape.
+  environment     VARCHAR(10) NOT NULL DEFAULT 'sandbox'
+                  CHECK (environment IN ('sandbox', 'live')),
   daily_deposit_cap_usdt DECIMAL(18, 8) NOT NULL DEFAULT 10000.00000000,
   min_deposit_usdt DECIMAL(18, 8) NOT NULL DEFAULT 10.00000000,
   max_deposit_usdt DECIMAL(18, 8) NOT NULL DEFAULT 100000.00000000,
@@ -363,10 +370,10 @@ CREATE TABLE IF NOT EXISTS payment_provider_config (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO payment_provider_config (gateway, display_name, is_enabled, daily_deposit_cap_usdt, min_deposit_usdt, max_deposit_usdt)
+INSERT INTO payment_provider_config (gateway, display_name, is_enabled, environment, daily_deposit_cap_usdt, min_deposit_usdt, max_deposit_usdt)
 VALUES
-  ('binance_pay', 'Binance Pay', false, 10000, 10, 100000),
-  ('redot_pay', 'Redot Pay', false, 10000, 10, 100000)
+  ('binance_pay', 'Binance Pay', false, 'sandbox', 10000.00, 10.00, 100000.00),
+  ('redot_pay',   'Redot Pay',   false, 'sandbox', 10000.00, 10.00, 100000.00)
 ON CONFLICT (gateway) DO NOTHING;
 
 -- ── TABLE: payment_orders ──────────────────────────
