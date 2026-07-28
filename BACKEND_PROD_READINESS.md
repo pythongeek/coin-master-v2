@@ -1167,12 +1167,25 @@
     - Commit: `e213516`. Pushed to `origin/main`.
   - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
-- [ ] **[P2-16] `audit-backup.ts` `require('@aws-sdk/client-s3')` Without Declared Dependency**
-  - **File(s) Affected**: `backend/src/services/audit-backup.ts`; `backend/package.json`
+- [x] **[P2-16] `audit-backup.ts` `require('@aws-sdk/client-s3')` Without Declared Dependency** ✓ TESTED & PASSED 2026-07-28
+  - **File(s) Affected**: `backend/src/services/audit-backup.ts`; `backend/package.json`; `backend/src/test/p2-16-s3-dep-hygiene.test.ts`; `backend/src/test/run-all.ts`
   - **Issue/Gap**: The file does `require('@aws-sdk/client-s3')` inside a `try/catch`. The package isn't in `package.json`. S3 branch silently no-ops.
   - **Proposed Fix**: Either add `@aws-sdk/client-s3` to runtime deps or remove the S3 branch entirely. (Already covered in P0-04 — this P2 item ensures the dependency hygiene is consistent.)
   - **Verification / Test Method**: `grep -rn "@aws-sdk/client-s3" backend/package.json` returns either a dependency line or zero hits (no orphan require).
-  - **Status**: `[NOT STARTED]`
+  - **Implementation Notes (2026-07-28)**:
+    - **Investigation**: contrary to the original spec wording, `@aws-sdk/client-s3` IS already declared in `backend/package.json` at `^3.1094.0` (added by the P0-04 commit `8201341`), installed in `backend/node_modules/@aws-sdk/`, and present in `package-lock.json`. The `audit-backup.ts` file uses `import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'` at the top of the file (lines 37–40) — NOT a `try { require('@aws-sdk/...') }` pattern as the original spec said. P2-16 was effectively closed as part of the P0-04 hardening.
+    - **`backend/src/test/p2-16-s3-dep-hygiene.test.ts`** (NEW, 99 lines): 8 source-level assertions — `@aws-sdk/client-s3` declared in `dependencies` (not `devDependencies`), has a version, source file uses `from '@aws-sdk/client-s3'`, references `S3Client` class, instantiates `new S3Client(...)`, no orphan `try { require('@aws-sdk/...') }` pattern, dep is in `package-lock.json`. **8/8 PASS.**
+    - **`backend/src/test/run-all.ts`** (+3 lines): wires `p2-15`, `p2-16`, `p2-17` into the test runner alongside the existing p2 series (already in the working tree from earlier sessions; included here for atomicity with P2-16).
+    - **`backend/src/test/audit-backup.test.ts`** (pre-existing P0-04 test, unchanged): 18/18 PASS, including a real S3 PutObject call. Confirms `@aws-sdk/client-s3` works end-to-end at runtime, not just at the import-graph level.
+    - **`npm audit`**: 5 moderate transitive vulnerabilities (`uuid` via `jayson` via `@solana/web3.js`). All transitive; no fix available without breaking changes — out of scope for P2-16, flagged for future Dependabot work.
+  - **Verification / Test Method**: `grep -rn "@aws-sdk/client-s3" backend/package.json` returns either a dependency line or zero hits (no orphan require).
+    - `npx tsc --noEmit` → exit 0.
+    - `npm run build` → exit 0.
+    - `npx ts-node --require ./src/test/setup.ts src/test/p2-16-s3-dep-hygiene.test.ts` → 8/8 PASS.
+    - `npx ts-node --require ./src/test/setup.ts src/test/audit-backup.test.ts` → 18/18 PASS (pre-existing P0-04 test; real S3 PutObject call succeeds with `BACKUP_MODE=both`).
+    - `grep -rn "@aws-sdk/client-s3" backend/package.json` → `  "@aws-sdk/client-s3": "^3.1094.0",` (dependency line, not orphan).
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
 - [x] **[P2-17] `binance-pay-ledger-monitor.service.ts` Polling Without Auth Fallback** ✓ TESTED & PASSED 2026-07-28
   - **File(s) Affected**: `backend/src/services/binance-pay-ledger-monitor.service.ts`; `backend/src/routes/admin-health.ts`; `backend/src/test/p2-17-deposit-mode.test.ts`
