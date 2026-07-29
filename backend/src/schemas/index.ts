@@ -650,8 +650,47 @@ export const chatMessageSchema = z.object({
 });
 
 // ══════════════════════════════════════════════════════════════
-//  WHEEL / GAME SCHEMAS
+//  GROUP BET (Phase 1, Day 2) — multiplayer coinflip rooms
 // ══════════════════════════════════════════════════════════════
+
+const groupClientRequestIdSchema = z
+  .string()
+  .min(8, 'clientRequestId must be at least 8 characters')
+  .max(64, 'clientRequestId must be ≤ 64 characters')
+  .optional();
+
+export const groupBetCreateSchema = z.object({
+  creatorChoice: z.enum(['heads', 'tails']),
+  creatorStake: z.coerce.number().positive('creatorStake must be > 0').max(50_000),
+  perMemberStake: z.coerce.number().positive('perMemberStake must be > 0').max(50_000),
+  minMembers: z.coerce.number().int().min(2).max(10),
+  maxMembers: z.coerce.number().int().min(2).max(10),
+  payoutMode: z.enum(['equal', 'proportional', 'founder_boost']).default('equal'),
+  turnMode: z.enum(['creator', 'auto_on_full', 'random_lottery']).default('creator'),
+  autoFlipSeconds: z.coerce.number().int().min(1).max(60).optional(),
+  inviteChannel: z
+    .enum(['whatsapp', 'telegram', 'twitter', 'email', 'copy', 'qr', 'link'])
+    .optional(),
+  clientRequestId: groupClientRequestIdSchema,
+});
+
+export const groupBetJoinSchema = z.object({
+  groupIdentifier: z
+    .string()
+    .min(4, 'groupIdentifier required')
+    .max(64, 'groupIdentifier too long'),
+  choice: z.enum(['heads', 'tails']),
+  stakeOverride: z.coerce.number().positive().max(50_000).optional(),
+  clientRequestId: groupClientRequestIdSchema,
+});
+
+export const groupBetShareSchema = z.object({
+  channel: z.enum(['whatsapp', 'telegram', 'twitter', 'email', 'copy', 'qr', 'link']),
+});
+
+export const groupBetFlipSchema = z.object({
+  clientSeed: z.string().min(1).max(64).optional(),
+});
 
 export const wheelSpinSchema = z.object({
   clientSeed: z

@@ -58,6 +58,7 @@ import promoRoutes from './routes/promo';
 import bonusRoutes from './routes/bonus';
 import { ensureActiveSeed } from './services/server-seed';
 import depositRoutes from './routes/deposit';
+import groupBetRoutes from './routes/group-bet';
 
 
 dotenv.config();
@@ -176,6 +177,7 @@ app.use('/api', csrfMiddleware);
 app.use('/api/auth',  authRoutes);
 app.use('/api/auth/2fa',  auth2faRoutes);
 app.use('/api/game',  gameRoutes);
+app.use('/api/group-bet', groupBetRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/wallet/deposit/qr', walletDepositQrRoutes);

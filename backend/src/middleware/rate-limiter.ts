@@ -257,6 +257,24 @@ export const gameLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+/**
+ * Group-bet rate limiter: 30 group actions per minute, keyed by user.
+ * Same shape as `gameLimiter` but namespace-prefixed so users with
+ * lots of single-player bets do not starve their group play.
+ */
+export const groupLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  limit: 30,
+  store: new RedisStore(),
+  keyGenerator: (req) => {
+    const userId = (req as any).user?.userId;
+    return userId ? `group_bet:${userId}` : `group_bet:${req.ip}`;
+  },
+  handler: defaultHandler,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+});
+
 // Admin rate limiter: 30 requests per 1 minute
 export const adminLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,

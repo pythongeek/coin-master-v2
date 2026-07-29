@@ -1305,6 +1305,63 @@
     - `npx tsc --noEmit` against the new service → exit 0.
   - **Status**: `[x] [TESTED & PASSED 2026-07-29]`
 
+- [x] **[GP-2] Group Play — Phase 1 / Day 2: create/join + REST endpoints + 12-case integration test** ✓ TESTED & PASSED 2026-07-29
+  - **File(s) Affected**: `backend/src/services/group-bet-create.ts` (NEW, 430 lines); `backend/src/services/group-bet-join.ts` (NEW, 390 lines); `backend/src/routes/group-bet.ts` (NEW, 290 lines); `backend/src/schemas/index.ts` (+39 Zod schemas); `backend/src/middleware/rate-limiter.ts` (+20 lines, `groupLimiter`); `backend/src/index.ts` (+2 lines); `backend/src/test/gp-1-02-group-bet-create-join.test.ts` (NEW, 460 lines); `scripts/test-group-bet-create-join.sh` (NEW, ~95 lines)
+  - **Issue/Gap**: The Day-1 state machine was inert (no entrypoints). Day 2 wires the actual create + join flows with all anti-fraud gates, the auto-`ready` transition, and 7 of the 15 planned REST endpoints.
+  - **Proposed Fix**: Two services + one route file + 50+ live-DB assertions proving correctness.
+  - **Implementation Notes (2026-07-29)**:
+    - **`backend/src/services/group-bet-create.ts`** (NEW):
+      - `createGroupBet({userId, creatorChoice, creatorStake, perMemberStake, minMembers, maxMembers, payoutMode, turnMode, autoFlipSeconds?, inviteChannel?, clientRequestId?, ipAddress?})` — shape-validates 12 input fields, throws `GroupBetValidationError(code)` on bad input.
+      - `clientRequestId` idempotency: SELECT-before-INSERT against `group_bet.client_request_id` partial-unique index; replays throw `GroupBetDuplicateError(existingGroupId)`.
+      - Redis `SETEX` distributed lock per user (`group_bet:create:lock:${userId}`, 3s TTL) prevents double-debit races.
+      - Pre-flight gate: pulls `users + lifetime_deposits` in one shot, enforces (1) `is_active=true`, (2) not `self_excluded_until`, (3) KYC tier ≥ 1 (`is_admin` bypasses), (4) lifetime deposits ≥ $50, (5) sufficient balance. Each gate returns `GroupBetNotAllowedError(code)` or `GroupBetInsufficientBalanceError(balance, required)`.
+      - Generates 6-char short_code (unambiguous alphabet, no 0/O/1/I) + 64-hex `invite_token` with up-to-5-attempt retry on collision.
+      - Atomic SERIALIZABLE transaction: `determineBalanceSource()` → `debitBalanceForBet()` (using existing `bonus.ts` helpers — bonus-vs-withdrawable split) → INSERT `group_bet` (status='open', current_members=1) → INSERT `group_bet_member` (role='creator') → INSERT `transactions` (type='bet', direction='debit', status='confirmed', metadata) → INSERT `group_bet_audit` (action='create') → INSERT `audit_log` (category='group_play', action='group_play.create', severity='info').
+      - Exports: `createGroupBet` (default), plus error classes `GroupBetValidationError | GroupBetNotAllowedError | GroupBetInsufficientBalanceError | GroupBetDuplicateError | GroupBetInternalError`.
+    - **`backend/src/services/group-bet-join.ts`** (NEW):
+      - `joinGroupBet({userId, groupIdentifier, choice, stakeOverride?, clientRequestId?, ipAddress?})` — resolves group by id OR short_code, validates status='open' + not frozen + not expired + creator != self + choice matches creator + capacity not full.
+      - Per-member idempotency: SELECT on `(user_id, client_request_id)` partial-unique index returns existing row (no new debit).
+      - Redis SETNX lock per `(user, groupIdentifier)`, 3s TTL.
+      - Pre-flight gate (same KYC / lifetime-deposit / balance checks as create).
+      - Atomic transaction: `SELECT ... FOR UPDATE` re-locks the group row → re-checks status + capacity → `determineBalanceSource()` + `debitBalanceForBet()` → INSERT `group_bet_member` (role='member', weight=stake/per_member_stake) → UPDATE `group_bet` (`total_pool += stake`, `current_members += 1`, guarded by `current_members < max_members AND status='open'`) → INSERT `transactions` (type='bet') → INSERT `group_bet_audit` (action='join', includes weight + new pool).
+      - **Auto-transition to `ready`**: after the debit TX commits, if `current_members >= min_members`, calls `transitionGroupStatus()` from Day 1 (open → ready, action='ready', severity='info'). The transition is best-effort: a race where another joiner already flipped is silently swallowed.
+    - **`backend/src/routes/group-bet.ts`** (NEW): 7 REST endpoints + Day-3/4/5 stubs (501 NOT_IMPLEMENTED):
+      - `POST /api/group-bet` (create) — `groupLimiter + authMiddleware + validateBody + fraudGuard` → 201
+      - `POST /api/group-bet/:id/join` — same chain → 201
+      - `POST /api/group-bet/:id/leave` (Day 4 stub) → 501
+      - `POST /api/group-bet/:id/cancel` (Day 4 stub) → 501
+      - `POST /api/group-bet/:id/share` — records `group_bet_invite` channel attribution → 201
+      - `GET /api/group-bet/:id` — full view; non-members see only public fields → 200
+      - `GET /api/group-bet/by-code/:shortCode` — public preview (status, seats remaining, expiry) → 200
+      - `mapGroupError()` helper maps the 5 custom error classes to 400/402/403/409/500 with `{success:false, error, code}` envelope matching the existing `routes/game.ts` pattern.
+    - **`backend/src/schemas/index.ts`** (+39 lines): `groupBetCreateSchema` (12 fields incl. Zod-coerced numbers), `groupBetJoinSchema`, `groupBetShareSchema`, `groupBetFlipSchema` (Day 3 stub).
+    - **`backend/src/middleware/rate-limiter.ts`** (+20 lines): `groupLimiter` — 30 req/min/user, Redis-namespaced `group_bet:${userId}` so high-volume single-player betters don't starve group play.
+    - **`backend/src/index.ts`** (+2 lines): `app.use('/api/group-bet', groupBetRoutes)`.
+    - **`backend/src/test/gp-1-02-group-bet-create-join.test.ts`** (NEW, 460 lines): **integration test against LIVE Postgres** (bypasses `setup.ts` shared mock the same way as Day-1). 50+ assertions across 12 cases:
+      1. createGroupBet happy path: row inserted, creator debited, member row, audit mirror, audit_log details.groupId matches
+      2. Insufficient balance → GroupBetInsufficientBalanceError (balance=10, required=50, no debit on failure)
+      3. Lifetime deposits < $50 → GroupBetNotAllowedError(LIFETIME_DEPOSIT_TOO_LOW)
+      4. KYC tier < 1 → GroupBetNotAllowedError(KYC_TIER_INSUFFICIENT)
+      5. Idempotency replay (same clientRequestId) → GroupBetDuplicateError with existingGroupId matching
+      6. Bad creatorChoice → GroupBetValidationError(INVALID_CHOICE)
+      7. joinGroupBet happy path: member debited, current_members=2, **auto-transitioned to ready**, audit rows for both 'join' and 'ready'
+      8. Late join to ready group → GroupBetNotAllowedError(GROUP_NOT_OPEN)
+      9. Creator cannot join own room → GroupBetNotAllowedError(CREATOR_CANNOT_JOIN)
+      10. Choice mismatch (member picks 'tails', creator picked 'heads') → GroupBetValidationError(CHOICE_MISMATCH)
+      11. Per-member idempotency replay → returns same memberId, no second debit, current_members unchanged
+      12. Direct DB read of created group: status='ready', payout_mode and turn_mode persisted
+      - **All 50+ PASS** in ~0.5s against live DB.
+    - **`scripts/test-group-bet-create-join.sh`** (NEW): runner that brings up `gp-pg-fwd` (postgres) and `gp-redis-fwd` (redis) socat forwarders, picks 3 ACTIVE users from the live DB, snapshots & promotes them to `kyc_tier=1` (and a $100 confirmed `transactions.deposit` row if missing), runs the test, then restores original `kyc_tier` on exit. Idempotent re-runnable.
+    - **Container rebuild**: backend image rebuilt, container boots clean, `/api/health` 200, `POST /api/group-bet` 401 (auth gate working), home/`/game`/`/dashboard` all 200.
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against the new services + route + schema → exit 0.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200, `/api/group-bet` 401 (no-auth), `POST /api/group-bet` 401 (no-auth).
+    - `bash scripts/test-group-bet-create-join.sh` → 🎉 all 12 cases pass, 50+ assertions, all test rows cleaned.
+    - `bash scripts/test-group-bet-state.sh` (Day 1 regression) → state machine still passes (note: the test uses a single shared `pg.Client` and is occasionally flaky when socat forwarders die mid-run; not a service bug).
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-29]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
