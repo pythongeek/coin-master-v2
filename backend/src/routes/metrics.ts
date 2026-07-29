@@ -92,6 +92,17 @@ export const trongridEndpointFailuresTotal = new Counter({
   labelNames: ['endpoint', 'status_code'],
 });
 
+// P2-18 — queue rejections from TronMcpService.enqueue().
+// Increments when the queue is at maxQueueSize and a new request is
+// refused. Operators should alert on a non-zero rate of these counters
+// as they indicate the rate-limit loop is overwhelmed and the upstream
+// TronGrid endpoint is too slow to drain the queue.
+export const trongridQueueRejectedTotal = new Counter({
+  name: 'trongrid_queue_rejected_total',
+  help: 'Total number of requests rejected by the TronGrid MCP rate-limit queue because it is full',
+  labelNames: ['reason'],
+});
+
 // ─────────────────────────────────────────────────────────────────
 // P1-06: IP allowlist logic
 // ─────────────────────────────────────────────────────────────────

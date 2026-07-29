@@ -22,7 +22,7 @@ const testFiles = [
   'openapi-filter.test.ts',
   'p2-10-chain-key-enum.test.ts',
   'p2-11-deposit-status.test.ts',
-  'p2-14-socket-split.test.ts',
+    'p2-14-socket-split.test.ts',
   'p2-15-rate-limit-fail-mode.test.ts',
   'p2-16-s3-dep-hygiene.test.ts',
   'p2-17-deposit-mode.test.ts',

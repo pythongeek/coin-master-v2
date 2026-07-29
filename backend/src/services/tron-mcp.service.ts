@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { setTimeout as delay } from 'timers/promises';
 import { CircuitBreaker, CircuitState } from '../utils/circuit-breaker';
-import { trongridEndpointFailuresTotal } from '../routes/metrics';
+import { trongridEndpointFailuresTotal, trongridQueueRejectedTotal } from "../routes/metrics";
 
 interface UsdtTransfer {
   txHash: string;
@@ -550,6 +550,17 @@ export class TronMcpService {
     // pod toward OOM. The bound is configurable via
     // TRON_MCP_MAX_QUEUE (default 100).
     if (this.queue.length >= this.maxQueueSize) {
+      try {
+        // P2-18 — Increment the queue-rejected counter so operators
+        // can alert when the rate-limit loop is falling behind. The
+        // `reason` label allows us to distinguish queue-full
+        // rejections from any future rejection categories without
+        // changing the metric name.
+        trongridQueueRejectedTotal.inc({ reason: 'queue_full' });
+      } catch {
+        // Metrics registry may be unavailable in tests; never let
+        // metrics throw back into the calling code path.
+      }
       throw new TronMcpQueueFullError(this.queue.length, this.maxQueueSize);
     }
     this.queue.push(fn);
