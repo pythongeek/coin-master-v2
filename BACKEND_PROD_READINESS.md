@@ -1270,6 +1270,41 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-28]`
 
+- [x] **[GP-1] Group Play — Phase 1 / Day 1: 4-table schema + 6-state FSM + audit mirror** ✓ TESTED & PASSED 2026-07-29
+  - **File(s) Affected**: `backend/src/db/migrations-group-play.sql` (NEW); `backend/src/services/group-bet-state.ts` (NEW); `backend/src/test/gp-1-01-group-bet-state.test.ts` (NEW); `backend/src/test/run-all.ts`; `scripts/test-group-bet-state.sh` (NEW)
+  - **Issue/Gap**: No multiplayer group-bet feature exists. The 4 new tables and the 6-state finite state machine are the foundation that subsequent Day-2/3/4 modules (create/join/payout/turn-decision/fraud/expiry) build on.
+  - **Proposed Fix**: Ship the schema + the single `transitionGroupStatus()` helper that mints every state change AND mirrors to the system-wide `audit_log`, plus a 60-assertion integration test that exercises the live Postgres `coin-master-postgres-1` DB.
+  - **Implementation Notes (2026-07-29)**:
+    - **`backend/src/db/migrations-group-play.sql`** (NEW, ~340 lines): 4 tables + 10 indexes + 4 triggers/check-constraints:
+      - `group_bet` — the room (36 cols incl. status enum, payout_mode enum, turn_mode enum, founder_boost_pct 0–50, provably-fair fields). `min_members ≥ 2`, `max_members ∈ [2,10]`, `max ≥ min`. `current_members ≥ 1`. `expires_at NOT NULL`. Partial unique on `(creator_id, client_request_id)` for idempotency. Partial index on `expires_at WHERE status IN ('open','ready')` for the sweep cron.
+      - `group_bet_member` — one row per participant. `UNIQUE(group_id, user_id)`, partial-unique `(user_id, client_request_id)` for per-member idempotency, partial index `(group_id, lottery_winner)` for turn_mode='random_lottery' picks.
+      - `group_bet_invite` — share-link attribution (whatsapp|telegram|twitter|email|copy|qr|link). `bonus_awarded` column for the inviter-bonus feature (Phase 2/4).
+      - `group_bet_audit` — append-only state-transition log with 20-action CHECK constraint (`create|join|leave|ready|flip_start|flip_resolve|cancel|expire|refund|settle|lottery_pick|admin_force_cancel|admin_force_refund|admin_freeze|admin_unfreeze|admin_kick|admin_mark_fraud|admin_shadow|invite_share|bonus_award`).
+      - `trg_group_bet_updated_at` trigger keeps `updated_at` fresh.
+      - `schema_migrations` row insert (idempotent re-apply).
+      - **Extends `audit_log.category` enum** to include `'group_play'` (drop + re-add the existing CHECK constraint with the new allowlist entry). The existing categories were `admin|auth|security|config|system|bonus|withdrawal|wagering|rain|payment|affiliate|fraud|support|kyc`.
+    - **`backend/src/services/group-bet-state.ts`** (NEW, ~360 lines): single source of truth for `group_bet.status` mutations.
+      - Exports: `transitionGroupStatus()`, `lockGroupBetRow()`, `isTerminalStatus()`, `isTransitionAllowed()`, `TRANSITION_TABLE` (7 rows), `GroupBetTransitionError` (typed error with `code`).
+      - **Auto-sets `ready_at = NOW()` on `open → ready`** and `resolved_at = NOW()` on `flipping → resolved`. Strips duplicate SET clauses from caller-supplied `extraColumnsSql`.
+      - **Atomic**: writes go through `withTransaction()` → status UPDATE + `group_bet_audit` INSERT + `audit_log` INSERT all commit together or all roll back together. Audit Log severity defaults to `'info'`; `'warn'` for admin actions.
+      - Terminates illegal transitions with typed `GroupBetTransitionError` carrying `code: 'GROUP_BET_INVALID_TRANSITION' | 'GROUP_BET_NOT_FOUND' | 'GROUP_BET_TERMINAL' | 'GROUP_BET_UPDATE_FAILED'`.
+      - `withTransaction` adds the Begin/Commit/Rollback semantics around 3 statements; uses SERIALIZABLE row-level lock (`SELECT ... FOR UPDATE`).
+    - **`backend/src/test/gp-1-01-group-bet-state.test.ts`** (NEW, 380 lines): **integration test, runs against the LIVE Postgres** (not the in-memory mock).
+      - 60+ assertions across 10 cases. Requires a host→postgres port forward (see script).
+      - Per-run `RUN_TAG` cleanup deletes all test rows (group_bet_audit / audit_log / group_bet) at end. 12+ rows created and cleaned per run, no DB pollution.
+      - Test cases: happy-path 4-step transition, cancel paths, expire paths (system actor), illegal transition rejection, terminal guards (resolved/cancelled/expired cannot leave), audit mirror BOTH tables, atomicity rollback on FK violation, `TRANSITION_TABLE` const contract, anti-pattern guard (no other service mutates `group_bet.status`), empty `fromStatuses` rejection.
+      - **All 60+ PASS** in 0.4s against live DB.
+    - **`backend/src/test/run-all.ts`** (-1 line, +2 comment lines): removed gp-1-01 from the shared `npx ts-node --require setup.ts` run (because setup.ts installs an in-memory `query()` mock that does not know about `group_bet`), documented the dedicated live-DB runner.
+    - **`scripts/test-group-bet-state.sh`** (NEW): runner script that (a) brings up the `gp-pg-fwd` socat forwarder if not running, (b) extracts `POSTGRES_PASSWORD/USER/DB` from `.env`, (c) picks two real `users` rows for `CREATOR_ID`/`ACTOR_ID`, (d) runs the test. Idempotent rerunnable.
+  - **Verification / Test Method**:
+    - `docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c "\dt group_*"` → 4 tables listed.
+    - `docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c "\d group_bet"` → 36 columns + 7 indexes + 9 CHECK constraints.
+    - `bash scripts/test-group-bet-state.sh` → 🎉 all 60+ assertions pass, 12 test rows cleaned.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200, home/`/game`/`/dashboard` all 200 (home-page safety check).
+    - `npx tsc --noEmit` against the new service → exit 0.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-29]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
