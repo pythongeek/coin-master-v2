@@ -35,6 +35,7 @@ import { redis } from '../config/redis';
 import { determineBalanceSource, debitBalanceForBet } from './bonus';
 import { transitionGroupStatus } from './group-bet-state';
 import { emitGroupBetEvent } from './socket-group-bet';
+import { getGroupConfigKey } from './admin-group-config';
 
 // ─── Error class hierarchy ─────────────────────────────────────
 export class GroupBetValidationError extends Error {
@@ -116,13 +117,14 @@ export interface CreatedGroupBet {
   inviteToken: string;
 }
 
-// ─── Hard caps (admin-config phase 2 will replace) ──────────────
-const HARD_MAX_MEMBERS = 10;
-const HARD_MAX_POOL = 50_000;        // $50K
-const HARD_MIN_DEPOSIT_HISTORY = 50; // $50 lifetime deposits
+// ─── Soft caps (read at call-time from admin-config; falls back to
+//      constants if config is missing — Day 8 Phase 2 §2.1) ─────
+const SOFT_MAX_MEMBERS_FALLBACK = 10;
+const SOFT_MAX_POOL_FALLBACK = 50_000;        // $50K
+const SOFT_MIN_DEPOSIT_HISTORY_FALLBACK = 50; // $50 lifetime deposits
 const HARD_LOCK_TTL_SEC = 3;         // anti-race
 const REDIS_IDEM_TTL_SEC = 60;
-const HARD_EXPIRY_HOURS = 24;
+const HARD_EXPIRY_HOURS_FALLBACK = 24;
 
 // ─── Helpers ────────────────────────────────────────────────────
 function genShortCode(): string {
@@ -149,6 +151,7 @@ interface UserGate {
 async function runGates(
   userId: string,
   requiredBalance: number,
+  softMinDeposit: number,
 ): Promise<UserGate> {
   // Pull the minimal row in one shot
   const r = await query<any>(
@@ -196,8 +199,8 @@ async function runGates(
     };
   }
 
-  // 3. Lifetime deposits ≥ $50 (anti-bot, your Phase-1 §3 ask)
-  if (u.lifetime_deposits < HARD_MIN_DEPOSIT_HISTORY && !u.is_admin) {
+  // 3. Lifetime deposits ≥ admin-config floor (anti-bot; Day 8 reads from groupDefaultContributionMin as a proxy)
+  if (u.lifetime_deposits < softMinDeposit && !u.is_admin) {
     return {
       ok: false,
       reason: 'lifetime_deposit_too_low',
@@ -222,6 +225,14 @@ async function runGates(
 
 // ─── Public entrypoint ─────────────────────────────────────────
 export async function createGroupBet(input: CreateGroupBetInput): Promise<CreatedGroupBet> {
+  // ── 0. Load admin-config caps (Day 8 Phase 2) ────────────────
+  const [softMaxMembers, softMaxPool, softMinDeposit, expiryMinutes] = await Promise.all([
+    getGroupConfigKey('groupAbsoluteMaxMembers').catch(() => SOFT_MAX_MEMBERS_FALLBACK),
+    getGroupConfigKey('groupAbsolutePoolCap').catch(() => SOFT_MAX_POOL_FALLBACK),
+    getGroupConfigKey('groupDefaultContributionMin').catch(() => SOFT_MIN_DEPOSIT_HISTORY_FALLBACK),
+    getGroupConfigKey('groupExpiryMinutes').catch(() => 30),
+  ]);
+
   // ── 0. Shape validation (cheap, throws GroupBetValidationError) ─
   if (!['heads', 'tails'].includes(input.creatorChoice)) {
     throw new GroupBetValidationError('creatorChoice must be heads or tails', 'INVALID_CHOICE');
@@ -235,8 +246,8 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
   if (input.minMembers < 2) {
     throw new GroupBetValidationError('minMembers must be ≥ 2', 'INVALID_MIN_MEMBERS');
   }
-  if (input.maxMembers > HARD_MAX_MEMBERS) {
-    throw new GroupBetValidationError(`maxMembers must be ≤ ${HARD_MAX_MEMBERS}`, 'INVALID_MAX_MEMBERS');
+  if (input.maxMembers > softMaxMembers) {
+    throw new GroupBetValidationError(`maxMembers must be ≤ ${softMaxMembers}`, 'INVALID_MAX_MEMBERS');
   }
   if (input.maxMembers < input.minMembers) {
     throw new GroupBetValidationError('maxMembers < minMembers', 'INVALID_MEMBER_BOUNDS');
@@ -248,9 +259,9 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
     throw new GroupBetValidationError(`invalid turnMode: ${input.turnMode}`, 'INVALID_TURN_MODE');
   }
   const projectedPool = input.creatorStake + input.perMemberStake * (input.minMembers - 1);
-  if (projectedPool > HARD_MAX_POOL) {
+  if (projectedPool > softMaxPool) {
     throw new GroupBetValidationError(
-      `projected pool ${projectedPool} exceeds hard cap ${HARD_MAX_POOL}`,
+      `projected pool ${projectedPool} exceeds hard cap ${softMaxPool}`,
       'POOL_CAP_EXCEEDED',
     );
   }
@@ -285,7 +296,7 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
 
   try {
     // ── 3. Pre-flight gates ──
-    const gate = await runGates(input.userId, input.creatorStake);
+    const gate = await runGates(input.userId, input.creatorStake, softMinDeposit);
     if (!gate.ok) {
       if (gate.code === 'INSUFFICIENT_BALANCE') {
         throw new GroupBetInsufficientBalanceError(gate.balance!, input.creatorStake);
@@ -329,8 +340,8 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
             auto_flip_seconds, invite_token, expires_at, status,
             client_request_id, total_pool, current_members)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'USD', $8, $9, $10,
-                 $11, NOW() + interval '24 hours', 'open',
-                 $12, $13, 1)
+                 $11, NOW() + ($12 || ' minutes')::interval, 'open',
+                 $13, $14, 1)
          RETURNING id, short_code, creator_id, status, total_pool,
                    creator_stake, per_member_stake, min_members, max_members,
                    payout_mode, turn_mode, expires_at, invite_token`,
@@ -338,7 +349,7 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
           shortCode, input.userId, input.creatorChoice,
           input.creatorStake.toFixed(8), input.perMemberStake.toFixed(8),
           input.minMembers, input.maxMembers, input.payoutMode, input.turnMode,
-          autoFlip, inviteToken, input.clientRequestId ?? null,
+          autoFlip, inviteToken, String(expiryMinutes), input.clientRequestId ?? null,
           input.creatorStake.toFixed(8), // total_pool starts at creator_stake
         ],
       ) as { rows: any[]; rowCount: number };
@@ -475,8 +486,8 @@ export { transitionGroupStatus };
 export const __internals__ = {
   genShortCode,
   genInviteToken,
-  HARD_MAX_MEMBERS,
-  HARD_MAX_POOL,
-  HARD_MIN_DEPOSIT_HISTORY,
-  HARD_EXPIRY_HOURS,
+  SOFT_MAX_MEMBERS_FALLBACK,
+  SOFT_MAX_POOL_FALLBACK,
+  SOFT_MIN_DEPOSIT_HISTORY_FALLBACK,
+  HARD_EXPIRY_HOURS_FALLBACK,
 };

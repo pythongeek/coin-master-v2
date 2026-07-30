@@ -59,13 +59,22 @@ export interface GroupFraudSignal {
 }
 
 // ─── Thresholds (Phase 2 admin-config replaces) ─────────────────
-const SYBIL_MIN_SAME_IP = 3;          // ≥3 distinct users on same IP
-const INVITE_FARM_MIN_ROOMS = 3;     // ≥3 rooms per creator in window
-const FOUNDER_COLLUSION_MIN_ROUNDS = 10;
-const FOUNDER_COLLUSION_WIN_RATE = 0.6;
-const WITHDRAW_HOLD_POOL_USD = 5000;  // hold winners ≥24h if pool > $5K
-const POOL_ANOMALY_MULTIPLIER = 3;   // pool > 3× (creatorStake × maxMembers)
-const VPN_MIN_COUNTRIES = 3;
+const FALLBACK_SYBIL_MIN_SAME_IP = 3;          // ≥3 distinct users on same IP
+const FALLBACK_INVITE_FARM_MIN_ROOMS = 3;     // ≥3 rooms per creator in window
+const FALLBACK_FOUNDER_COLLUSION_MIN_ROUNDS = 10;
+const FALLBACK_FOUNDER_COLLUSION_WIN_RATE = 0.6;
+const FALLBACK_WITHDRAW_HOLD_POOL_USD = 5000;  // hold winners ≥24h if pool > $5K
+const FALLBACK_POOL_ANOMALY_MULTIPLIER = 3;   // pool > 3× (creatorStake × maxMembers)
+const FALLBACK_VPN_MIN_COUNTRIES = 3;
+
+// Backwards-compat aliases — Day-8 rename for clarity (no behavior change)
+const SYBIL_MIN_SAME_IP = FALLBACK_SYBIL_MIN_SAME_IP;
+const INVITE_FARM_MIN_ROOMS = FALLBACK_INVITE_FARM_MIN_ROOMS;
+const FOUNDER_COLLUSION_MIN_ROUNDS = FALLBACK_FOUNDER_COLLUSION_MIN_ROUNDS;
+const FOUNDER_COLLUSION_WIN_RATE = FALLBACK_FOUNDER_COLLUSION_WIN_RATE;
+const WITHDRAW_HOLD_POOL_USD = FALLBACK_WITHDRAW_HOLD_POOL_USD;
+const POOL_ANOMALY_MULTIPLIER = FALLBACK_POOL_ANOMALY_MULTIPLIER;
+const VPN_MIN_COUNTRIES = FALLBACK_VPN_MIN_COUNTRIES;
 
 // ─── Helper: write a signal to fraud_signals (idempotent) ─────
 async function writeSignal(signal: GroupFraudSignal, ipAddress: string | null = null): Promise<boolean> {
@@ -120,6 +129,17 @@ export interface JoinContext {
 
 export async function evaluateOnJoin(ctx: JoinContext): Promise<GroupFraudSignal[]> {
   const triggered: GroupFraudSignal[] = [];
+
+  // NOTE (Day 8): The Phase 2 §2.1 admin-config thresholds focus on
+  // player-facing knobs (member caps, stake caps, invite bonuses).
+  // Per-signal fraud thresholds (sybil count, invite-farm count,
+  // founder-collusion rounds, etc.) are NOT yet exposed in the
+  // admin UI — they remain the FALLBACK_* constants below. Phase 3
+  // work will add a `fraud_signals` config slice (e.g.
+  // `groupSybilMinSameIp`, `groupFraudInviteFarmMinRooms`,
+  // `groupFraudFounderMinRounds`, …) that admin can tune.
+  //
+  // For now the fallbacks here ARE the production values.
 
   // Load the room + all current members
   const r = await query<any>(

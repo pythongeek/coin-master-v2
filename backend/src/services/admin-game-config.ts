@@ -63,6 +63,40 @@ export interface GameConfig {
   /** স্কোয়াড বেটের জন্য আলাদা হাউজ এজ (%) */
   squadHouseEdgePercent: number;
 
+  // ── Group Play settings (Phase 2 / Day 8) ──────────────────
+  // Master toggles
+  groupPlayEnabled: boolean;
+  groupPlayAllowedCountries: string;
+  groupPlayBlockedCountries: string;
+  // Member caps
+  groupDefaultMinMembers: number;
+  groupDefaultMaxMembers: number;
+  groupAbsoluteMaxMembers: number;
+  // Stake caps
+  groupDefaultContributionMin: number;
+  groupDefaultContributionMax: number;
+  groupAbsolutePoolCap: number;
+  // Timing
+  groupExpiryMinutes: number;
+  groupAutoFlipCountdownSeconds: number;
+  // Distribution & turn defaults
+  groupDefaultPayoutDistribution: 'equal' | 'proportional' | 'founder_boost';
+  groupDefaultTurnDecision: 'creator' | 'auto_on_full' | 'random_lottery';
+  groupDefaultFounderSharePct: number;
+  // House edge
+  groupHouseEdgePercent: number;
+  groupLossHouseEdgePercent: number;
+  groupMinHouseEdgeSpreadVsSolo: number;
+  // Invites & bonuses
+  groupInviterBonusCoins: number;
+  groupInviteeBonusCoins: number;
+  groupInviterBonusCapPerUserPerDay: number;
+  groupInviteMaxRedemptionsDefault: number;
+  groupInviteExpiryHoursDefault: number;
+  // Feature flags
+  groupSpectatorModeEnabled: boolean;
+  groupPrivateAllowed: boolean;
+
   // ── গেম স্পিড সেটিং ───────────────────────────────────
   /** কয়েন স্পিন অ্যানিমেশনের সময় (মিলিসেকেন্ড) */
   coinSpinDurationMs: number;
@@ -194,6 +228,40 @@ export const GAME_CONFIG_LABELS: Partial<Record<keyof GameConfig, {
   jackpotHitChance:       { label: 'জ্যাকপট জয়ের সুযোগ (১/X)', description: 'জ্যাকপট জয়ের সম্ভাবনা (১/X chance)। যেমন ১০০০০ দিলে প্রতি ১০,০০০ গেমে গড়ে একবার জিতবে।', unit: 'টি গেম', min: 2, max: 1000000, type: 'number', category: 'জ্যাকপট' },
   jackpotStartPool:       { label: 'জ্যাকপট শুরুর মান', description: 'জ্যাকপট জয়ের পর পুলটি যে প্রারম্ভিক অ্যামাউন্টে রিসেট হবে।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'জ্যাকপট' },
   jackpotPool:            { label: 'জ্যাকপট পুল ব্যালেন্স', description: 'জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থের পরিমাণ।', unit: '$', min: 0, max: 1000000, type: 'number', category: 'জ্যাকপট' },
+
+  // ── Group Play settings (Phase 2 / Day 8) ────────────────────
+  // Master toggles
+  groupPlayEnabled:        { label: 'Group Play Master Toggle', description: 'Master switch. When false, no groups can be created or joined.', type: 'boolean', category: 'Group Play' },
+  groupPlayAllowedCountries: { label: 'Allowed Countries', description: 'CSV of ISO country codes that may play groups. "*" = everyone.', type: 'string', category: 'Group Play' },
+  groupPlayBlockedCountries: { label: 'Blocked Countries', description: 'Hard-blocked CSV (e.g. KP,IR,SY,CU). Wins over allowed list.', type: 'string', category: 'Group Play' },
+  // Member caps
+  groupDefaultMinMembers:  { label: 'Default Min Members', description: 'Default minimum members when creator does not specify.', unit: 'members', min: 2, max: 10, type: 'number', category: 'Group Play' },
+  groupDefaultMaxMembers:  { label: 'Default Max Members', description: 'Default maximum members when creator does not specify.', unit: 'members', min: 2, max: 10, type: 'number', category: 'Group Play' },
+  groupAbsoluteMaxMembers: { label: 'Absolute Max Members', description: 'Hard cap overriding any per-group choice.', unit: 'members', min: 2, max: 10, type: 'number', category: 'Group Play' },
+  // Stake caps
+  groupDefaultContributionMin: { label: 'Default Min Stake', description: 'Default minimum contribution per member.', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'Group Play' },
+  groupDefaultContributionMax: { label: 'Default Max Stake', description: 'Default maximum contribution per member.', unit: '$', min: 1, max: 50000, type: 'number', category: 'Group Play' },
+  groupAbsolutePoolCap:    { label: 'Absolute Pool Cap', description: 'Hard cap on total pool — overrides per-group choice.', unit: '$', min: 100, max: 1000000, type: 'number', category: 'Group Play' },
+  // Timing
+  groupExpiryMinutes:      { label: 'Group Expiry (minutes)', description: 'Time-to-live before WAITING → EXPIRED.', unit: 'minutes', min: 5, max: 1440, type: 'number', category: 'Group Play' },
+  groupAutoFlipCountdownSeconds: { label: 'Auto-Flip Countdown', description: 'For auto_on_full turn mode.', unit: 'seconds', min: 3, max: 30, type: 'number', category: 'Group Play' },
+  // Distribution & turn defaults
+  groupDefaultPayoutDistribution: { label: 'Default Payout Distribution', description: 'equal | proportional | founder_boost.', type: 'string', category: 'Group Play' },
+  groupDefaultTurnDecision: { label: 'Default Turn Decision', description: 'creator | auto_on_full | random_lottery.', type: 'string', category: 'Group Play' },
+  groupDefaultFounderSharePct: { label: 'Default Founder Boost %', description: 'For founder_boost mode only. Range 0-30.', unit: '%', min: 0, max: 30, type: 'number', category: 'Group Play' },
+  // House edge
+  groupHouseEdgePercent:   { label: 'Group House Edge (wins)', description: 'House edge on group wins. Decoupled from solo.', unit: '%', min: 0.1, max: 5, type: 'number', category: 'Group Play' },
+  groupLossHouseEdgePercent: { label: 'Group Loss House Edge', description: 'Edge on losses (e.g. plinko).', unit: '%', min: 0, max: 1, type: 'number', category: 'Group Play' },
+  groupMinHouseEdgeSpreadVsSolo: { label: 'Min House Edge Spread vs Solo', description: 'Prevents arb between solo and group.', unit: '%', min: 0, max: 2, type: 'number', category: 'Group Play' },
+  // Invites & bonuses
+  groupInviterBonusCoins:  { label: 'Inviter Bonus Coins', description: 'Coins credited to inviter when invitee joins. 0 = no bonus.', unit: 'coins', min: 0, max: 100, type: 'number', category: 'Group Play' },
+  groupInviteeBonusCoins:  { label: 'Invitee Bonus Coins', description: 'Coins credited to invitee when they join. 0 = no bonus.', unit: 'coins', min: 0, max: 100, type: 'number', category: 'Group Play' },
+  groupInviterBonusCapPerUserPerDay: { label: 'Inviter Bonus Daily Cap', description: 'Anti-fraud cap on inviter bonuses per user per day.', unit: 'coins', min: 0, max: 500, type: 'number', category: 'Group Play' },
+  groupInviteMaxRedemptionsDefault: { label: 'Invite Max Redemptions Default', description: 'How many times a single invite token can be redeemed.', unit: 'uses', min: 1, max: 100, type: 'number', category: 'Group Play' },
+  groupInviteExpiryHoursDefault: { label: 'Invite Expiry Hours Default', description: 'Default invite token TTL.', unit: 'hours', min: 1, max: 720, type: 'number', category: 'Group Play' },
+  // Feature flags
+  groupSpectatorModeEnabled: { label: 'Spectator Mode Enabled', description: 'Allow non-members to spectate via group:spectate.', type: 'boolean', category: 'Group Play' },
+  groupPrivateAllowed:     { label: 'Private Groups Allowed', description: 'When false, is_private=true groups are rejected at create time.', type: 'boolean', category: 'Group Play' },
 };
 
 /**
@@ -234,6 +302,32 @@ export const GAME_DEFAULT_CONFIG: Partial<GameConfig> = {
   jackpotHitChance: 10000,
   jackpotStartPool: 10.0,
   jackpotPool: 10.0,
+
+  // ── Group Play settings (Phase 2 / Day 8) ──────────────────
+  groupPlayEnabled: false,
+  groupPlayAllowedCountries: '*',
+  groupPlayBlockedCountries: 'KP,IR,SY,CU',
+  groupDefaultMinMembers: 2,
+  groupDefaultMaxMembers: 5,
+  groupAbsoluteMaxMembers: 10,
+  groupDefaultContributionMin: 0.10,
+  groupDefaultContributionMax: 10000,
+  groupAbsolutePoolCap: 50000,
+  groupExpiryMinutes: 30,
+  groupAutoFlipCountdownSeconds: 5,
+  groupDefaultPayoutDistribution: 'proportional',
+  groupDefaultTurnDecision: 'creator',
+  groupDefaultFounderSharePct: 10,
+  groupHouseEdgePercent: 1.0,
+  groupLossHouseEdgePercent: 0,
+  groupMinHouseEdgeSpreadVsSolo: 0.5,
+  groupInviterBonusCoins: 0,
+  groupInviteeBonusCoins: 0,
+  groupInviterBonusCapPerUserPerDay: 50,
+  groupInviteMaxRedemptionsDefault: 1,
+  groupInviteExpiryHoursDefault: 168,
+  groupSpectatorModeEnabled: true,
+  groupPrivateAllowed: true,
 };
 
 /** হাউজ এজ থেকে পেআউট মাল্টিপ্লায়ার বের করো */

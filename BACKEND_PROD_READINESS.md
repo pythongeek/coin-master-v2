@@ -1616,6 +1616,65 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
+- [x] **[GP-8] Group Play — Phase 2 / Day 8: 24 admin-config thresholds + admin-config domain slice + config-driven caps** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**: `backend/src/db/migration-group-play-config.sql` (NEW, ~110 lines, 24 INSERTs + idempotent ON CONFLICT); `backend/src/services/admin-group-config.ts` (NEW, ~390 lines — `GroupConfig` interface + 24 `DEFAULT_GROUP_CONFIG` entries + 24 `GROUP_CONFIG_LABELS` entries + `getGroupConfig`/`getGroupConfigKey`/`updateGroupConfig`/`resetGroupConfig`/`parseCountryList`/`isCountryAllowed`/`applyMemberCap` helpers); `backend/src/services/admin-game-config.ts` (+60 lines — added 24 group_play keys to `GameConfig` interface + 24 entries to `GAME_CONFIG_LABELS` + 24 entries to `GAME_DEFAULT_CONFIG`); `backend/src/services/group-bet-create.ts` (+30 lines — replaced 4 hardcoded caps with `getGroupConfigKey()` reads at the top of `createGroupBet`, removed `HARD_MAX_MEMBERS`/`HARD_MAX_POOL`/`HARD_MIN_DEPOSIT_HISTORY`/`HARD_EXPIRY_HOURS` constants in favor of `SOFT_*_FALLBACK`); `backend/src/services/group-bet-fraud.ts` (+5 lines — renamed 7 fraud thresholds to `FALLBACK_*` with backwards-compat aliases, added NOTE comment explaining the per-signal thresholds are Phase 3 work); `backend/src/test/gp-2-01-group-config.test.ts` (NEW, ~330 lines, 12 cases); `scripts/test-group-bet-config.sh` (NEW, ~95 lines, same auto-socat + auto-KYC pattern as Day-2-6)
+  - **Issue/Gap**: Phase 2 §2.1 listed 24 admin-config thresholds but all were hardcoded constants in service files. Operators had no way to tune them without a code change + redeploy.
+  - **Proposed Fix**: A new domain slice (`admin-group-config.ts`) that defines a `GroupConfig` interface with 24 keys, persists them to the existing `admin_settings` table via a dedicated migration, and reads them at call-time from all 4 Day-2-6 services that previously used hardcoded constants. Per-signal fraud thresholds (sybil count, founder-collusion rounds) are deferred to Phase 3 — they need a separate `fraud_signals` config slice.
+  - **Implementation Notes (2026-07-30)**:
+    - **`backend/src/db/migration-group-play-config.sql`** (NEW, ~110 lines):
+      - **24 `INSERT INTO admin_settings ... ON CONFLICT (key) DO UPDATE`** statements grouped by 8 sub-categories (master toggles, member caps, stake caps, timing, distribution, house edge, invites, feature flags).
+      - **snake_case keys** (e.g. `group_absolute_max_members`) — matches the existing `updateConfig()` storage convention in `admin-config.ts` (which stores the literal key as-is, then reads back via `snakeToCamel` conversion at line 178-185).
+      - **Idempotent**: every INSERT uses `ON CONFLICT (key) DO UPDATE SET description = EXCLUDED.description, updated_at = NOW()` so the migration can be re-applied safely (e.g. to roll forward defaults after a code change).
+      - **Final `SELECT count(*) ... LIKE 'group_%'`** verification row — confirms 24 rows were inserted on apply.
+    - **`backend/src/services/admin-group-config.ts`** (NEW, ~390 lines):
+      - **`GroupConfig` interface** — 24 typed fields matching the migration.
+      - **`DEFAULT_GROUP_CONFIG`** — 24 entries with the defaults from Phase 2 §2.1 table.
+      - **`GROUP_CONFIG_LABELS`** — 24 entries with `label`, `description`, `unit`, `min`, `max`, `type`, `category='Group Play'`. UI uses this for tooltips + range validation.
+      - **`getGroupConfig(): Promise<GroupConfig>`** — reads all 24 keys via `getRawSetting()`, applies `camelToSnake()` conversion, falls back to defaults for missing keys.
+      - **`getGroupConfigKey<K>(key): Promise<GroupConfig[K]>`** — single-key read with default fallback. Used by the hot-path call sites in `group-bet-create.ts`.
+      - **`updateGroupConfig(updates): Promise<{updated, rejected}>`** — bulk update with range validation. Out-of-range values or type mismatches land in `rejected[]` rather than throwing. The store-side uses snake_case keys.
+      - **`resetGroupConfig()`** — restores all 24 keys to defaults.
+      - **`parseCountryList(csv): string[] | null`** — `"*"` returns `null` (everyone allowed); CSV returns `["US", "GB", "BD"]` (trimmed + uppercased).
+      - **`isCountryAllowed(country, allowed, blocked): boolean`** — `blocked` wins over `allowed`.
+      - **`applyMemberCap(userMax, absoluteMax): number`** — `Math.min(userMax, absoluteMax)` for hard-cap enforcement.
+    - **`backend/src/services/admin-game-config.ts`** (+60 lines):
+      - Added the same 24 fields to the `GameConfig` interface (so they appear in `getConfig()`'s return type).
+      - Added 24 entries to `GAME_CONFIG_LABELS` (with English descriptions, since the per-domain slice uses English while the legacy Bengali labels stay for the existing fields).
+      - Added 24 entries to `GAME_DEFAULT_CONFIG` matching `DEFAULT_GROUP_CONFIG`.
+    - **`backend/src/services/group-bet-create.ts`** (+30 lines):
+      - **Replaced** `HARD_MAX_MEMBERS=10` / `HARD_MAX_POOL=50000` / `HARD_MIN_DEPOSIT_HISTORY=50` / `HARD_EXPIRY_HOURS=24` with `SOFT_*_FALLBACK` constants.
+      - **Added** `await Promise.all([getGroupConfigKey('groupAbsoluteMaxMembers'), getGroupConfigKey('groupAbsolutePoolCap'), getGroupConfigKey('groupDefaultContributionMin'), getGroupConfigKey('groupExpiryMinutes')])` at the top of `createGroupBet()` to load all 4 caps in parallel.
+      - **Updated** the `INSERT ... NOW() + interval '24 hours'` SQL to use `$12 || ' minutes'::interval` parameterized on the loaded `expiryMinutes`.
+      - **Updated** `runGates(userId, requiredBalance, softMinDeposit)` to take the lifetime-deposit floor as a parameter (replacing the closed-over constant).
+    - **`backend/src/services/group-bet-fraud.ts`** (+5 lines):
+      - Renamed 7 fraud thresholds (`SYBIL_MIN_SAME_IP` etc.) to `FALLBACK_*` with backwards-compat aliases.
+      - Added NOTE comment in `evaluateOnJoin` explaining that the per-signal thresholds are NOT exposed in the admin UI yet — they remain the FALLBACK_* constants. Phase 3 will add a `fraud_signals` config slice.
+    - **`backend/src/test/gp-2-01-group-config.test.ts`** (NEW, ~330 lines): **12-case integration test against LIVE Postgres**. 164 assertions across:
+      1. **Migration seeded 24 keys** — 24 rows in `admin_settings` WHERE key LIKE `group_%`
+      2. **`getGroupConfig()` returns 24 keys with correct defaults** — checks every key
+      3. **`getGroupConfigKey()` fallback** — delete a key, read it, get the default
+      4. **`updateGroupConfig()` persists + validates** — 3 keys persist, out-of-range rejected, type mismatch rejected
+      5. **`resetGroupConfig()` restores all 24 defaults** — looped assertion
+      6. **`parseCountryList` + `isCountryAllowed`** — 9 sub-cases
+      7. **`applyMemberCap` helper** — 3 sub-cases
+      8. **Barrel re-export** — `getConfig()` and `updateConfig()` from `admin-config` expose the new keys
+      9. **`GROUP_CONFIG_LABELS` has 24 entries with valid metadata** — looped assertion
+      10. **Hard-cap enforcement** — `groupAbsoluteMaxMembers=5` → `maxMembers=10` rejected with `INVALID_MAX_MEMBERS`
+      11. **Expiry override** — `groupExpiryMinutes=60` → `expires_at ≈ now + 60min` (drift < 5s)
+      12. **Regression** — `createGroupBet` works with config defaults (creates a room with valid shortCode + totalPool)
+      - **All 164 PASS** in ~1s against live DB. **Stable across 3 consecutive runs.**
+    - **`scripts/test-group-bet-config.sh`** (NEW, ~95 lines): same auto-socat + auto-KYC pattern as Day-2-6.
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against all new + modified files → exit 0.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200.
+    - **Migration applied to live DB** (24 INSERTs, verified `group_play_setting_count=24`).
+    - `bash scripts/test-group-bet-config.sh` (×3) → 🎉 all 164 PASS, snake_case rows cleaned.
+    - **Backend regression**: Day 1-7 tests → **66+55+56+33+22+28+164 = 424 assertions, 0 FAIL**. Zero regressions.
+    - Home-page safety check: `/`, `/game`, `/dashboard`, `/api/health` all 200.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
