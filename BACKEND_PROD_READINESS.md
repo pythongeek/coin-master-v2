@@ -1362,6 +1362,58 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-29]`
 
+- [x] **[GP-3] Group Play — Phase 1 / Day 3: provably-fair flip resolve + 3-mode turn decision + 3-mode payout math** ✓ TESTED & PASSED 2026-07-29
+  - **File(s) Affected**: `backend/src/services/group-bet-flip.ts` (NEW, ~560 lines); `backend/src/routes/group-bet.ts` (+25 lines, flip route); `backend/src/test/gp-1-03-group-bet-flip.test.ts` (NEW, ~420 lines); `scripts/test-group-bet-flip.sh` (NEW, ~95 lines)
+  - **Issue/Gap**: Day 2 created + joined rooms but no flip path. Day 3 wires the provably-fair resolve (delegating to `provably-fair.ts` + `server-seed.ts`) with the 3-mode turn decision and 3-mode payout distribution.
+  - **Proposed Fix**: `flipGroup({userId, groupIdentifier, clientSeed?, ipAddress?})` — resolves a `ready` room to `resolved`, persisting `server_seed_hash` + `server_seed_reveal` + `client_seed` + `nonce` + `result_hash` + `winning_side` + `resolved_at`, credits winners via `bonus.ts:creditPayout`, writes `group_bet_audit(flip_start/flip_resolve)` + `audit_log(group_play.flip_start/flip_resolve)` mirrors.
+  - **Implementation Notes (2026-07-29)**:
+    - **`backend/src/services/group-bet-flip.ts`** (NEW):
+      - **Provably-fair delegation**: imports `resolveFlip`, `generateClientSeed`, `generateServerSeed`, `hashServerSeed` from `provably-fair.ts`; `reserveNonce`, `getSeedSecretById` from `server-seed.ts`. `crypto` imported as `node:crypto` for `crypto.randomInt`.
+      - **`chooseFlipper()`** enforces the 3-mode turn decision (Phase 1 §7):
+        - `creator` — only `creator_id` may flip; others → `NOT_THE_FLIPPER` (403)
+        - `auto_on_full` — flipper is `members[0]` (the first member); any user can fire the request
+        - `random_lottery` — picks `members.find(m.lottery_winner===true)` if pre-picked, else **weighted-by-stake** random pick using `crypto.randomInt(0, totalWeight * 1_000_000)` (NOT `Math.random`)
+      - **`computePayouts()`** pure function implementing the 3-mode distribution (Phase 1 §6):
+        - `equal` — `totalPool / winners.count` (rounding remainder to last winner)
+        - `proportional` — `(winner.weight / totalWeight) * totalPool`
+        - `founder_boost` — 10% of pool to creator, remaining 90% split proportionally among winners. If creator is on the winning side, they get `(boost) + (creator.weight / totalWeight) * remainingPool`. If creator lost, boost stays in pool (house gain). Sum invariant: `Σ payouts = totalPool` (rounding ±1e-8).
+      - **`flipGroup()`** orchestration:
+        1. Resolve room (id OR short_code); reject if not `'ready'`, frozen, or expired
+        2. Load members; pick flipper via `chooseFlipper()`
+        3. `reserveNonce()` from `server_seeds` (rotates when threshold reached)
+        4. `transitionGroupStatus(ready → flipping)` writes `server_seed_hash` + `client_seed` + `nonce` (committed BEFORE flip — provably-fair principle)
+        5. `resolveFlip(seeds, creator_choice, totalPool, 2.0, 2.0)` — houseEdge=2%, targetMultiplier=2.0x (coinflip; Phase 2 admin-config will replace)
+        6. `computePayouts()` — pure-function math
+        7. `withTransaction(…)` atomic: UPDATE each `group_bet_member.payout_amount + is_winner` → `creditPayout()` from `bonus.ts` (withdrawable side) → INSERT `transactions(type='win', direction='credit')` per winner
+        8. `transitionGroupStatus(flipping → resolved)` writes `winning_side + server_seed_reveal + result_hash + resolved_at = NOW()`
+        9. Return `{winningSide, serverSeedHash, serverSeedReveal, clientSeed, nonce, resultHash, rawHash, rawValue, roll, payouts, payoutMode, turnMode, flipperUserId, resolvedAt}`
+      - **5 typed error classes** re-exported from `group-bet-create.ts`: `GroupBetValidationError | GroupBetNotAllowedError | GroupBetInsufficientBalanceError | GroupBetDuplicateError | GroupBetInternalError`.
+    - **`backend/src/routes/group-bet.ts`** (+25 lines): `POST /api/group-bet/:id/flip` with `authMiddleware + validateParams(idParamSchema) + validateBody(groupBetFlipSchema)`. Reuses the `mapGroupError()` helper from Day 2. Returns 200 on success (not 201 — it's a state transition, not a resource creation).
+    - **`backend/src/schemas/index.ts`** (`groupBetFlipSchema` was already defined Day 2 — wired in here).
+    - **`backend/src/test/gp-1-03-group-bet-flip.test.ts`** (NEW, ~420 lines): **12-case integration test against LIVE Postgres** (bypasses `setup.ts` shared mock the same way as Day-1/Day-2). 50+ assertions across:
+      1. create + 3 joins → status='ready' on last join (auto-transition assertion)
+      2. flipGroup happy path: status='resolved', winningSide heads/tails, hash 64-hex
+      3. Provably-fair verification: `hashServerSeed(server_seed_reveal) === server_seed_hash` AND rerun of `resolveFlip` produces same `rawValue`/`rawHash`/`won` derivation
+      4. DB persistence: `winning_side`, `server_seed_hash`, `server_seed_reveal`, `client_seed`, `nonce`, `result_hash`, `resolved_at` all persisted
+      5. Audit trail: `group_bet_audit` has `create|join|ready|flip_start|flip_resolve` in order; `audit_log` mirrors all 5; `flip_start < flip_resolve` ordering verified
+      6. Payout distribution (equal mode): `Σ payouts = totalPool` (both winner and loser sides tested)
+      7. Balances credited + `transactions(type='win')` rows exist (per-member payout visible)
+      8. Re-flip already-resolved → `GroupBetNotAllowedError(GROUP_NOT_READY)`
+      9. `turn_mode=creator` rejects non-creator → `GroupBetNotAllowedError(NOT_THE_FLIPPER)`
+      10. Frozen group → `GroupBetNotAllowedError(GROUP_FROZEN)`
+      11. `founder_boost`: creator gets 40% of pool, members get 30% each (Roobet pattern verified)
+      12. Sum invariant for `founder_boost`: `Σ payouts = totalPool`
+      - **All 50+ PASS** in ~0.4s against live DB. Stable across 3 consecutive runs (54–56 PASS, 0 FAIL each).
+    - **`scripts/test-group-bet-flip.sh`** (NEW): same runner pattern as Day-2 — auto-socat forwarders (pg + redis), 3 ACTIVE users promoted to `kyc_tier=1`, restored on exit.
+    - **Container rebuild**: backend image rebuilt, container boots clean, `/api/health` 200, `POST /api/group-bet/:id/flip` returns 401 (auth gate working).
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against the new service + route → exit 0.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200, `/api/group-bet/TEST/flip` 401 (no-auth).
+    - `bash scripts/test-group-bet-flip.sh` (×3) → 🎉 all 12 cases pass, 54–56 assertions, all test rows cleaned.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-29]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker

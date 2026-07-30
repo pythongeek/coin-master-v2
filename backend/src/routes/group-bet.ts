@@ -40,6 +40,7 @@ import {
   groupBetCreateSchema,
   groupBetJoinSchema,
   groupBetShareSchema,
+  groupBetFlipSchema,
 } from '../schemas';
 import {
   createGroupBet,
@@ -50,6 +51,7 @@ import {
   GroupBetInternalError,
 } from '../services/group-bet-create';
 import { joinGroupBet } from '../services/group-bet-join';
+import { flipGroup } from '../services/group-bet-flip';
 import { GroupBetTransitionError } from '../services/group-bet-state';
 import { z } from 'zod';
 
@@ -165,6 +167,29 @@ router.post(
         ipAddress: typeof req.ip === 'string' ? req.ip : undefined,
       });
       return res.status(201).json({ success: true, data: out });
+    } catch (e) {
+      if (mapGroupError(e, res)) return;
+      next(e);
+    }
+  },
+);
+
+// ─── 10. POST /api/group-bet/:id/flip — provably-fair resolve ─────
+router.post(
+  '/:id/flip',
+  authMiddleware,
+  validateParams(idParamSchema),
+  validateBody(groupBetFlipSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as AuthedRequest).user;
+      const out = await flipGroup({
+        userId: user.userId,
+        groupIdentifier: Array.isArray(req.params.id) ? req.params.id[0] : req.params.id,
+        clientSeed: req.body.clientSeed,
+        ipAddress: typeof req.ip === 'string' ? req.ip : undefined,
+      });
+      return res.status(200).json({ success: true, data: out });
     } catch (e) {
       if (mapGroupError(e, res)) return;
       next(e);
