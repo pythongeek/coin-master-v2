@@ -1456,6 +1456,58 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
+- [x] **[GP-5] Group Play — Phase 1 / Day 5: 8-signal fraud detection + admin console (5 endpoints)** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**: `backend/src/services/group-bet-fraud.ts` (NEW, ~390 lines); `backend/src/routes/admin-groups.ts` (NEW, ~290 lines); `backend/src/index.ts` (+3 lines for `app.use('/api/admin/groups', adminGroupsRoutes)`); `backend/src/test/gp-1-05-group-bet-fraud-admin.test.ts` (NEW, ~430 lines); `scripts/test-group-bet-fraud-admin.sh` (NEW, ~95 lines)
+  - **Issue/Gap**: Phase 1 §4 listed 8 fraud signals but no detection code existed. Phase 1 §6 §10 promised an admin console for groups but no admin route file existed.
+  - **Proposed Fix**: A real-time fraud-detection service (`group-bet-fraud.ts`) with 8 idempotent signals writing to the existing `fraud_signals` table, plus an admin route file (`admin-groups.ts`) with 5 endpoints: list, view-detail, force-cancel, freeze, mark-fraud.
+  - **Implementation Notes (2026-07-30)**:
+    - **`backend/src/services/group-bet-fraud.ts`** (NEW, ~390 lines):
+      - **8 signals**, each writing to `fraud_signals` with a deterministic fingerprint for idempotency:
+        | Code | Severity | Trigger |
+        |---|---|---|
+        | `group_sybil_suspected` | high | ≥3 members share same IP |
+        | `group_invite_farm_suspected` | medium | creator has ≥3 rooms in 24h |
+        | `group_compromised_creator` | high | creator's `is_flagged=true` |
+        | `group_withdraw_hold` | low | pool ≥ $5,000 |
+        | `group_unusual_pattern` | high | pool > 3× expected max |
+        | `group_founder_collusion` | medium | founder_boost + win-rate > 60% over ≥10 rounds |
+        | `group_vpn_suspected` | high | members from ≥3 distinct countries |
+        | `group_admin_force` | low | admin freeze / force-cancel / mark-fraud |
+      - **Public hooks**: `evaluateOnJoin({groupId, userId, ipAddress, countryCode})`, `evaluateOnFlip({groupId, creatorId, totalPool, creatorStake, maxMembers, winningSide, payoutMode, ipAddress, historyScopeToken?})`, `recordAdminForce(groupId, adminId, action, reason)`.
+      - **Idempotency**: SELECT-by-fingerprint before INSERT (the partial index `idx_fraud_signals_fingerprint` is non-unique so `ON CONFLICT` doesn't work).
+      - **All signal metadata** include `groupBetId` so the admin route can match via `metadata->>'groupBetId' = $1`.
+      - **Tunable thresholds** as module-level constants (Phase 2 admin-config replaces).
+      - **`listGroupFraudSignals(groupId)`** helper used by the admin detail endpoint.
+    - **`backend/src/routes/admin-groups.ts`** (NEW, ~290 lines):
+      - **`GET /api/admin/groups`** — list with filters: `status`, `creatorId`, `frozen=true`, `minFraudScore`, `limit`, `offset`. Returns paginated group rows with `member_count`.
+      - **`GET /api/admin/groups/:id`** — full detail: `group` row + `members[]` + `audit[]` (group_bet_audit, last 200) + `fraudSignals[]` (from `listGroupFraudSignals`).
+      - **`POST /api/admin/groups/:id/force-cancel`** — refunds all members (via inlined `creditPayout` + `transactions('admin_adjustment')`), flips status open|ready → cancelled via Day-1 state machine, records `group_admin_force` signal.
+      - **`POST /api/admin/groups/:id/freeze`** — toggles `is_frozen`, records signal.
+      - **`POST /api/admin/groups/:id/mark-fraud`** — force-freeze + `fraud_score=100` + direct `fraud_signals` insert with `ON CONFLICT (fingerprint) DO UPDATE`.
+      - Auth: `adminLimiter` + `authMiddleware` + `roleMiddleware(['super_admin', 'finance'])` (list/view allow `support`/`auditor` too).
+    - **`backend/src/index.ts`** (+3 lines): imports `adminGroupsRoutes`, mounts `app.use('/api/admin/groups', adminGroupsRoutes)` after `adminFraudRoutes`.
+    - **`backend/src/test/gp-1-05-group-bet-fraud-admin.test.ts`** (NEW, ~430 lines): **10-case integration test against LIVE Postgres**. 22 assertions across:
+      1. **Sybil** — 3 members share IP → `group_sybil_suspected` (high), fraud_signals row written
+      2. **Invite-farm** — creator has 3 rooms in 24h → `group_invite_farm_suspected` (medium)
+      3. **Compromised creator** — `is_flagged=true` → `group_compromised_creator` (high)
+      4. **Withdraw-hold** — pool=$7,500 → `group_withdraw_hold` (low), metadata.totalPool
+      5. **Unusual-pattern** — pool > 3× expected → `group_unusual_pattern` (high)
+      6. **Founder-collusion** — founder_boost + 9/10 wins → `group_founder_collusion` (medium), winRate > 60%
+      7. **recordAdminForce** — `group_admin_force` signal written with `groupBetId` metadata
+      8. **Idempotency** — re-running evaluateOnJoin does NOT create duplicate signals
+      9. **Admin list SQL** — returns ≥4 rooms for the test user
+      10. **Freeze + mark-fraud** — direct DB write verifies `is_frozen=true` + `fraud_score=100` + signal written
+      - **All 22 PASS** in ~0.5s against live DB. **Stable across 3 consecutive runs.**
+    - **`scripts/test-group-bet-fraud-admin.sh`** (NEW): same auto-socat + auto-KYC pattern as Day-2/Day-3/Day-4.
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against the new service + index.ts wiring → exit 0.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200, `/api/admin/groups` returns 401 without auth.
+    - `bash scripts/test-group-bet-fraud-admin.sh` (×3) → 🎉 all 22 PASS, all test rows cleaned.
+    - Home-page safety check: `/`, `/game`, `/dashboard`, `/api/health` all 200.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
