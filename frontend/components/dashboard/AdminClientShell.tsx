@@ -39,10 +39,11 @@ import AdminKycSettings from '@/components/dashboard/AdminKycSettings';
 import AdminLeaderboardPanel from '@/components/dashboard/AdminLeaderboardPanel';
 import AdminDepositDashboard from '@/components/dashboard/AdminDepositDashboard';
 import AdminChallengesPanel from '@/components/dashboard/AdminChallengesPanel';
+import GroupAdminPanel from '@/components/dashboard/GroupAdminPanel';
 import { useToast } from '@/components/providers/ToastProvider';
 import { clearToken } from '@/lib/socket';
 
-const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'system_logs' | 'health' | 'email' | 'security' | 'kyc' | 'kyc_admin' | 'account' | 'coins' | 'fraud' | 'testing' | 'settings' | 'ml' | 'audience' | 'geoip'; label: string; Icon: LucideIcon }[] = [
+const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bonuses' | 'leaderboard' | 'challenges' | 'audit' | 'system_logs' | 'health' | 'email' | 'security' | 'kyc' | 'kyc_admin' | 'account' | 'coins' | 'fraud' | 'groups' | 'testing' | 'settings' | 'ml' | 'audience' | 'geoip'; label: string; Icon: LucideIcon }[] = [
   { id: 'live', label: 'Live Stats', Icon: BarChart3 },
   { id: 'config', label: 'Game Config', Icon: Settings },
   { id: 'users', label: 'Users', Icon: Users },
@@ -51,6 +52,7 @@ const TABS: { id: 'live' | 'config' | 'users' | 'withdrawals' | 'deposits' | 'bo
   { id: 'coins', label: 'Balance Adjustment', Icon: Coins },
   { id: 'bonuses', label: 'Bonuses', Icon: Gift },
   { id: 'fraud', label: 'Fraud Center', Icon: AlertOctagon },
+  { id: 'groups', label: 'Group Bets', Icon: Users },
   { id: 'testing', label: 'Test Coins', Icon: FlaskConical },
   { id: 'settings', label: 'Admin Settings', Icon: SlidersHorizontal },
   { id: 'ml', label: 'ML Risk Center', Icon: Brain },
@@ -178,6 +180,7 @@ export default function AdminClientShell({ user }: AdminClientShellProps) {
             {activeTab === 'coins' && <AdminBalanceAdjustment />}
             {activeTab === 'bonuses' && <AdminBonusPanel />}
             {activeTab === 'fraud' && <AdminFraudPanel />}
+            {activeTab === 'groups' && <GroupAdminPanel />}
             {activeTab === 'testing' && <AdminTestingPanel />}
             {activeTab === 'settings' && <AdminSettingsPanel />}
             {activeTab === 'ml' && <AdminMlPanel />}

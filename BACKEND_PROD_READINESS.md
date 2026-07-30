@@ -1569,6 +1569,53 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
+- [x] **[GP-7] Group Play — Phase 1 / Day 7: frontend integration (useGroupBetSocket hook + GroupAdminPanel + smoke page)** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**: `frontend/lib/useGroupBetSocket.ts` (NEW, ~230 lines); `frontend/components/dashboard/GroupAdminPanel.tsx` (NEW, ~540 lines); `frontend/components/dashboard/AdminClientShell.tsx` (+3 lines — added `groups` tab + import + render); `frontend/app/group-bet/page.tsx` (NEW, ~310 lines)
+  - **Issue/Gap**: Phase 1 §9 promised "useGroupBetSocket (or create it) to consume the 11 events + group:spectate client handler" and "Render the GroupAdminPanel.tsx component that consumes /api/admin/groups". Both were missing.
+  - **Proposed Fix**: (1) A React hook `useGroupBetSocket` that subscribes to the 10 server→room events from the existing socket singleton, with optional spectator mode (auto-emit `group:spectate` on mount, `group:unspectate` on unmount). (2) A `<GroupAdminPanel>` admin tab wired into the existing `AdminClientShell.tsx` sidebar that calls `/api/admin/groups` with filters + detail view + force-cancel + freeze + mark-fraud actions. (3) A `/group-bet` smoke page that lets an authenticated user create a room, spectate it via the new hook, and watch the live event stream update.
+  - **Implementation Notes (2026-07-30)**:
+    - **`frontend/lib/useGroupBetSocket.ts`** (NEW, ~230 lines):
+      - **Public API**: `useGroupBetSocket({ groupId, spectator, historyCap, onEvent, disabled }) → { lastByEvent, latest, history, liveStatus, liveTotalPool, liveCurrentMembers, shareInvite }`
+      - **10 server→room events** subscribed: `group:created`, `group:join`, `group:leave`, `group:ready`, `group:flip_start`, `group:resolved`, `group:cancelled`, `group:expired`, `group:frozen`, `group:updated`.
+      - **3 client→server events** emitted: `group:spectate` (mount, spectator mode only), `group:unspectate` (unmount, spectator mode only), `group:invite_share` (via `shareInvite(channel)` return — channels: whatsapp|telegram|twitter|email|copy|qr|link).
+      - **Shallow-equal guard** on each payload (via `JSON.stringify`) so non-mutating events don't thrash React re-renders.
+      - **Rolling history buffer** capped at `historyCap` (default 50), newest first.
+      - **Ref-based callback** (`onEventRef`) so the `useEffect` doesn't re-subscribe on every render.
+      - **Cleanup** on unmount: removes all 10 listeners + emits `group:unspectate` if spectator mode was used.
+    - **`frontend/components/dashboard/GroupAdminPanel.tsx`** (NEW, ~540 lines):
+      - **Filters** at top: status dropdown (open|ready|flipping|resolved|cancelled|expired|all), "Frozen only" checkbox, "Min fraud score" number input, "Creator user id" search.
+      - **List table** with columns: short code, status (color-coded chip), pool, members, payout mode, fraud score (color-coded red/amber/grey by threshold), created at, chevron to open detail.
+      - **Detail drawer** opens on row click: full group fields + members table + last-10 audit rows + fraud signals table.
+      - **3 action buttons** in detail drawer: **Force-cancel** (red), **Freeze/Unfreeze** (blue, toggles), **Mark fraud** (amber, opens modal).
+      - **Mark-fraud modal**: 3 fields (signal type, severity, reason textarea); calls `POST /api/admin/groups/:id/mark-fraud`.
+      - **Auth header** via `localStorage.cf_token` (Bearer scheme) — same pattern as `AdminBalanceAdjustment`.
+      - **Same-origin proxy**: defaults to `/api` (uses nginx → frontend → backend chain in production); falls back to `NEXT_PUBLIC_API_URL` for local dev.
+      - **Toast feedback** for every POST via the existing `ToastProvider` (`addToast('Force-cancel succeeded', 'success')`).
+    - **`frontend/components/dashboard/AdminClientShell.tsx`** (+3 lines):
+      - Imports `GroupAdminPanel`.
+      - Adds `'groups'` to the `TABS` union type.
+      - Adds `{ id: 'groups', label: 'Group Bets', Icon: Users }` to the TABS array (right next to `'fraud'`).
+      - Renders `<GroupAdminPanel />` when `activeTab === 'groups'`.
+      - Admin → /sysop-Ifj8Q52oDnAWxvAm/admin → "Group Bets" tab in sidebar.
+    - **`frontend/app/group-bet/page.tsx`** (NEW, ~310 lines, route `/group-bet`):
+      - **Form** to create a group (choice, creator stake, per-member stake, min/max members, payout_mode=equal, turn_mode=creator).
+      - **Live status block** showing `liveStatus`, `liveTotalPool`, `liveCurrentMembers`, latest event name.
+      - **3 action buttons**: Copy invite link (also emits `group:invite_share` with channel='copy'), Share via WhatsApp (emits `group:invite_share` with channel='whatsapp'), Cancel room (calls `POST /api/group-bet/:id/cancel`).
+      - **Live event stream** — rolling list of the last N events with timestamps.
+      - **Per-event map** — grid showing whether each of the 10 events has fired at least once (green ✓ / grey —).
+      - **Auth gate**: shows a "please log in" warning if `cf_token` is missing.
+    - **`useGroupBetSocket` registration**: imported in `frontend/lib/` (one folder deeper than `hooks/` — matches the existing pattern of `lib/socket.ts`, `lib/useSocketEvents.ts`, `lib/store.ts`).
+    - **No backend changes** in Day 7 — pure frontend wiring.
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against the new files → exit 0.
+    - `python3 compose-with-secrets.py build frontend` → exit 0.
+    - `python3 compose-with-secrets.py up -d frontend` → healthy, home pages `/`, `/game`, `/dashboard`, `/group-bet` all return 200.
+    - **Backend regression**: `bash scripts/test-group-bet-state.sh` + create-join + flip + expiry + fraud-admin + socket-leave → **218/218 assertions PASS** (24 + 55 + 56 + 33 + 22 + 28). Zero regressions on Day-1 through Day-6.
+    - Manual click-through via the smoke page: create group → see `group:created` in stream → share link (emits `group:invite_share`) → cancel room → see `group:cancelled` + balance refund in stream.
+    - Home-page safety check: `/`, `/game`, `/dashboard`, `/group-bet`, `/api/health` all 200.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
