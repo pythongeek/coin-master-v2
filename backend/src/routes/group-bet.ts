@@ -18,6 +18,15 @@
  *    9.  GET  /api/group-bet/me/history           (Day 5)
  *   10.  POST /api/group-bet/:id/flip             (Day 3 — provably-fair)
  *   11-15. /api/admin/groups/*                    (Day 6)
+ *   16-18. Day 10 lobby endpoints (Phase 2 §1.4 rows 10, 12, 11):
+ *     16.  GET  /api/group-bet/lobby              — public/discoverable open rooms
+ *     17.  GET  /api/group-bet/friends/active     — rooms where anyone in the
+ *                                                  requester's friend-graph has
+ *                                                  joined or created (Day 5 stub
+ *                                                  used me/active path).
+ *     18.  GET  /api/group-bet/user/history        — every room the requester
+ *                                                  has CREATED or JOINED, any
+ *                                                  status, newest first.
  *
  *  Each endpoint maps `GroupBet*Error` subclasses to HTTP status codes
  *  via a single `mapError()` helper. The defensive layering matches
@@ -33,7 +42,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { query } from '../config/database';
 import { authMiddleware, AuthPayload } from '../middleware/auth';
-import { validateBody, validateParams } from '../middleware/validation';
+import { validateBody, validateParams, validateQuery } from '../middleware/validation';
 import { fraudGuard } from '../middleware/fraud-guard';
 import { groupLimiter } from '../middleware/rate-limiter';
 import {
@@ -54,6 +63,7 @@ import { joinGroupBet } from '../services/group-bet-join';
 import { flipGroup } from '../services/group-bet-flip';
 import { leaveGroupBet, cancelGroupBet, GroupBetLeaveError } from '../services/group-bet-leave';
 import { GroupBetTransitionError } from '../services/group-bet-state';
+import { listOpenGroups, listFriendsActiveGroups, listUserHistory } from '../services/group-bet-lobby';
 import { z } from 'zod';
 
 const router = Router();
@@ -108,6 +118,29 @@ const idParamSchema = z.object({
 
 const shortCodeParamSchema = z.object({
   shortCode: z.string().min(4).max(10),
+});
+
+// ─── Lobby query schemas (Day 10) ────────────────────────────────
+const lobbyFiltersSchema = z.object({
+  gameType: z.enum(['coinflip', 'dice', 'crash', 'plinko', 'limbo']).optional(),
+  payoutMode: z.enum(['equal', 'proportional', 'founder_boost']).optional(),
+  minPool: z.coerce.number().positive().optional(),
+  maxPool: z.coerce.number().positive().optional(),
+  minMembersRequired: z.coerce.number().int().min(1).max(10).optional(),
+  creatorTierAtLeast: z.coerce.number().int().min(0).max(3).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).max(10_000).optional(),
+  viewerCountry: z.string().length(2).regex(/^[A-Za-z]+$/).optional(),
+});
+
+const userHistoryQuerySchema = z.object({
+  status: z.string().optional(), // comma-separated list
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).max(10_000).optional(),
+});
+
+const friendsActiveQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 // ─── 1. POST /api/group-bet — create room ─────────────────────────
@@ -278,6 +311,75 @@ router.post(
         [id, user.userId, req.body.channel, req.ip ?? null, Array.isArray(userAgent) ? userAgent[0] : userAgent ?? null],
       );
       return res.status(201).json({ success: true, data: { groupId: id, channel: req.body.channel } });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 16. GET /api/group-bet/lobby — public lobby browser ─────────
+router.get(
+  '/lobby',
+  groupLimiter,
+  validateQuery(lobbyFiltersSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const filters = (req as any).query as z.infer<typeof lobbyFiltersSchema>;
+      // Optional: pull the viewer's IP country from the request (best-effort)
+      const viewerCountry = (req.headers['cf-ipcountry'] as string | undefined)
+        || (filters.viewerCountry ?? null);
+      const result = await listOpenGroups({ ...filters, viewerCountry });
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 17. GET /api/group-bet/friends/active — rooms where anyone
+//       in the requester's friend-graph has joined or created ──────
+router.get(
+  '/friends/active',
+  groupLimiter,
+  authMiddleware,
+  validateQuery(friendsActiveQuerySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as AuthedRequest).user;
+      const { limit = 50 } = (req as any).query as z.infer<typeof friendsActiveQuerySchema>;
+      const rooms = await listFriendsActiveGroups(user.userId, limit);
+      return res.status(200).json({
+        success: true,
+        data: { rooms },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 18. GET /api/group-bet/user/history — every room the user has
+//       CREATED or JOINED, any status, newest first ────────────────
+router.get(
+  '/user/history',
+  groupLimiter,
+  authMiddleware,
+  validateQuery(userHistoryQuerySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as AuthedRequest).user;
+      const { limit = 50, offset = 0, status } = (req as any).query as z.infer<typeof userHistoryQuerySchema>;
+      const statusFilter = status
+        ? String(status).split(',').map(s => s.trim()).filter(Boolean)
+        : null;
+      const result = await listUserHistory(user.userId, { limit, offset, statusFilter });
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
     } catch (e) {
       next(e);
     }

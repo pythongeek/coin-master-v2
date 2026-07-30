@@ -1707,6 +1707,34 @@
   - **Same as Day 8, the SPEC VERIFICATION block flips the `PHASE 1 — System Design` → `PHASE 2 — Configurable Thresholds` boundary**: 24 settings are now configurable from the admin UI.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
+- [x] **[GP-10] Group Play — Phase 2 / Day 10: lobby browser backend (3 new GET endpoints)** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**:
+    - `backend/src/services/group-bet-lobby.ts` — NEW (~340 lines, 3 functions: `listOpenGroups`, `listFriendsActiveGroups`, `listUserHistory`)
+    - `backend/src/routes/group-bet.ts` — added 3 routes + 3 Zod query schemas (lobbyFiltersSchema, friendsActiveQuerySchema, userHistoryQuerySchema); routes registered BEFORE `/:id` so the wildcard doesn't shadow `/lobby`
+    - `backend/src/test/gp-2-03-lobby.test.ts` — NEW (~310 lines, 8 cases, 20 assertions)
+    - `scripts/test-group-bet-lobby.sh` — NEW (~95 lines, auto-socat + auto-KYC pattern)
+  - **Endpoints shipped**:
+    - `GET /api/group-bet/lobby` — public (no auth), supports `gameType`, `payoutMode`, `minPool`/`maxPool`, `minMembersRequired`, `creatorTierAtLeast`, `limit`, `offset`, `viewerCountry`. Honours `groupPlayBlockedCountries` admin-config (returns `[]` for blocked countries). Returns `{rooms, total, limit, offset}`.
+    - `GET /api/group-bet/friends/active` — auth required. Computes friend graph via `JOIN group_bet_member ON group_id WHERE user_id = ANY(friend_ids)` (co-players). Returns rooms where any friend is creator OR member.
+    - `GET /api/group-bet/user/history` — auth required. Returns every room the user CREATED OR JOINED (any status), with `role`, `myStake`, `myPayout`, `isWinner` per row. Supports `status` filter (comma-separated) + `limit` + `offset`.
+  - **Performance**: `listOpenGroups` uses `idx_group_bet_expires_open` (partial index on status+expires_at) for the open/ready filter — should scale to thousands of active rooms.
+  - **Friend graph**: Day-10 ships a "loose" approximation (co-players) since the schema doesn't have a `friends` table. Phase 3 will replace with a proper graph.
+  - **Bugs hit & fixed (Day 10 mid-session)**:
+    1. `zod` doesn't have `.alpha()` method → switched to `.regex(/^[A-Za-z]+$/)` for country codes
+    2. `validateQuery` not imported in `routes/group-bet.ts` → added to imports
+    3. `creatorTierAtLeast: 0|1|2|3` literal union incompatible with `z.coerce.number()` → relaxed to `number`
+    4. `m1.status` column doesn't exist on `group_bet_member` (status is on `group_bet`) → removed from friend-graph query
+    5. SQL syntax error from `${placeholders}` interpolation (template literal in SQL string) → switched to `ANY($2::uuid[])` with array bind
+    6. `expires_at` is NOT NULL → can't set it to NULL in test setup to flip status; switched to far-future timestamp
+    7. Route order bug: `/lobby` was registered AFTER `/:id` so Express matched `/:id=lobby` first → moved lobby routes before `/:id`
+    8. INNER JOIN to `group_bet_member` excluded rooms where the user is creator-only (no member row) → switched to LEFT JOIN with COALESCE for `myStake`/`myPayout`, role derived from `CASE WHEN m.user_id IS NOT NULL`
+  - **Smoke check**:
+    - `GET /api/group-bet/lobby?limit=2` → **200** with real room data
+    - `GET /api/group-bet/friends/active` (no-auth) → **401** (correct)
+    - `GET /api/group-bet/user/history` (no-auth) → **401** (correct)
+  - **SPEC VERIFICATION flip**: Phase 2 §1.4 (rows 10, 11, 12 in the API matrix) are now LIVE. The "lobby browser UI" requirement is now backend-complete; Day 12 will wire the React lobby page.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)
