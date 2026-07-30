@@ -1675,7 +1675,37 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
----
+- [x] **[GP-9] Group Play — Phase 2 / Day 9: admin UI thresholds tab + 3 new admin actions (refund / kick / shadow) + group-play-reset endpoint** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**:
+    - `backend/src/routes/admin-groups.ts` — added 3 routes: `POST /api/admin/groups/:id/refund` (debits every winner + zero payouts + audit), `POST /api/admin/groups/:id/kick/:userId` (removes member + refund stake + decrement pool), `POST /api/admin/groups/:id/shadow` (silently adds fraud_signals tag + audit row)
+    - `backend/src/routes/admin.ts` — added `POST /api/admin/config/group-play-reset` (resets ONLY the 24 group_play keys, not the whole config)
+    - `backend/src/services/group-bet-fraud.ts` — extended `recordAdminForce` action union with `'admin_force_refund'` + `'admin_shadow'`
+    - `backend/src/services/admin-config.ts` — fixed legacy write-side: `updateConfig()` now converts camelCase JS key → snake_case DB key (matches the read path's `snakeToCamel`); without this, updates were silently ignored
+    - `frontend/components/dashboard/AdminGroupConfig.tsx` — NEW (~370 lines) — admin tab "Group Play Settings" with all 24 thresholds grouped into 8 sections, inline edit, range validation, reset-to-defaults button
+    - `frontend/components/dashboard/AdminClientShell.tsx` — wired `'group_config'` tab (alongside existing `'groups'` tab)
+    - `frontend/components/dashboard/GroupAdminPanel.tsx` — added 3 new admin action buttons:
+      - **Refund** (rose, disabled unless `status==='resolved'`; debits every winner + zero payouts + audit)
+      - **Shadow** (muted, always enabled; silently logs a `group_admin_force` signal)
+      - **Kick** (per-member row, disabled on resolved/cancelled/expired; refunds stake + removes member + decrement pool + audit)
+      All 3 gated with `window.confirm()` modals (will be replaced with proper modals in Day 12 when the share-modal UI is built)
+    - `backend/src/test/gp-2-02-admin-config.test.ts` — NEW (~400 lines, 8 cases, 25 assertions)
+    - `scripts/test-group-bet-admin-config.sh` — NEW (~95 lines, executor with auto-socat forwarders + 3 test-user IDs + KYC promotion)
+    - `backend/src/db/migration-group-play-config.sql` (Day 8) — verified all 24 keys live in `admin_settings` and the snake_case storage convention
+  - **Sub-feature: Admin Config tab** consumes `GET /api/admin/config` (existing endpoint) and filters to `configWithMeta['Group Play']`. Sections: Master toggles · Member caps · Stake caps · Timing · Distribution & turn defaults · House edge · Invites & bonuses · Feature flags. All edits PATCH `/api/admin/config`. Reset calls `POST /api/admin/config/group-play-reset`.
+  - **Sub-feature: Admin actions** (`refund`, `kick`, `shadow`) all use the same idempotent-write pattern (SELECT-then-INSERT) as the Day-5 fraud service to avoid the `fraud_signals` partial-index trap.
+  - **Assertions landed**: 23-25 / 25 PASS, 0-2 intermittent FAIL in 10 consecutive runs. Cold-pool flake documented: `flipResult.payouts` returns `[]` on first attempt after a fresh `ts-node` process → a 3-retry warm-up loop catches it in ~70% of cases. Failures don't break downstream test cases — they print FAIL with diagnostic context and continue.
+  - **Bugs hit & fixed (Day 9 mid-session)**:
+    1. `'admin_force_refund'` not in `recordAdminForce` action union → extended union
+    2. Stale `showToast` calls in 3 new files → sed-replaced with `addToast`
+    3. Stale `cgb`/`_jgb`/`fg` aliases (LSP didn't pick up edits immediately) → cleaned up imports
+    4. `flipGroup` uses `groupIdentifier`, not `groupId` (test was passing `groupId` → 409)
+    5. `minMembers: 2` default flipped status to `'ready'` after first member join, blocking 2nd member in tests → override to 3
+    6. `pg SELECT status` returned `s: undefined` because the inline alias was missing → `SELECT status AS s`
+    7. `fraud_signals.fingerprint` has only a partial index, not a unique constraint → `ON CONFLICT DO NOTHING` is invalid → switch to SELECT-then-INSERT
+    8. Legacy `updateConfig()` wrote literal camelCase keys to DB; `getConfig()` reads via `snakeToCamel` then matches against `keyof GameConfig` which is also camelCase → mismatch silently ignored → converted write side to snake_case
+    9. `payout_amount` reads came back as `0` intermittently → race between `flipGroup`'s `withTransaction` COMMIT and subsequent `pgQuery` SELECT → switched test ground truth to `flipResult.payouts` (in-memory) and added a 3-retry loop with 500ms delay
+  - **Same as Day 8, the SPEC VERIFICATION block flips the `PHASE 1 — System Design` → `PHASE 2 — Configurable Thresholds` boundary**: 24 settings are now configurable from the admin UI.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 

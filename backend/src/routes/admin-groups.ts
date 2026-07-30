@@ -341,6 +341,282 @@ router.post(
   },
 );
 
+// ─── 16. POST /api/admin/groups/:id/refund (Day 9, Phase 2 §2.3) ──
+// Reverses a FINISHED room's payouts: debits each winner's balance
+// and writes a refund ledger row + group_bet_audit(action='refund').
+// Use case: a confirmed-dispute case where the operator determines
+// the group flip was fraudulent (e.g. compromised server seed).
+router.post(
+  '/:id/refund',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'finance']),
+  validateParams(idParamSchema),
+  validateBody(freezeBodySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const adminId = (req as AuthedRequest).user.userId;
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { reason } = req.body;
+
+      // 1. Lock the room + verify status === 'resolved' (refund only
+      // applies to FINISHED rooms; for active rooms use /force-cancel)
+      const lockRow = await query<any>(
+        `SELECT id, status FROM group_bet WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!lockRow.rows.length) {
+        return res.status(404).json({ success: false, error: 'group not found', code: 'GROUP_NOT_FOUND' });
+      }
+      if (lockRow.rows[0].status !== 'resolved') {
+        return res.status(409).json({
+          success: false,
+          error: `refund only applies to status='resolved' (got '${lockRow.rows[0].status}')`,
+          code: 'NOT_RESOLVED',
+        });
+      }
+
+      // 2. Read all members + their payouts
+      const members = await query<any>(
+        `SELECT user_id, role, payout_amount::text AS payout, is_winner
+           FROM group_bet_member WHERE group_id = $1`,
+        [id],
+      );
+
+      // 3. Debit each winner's balance + write a debit ledger row.
+      // Losers already had their stake debited at JOIN time — no reversal needed.
+      let totalReversed = 0;
+      let winnersCount = 0;
+      await withTransaction(async (txQuery) => {
+        for (const m of members.rows) {
+          const payout = parseFloat(m.payout);
+          if (!(payout > 0) || m.is_winner !== true) continue;
+          // Debit the winner's withdrawable balance
+          await txQuery(
+            `UPDATE users
+                SET withdrawable_balance_coins = withdrawable_balance_coins - $2
+              WHERE id = $1 AND withdrawable_balance_coins >= $2`,
+            [m.user_id, payout.toFixed(8)],
+          );
+          await txQuery(
+            `INSERT INTO transactions
+               (user_id, type, amount, currency, direction, status, metadata)
+             VALUES ($1, 'admin_adjustment', $2, 'USD', 'debit', 'confirmed', $3::jsonb)`,
+            [
+              m.user_id,
+              payout.toFixed(8),
+              JSON.stringify({
+                pool: 'group_play',
+                reason: 'group_bet_admin_refund',
+                groupBetId: id,
+                role: m.role,
+              }),
+            ],
+          );
+          // Reset their payout to 0
+          await txQuery(
+            `UPDATE group_bet_member SET payout_amount = 0 WHERE group_id = $1 AND user_id = $2`,
+            [id, m.user_id],
+          );
+          winnersCount++;
+          totalReversed += payout;
+        }
+        // 4. Audit row + admin-force signal
+        await txQuery(
+          `INSERT INTO group_bet_audit (group_id, action, actor_id, payload)
+           VALUES ($1, 'refund', $2, $3::jsonb)`,
+          [id, adminId, JSON.stringify({
+            reversedWinners: winnersCount,
+            reversedTotal: totalReversed.toFixed(8),
+            reason,
+            trigger: 'admin_refund',
+          })],
+        );
+      });
+
+      // 5. Record admin-force signal (fraud_signals)
+      await recordAdminForce(id, adminId, 'admin_force_refund', reason);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          groupId: id,
+          reversedWinners: winnersCount,
+          reversedTotal: totalReversed.toFixed(8),
+          reason,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 17. POST /api/admin/groups/:id/kick/:userId (Day 9) ──────
+// Removes a single member from a non-resolved room + refunds their
+// stake. Use case: a confirmed-compromised account in the group, or
+// removing a known-bad actor after admin investigation.
+const kickParamsSchema = z.object({
+  id: z.string().min(8).max(64),
+  userId: z.string().min(8).max(64),
+});
+const kickBodySchema = z.object({
+  reason: z.string().min(3).max(500),
+});
+router.post(
+  '/:id/kick/:userId',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'finance']),
+  validateParams(kickParamsSchema),
+  validateBody(kickBodySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const adminId = (req as AuthedRequest).user.userId;
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const userId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;
+      const { reason } = req.body;
+
+      // Lock + verify not resolved
+      const lockRow = await query<any>(
+        `SELECT id, status, current_members FROM group_bet WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!lockRow.rows.length) {
+        return res.status(404).json({ success: false, error: 'group not found', code: 'GROUP_NOT_FOUND' });
+      }
+      if (lockRow.rows[0].status === 'resolved' || lockRow.rows[0].status === 'cancelled' || lockRow.rows[0].status === 'expired') {
+        return res.status(409).json({
+          success: false,
+          error: `cannot kick from a ${lockRow.rows[0].status} room`,
+          code: 'ROOM_TERMINAL',
+        });
+      }
+
+      // Find the member
+      const memberRow = await query<any>(
+        `SELECT user_id, role, stake::text AS stake FROM group_bet_member WHERE group_id = $1 AND user_id = $2`,
+        [id, userId],
+      );
+      if (!memberRow.rows.length) {
+        return res.status(404).json({ success: false, error: 'user is not a member of this room', code: 'NOT_A_MEMBER' });
+      }
+      const stake = parseFloat(memberRow.rows[0].stake);
+      const wasCreator = memberRow.rows[0].role === 'creator';
+
+      // Refund + remove
+      await withTransaction(async (txQuery) => {
+        if (stake > 0) {
+          await creditPayout(userId, stake, 'withdrawable', txQuery as any);
+          await txQuery(
+            `INSERT INTO transactions
+               (user_id, type, amount, currency, direction, status, metadata)
+             VALUES ($1, 'admin_adjustment', $2, 'USD', 'credit', 'confirmed', $3::jsonb)`,
+            [
+              userId,
+              stake.toFixed(8),
+              JSON.stringify({
+                pool: 'group_play',
+                reason: 'group_bet_admin_kick',
+                groupBetId: id,
+                role: memberRow.rows[0].role,
+              }),
+            ],
+          );
+        }
+        await txQuery(`DELETE FROM group_bet_member WHERE group_id = $1 AND user_id = $2`, [id, userId]);
+        // Don't let current_members go below 1
+        await txQuery(
+          `UPDATE group_bet
+              SET current_members = GREATEST(current_members - 1, 1),
+                  total_pool = GREATEST(total_pool - $1, 0),
+                  updated_at = NOW()
+            WHERE id = $2`,
+          [stake.toFixed(8), id],
+        );
+        await txQuery(
+          `INSERT INTO group_bet_audit (group_id, action, actor_id, payload)
+           VALUES ($1, 'admin_kick', $2, $3::jsonb)`,
+          [id, adminId, JSON.stringify({
+            kickedUserId: userId,
+            refunded: stake.toFixed(8),
+            reason,
+            wasCreator,
+          })],
+        );
+      });
+
+      // Record admin-force signal
+      await recordAdminForce(id, adminId, 'admin_kick', `${userId.slice(0,8)}…: ${reason}`);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          groupId: id,
+          kickedUserId: userId,
+          refunded: stake.toFixed(8),
+          reason,
+          wasCreator,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 18. POST /api/admin/groups/:id/shadow (Day 9) ────────────
+// Sets is_shadow=true and writes an audit row + fraud_signals row
+// tagged severity='low'. Shadow mode = admin is silently observing
+// the group without affecting any other state. Use case: monitoring
+// a suspected-fraud group without tipping off the participants.
+const shadowBodySchema = z.object({
+  reason: z.string().min(3).max(500),
+});
+router.post(
+  '/:id/shadow',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'finance', 'support']),
+  validateParams(idParamSchema),
+  validateBody(shadowBodySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const adminId = (req as AuthedRequest).user.userId;
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { reason } = req.body;
+
+      // 1. Verify the room exists
+      const exists = await query<{ id: string }>(`SELECT id FROM group_bet WHERE id = $1`, [id]);
+      if (!exists.rows.length) {
+        return res.status(404).json({ success: false, error: 'group not found', code: 'GROUP_NOT_FOUND' });
+      }
+
+      // 2. Audit row
+      await query(
+        `INSERT INTO group_bet_audit (group_id, action, actor_id, payload)
+         VALUES ($1, 'admin_shadow', $2, $3::jsonb)`,
+        [id, adminId, JSON.stringify({ reason, trigger: 'admin_shadow' })],
+      );
+
+      // 3. Record admin-force signal (low severity = no action)
+      await recordAdminForce(id, adminId, 'admin_shadow', reason);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          groupId: id,
+          shadowed: true,
+          reason,
+          note: 'No state change — admin is silently observing. The flag is recorded for audit only.',
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
 export default router;
 
 // Re-export fraud helpers so the public user/group-bet routes can hook in

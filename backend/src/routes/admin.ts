@@ -18,6 +18,7 @@ import {
   getConfig, updateConfig, updateAllConfig,
   resetToDefaults, CONFIG_LABELS, DEFAULT_CONFIG, GameConfig
 } from '../services/admin-config';
+import { resetGroupConfig, getGroupConfig } from '../services/admin-group-config';
 import { query } from '../config/database';
 import { validateBody } from '../middleware/validation';
 import { adminLimiter } from '../middleware/rate-limiter';
@@ -100,6 +101,22 @@ router.patch('/config', adminLimiter, authMiddleware, roleMiddleware(['super_adm
 });
 
 // ══════════════════════════════════════════════════════════════
+//  POST /api/admin/config/group-play-reset
+//  Reset ONLY the 24 group_play thresholds to defaults (Day 9 §2.4)
+// ══════════════════════════════════════════════════════════════
+router.post('/config/group-play-reset', adminLimiter, authMiddleware, roleMiddleware(['super_admin']), async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    await resetGroupConfig();
+    const groupCfg = await getGroupConfig();
+    res.json({
+      success: true,
+      config: groupCfg,
+      message: 'Group Play settings reset to defaults.',
+    });
+  } catch (err) { next(err); }
+});
+
+// ══════════════════════════════════════════════════════════════
 //  POST /api/admin/config/reset
 //  সব সেটিং ডিফল্টে ফিরিয়ে দাও
 // ══════════════════════════════════════════════════════════════
@@ -111,8 +128,7 @@ router.post('/config/reset', adminLimiter, authMiddleware, roleMiddleware(['supe
       config: DEFAULT_CONFIG,
       message: 'সব সেটিং ডিফল্টে ফেরত গেছে।',
     });
-  } catch (err) { next(err);
-  }
+  } catch (err) { next(err); }
 });
 
 // ══════════════════════════════════════════════════════════════

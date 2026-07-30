@@ -376,7 +376,7 @@ export async function evaluateOnFlip(ctx: FlipContext): Promise<GroupFraudSignal
 export async function recordAdminForce(
   groupId: string,
   adminId: string,
-  action: 'admin_freeze' | 'admin_force_cancel' | 'admin_kick' | 'admin_mark_fraud',
+  action: 'admin_freeze' | 'admin_force_cancel' | 'admin_force_refund' | 'admin_kick' | 'admin_mark_fraud' | 'admin_shadow',
   reason: string,
 ): Promise<void> {
   await writeSignal({

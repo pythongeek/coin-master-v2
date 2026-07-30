@@ -207,11 +207,17 @@ export async function getConfig(): Promise<GameConfig> {
 /** একটি সেটিং আপডেট করো */
 export async function updateConfig(key: keyof GameConfig, value: unknown): Promise<void> {
   const stringValue = String(value);
+  // Day 9 / Phase 2: write the snake_case convention (matches Day 8 admin-group-config.ts)
+  // — legacy behavior wrote literal camelCase, but the existing read path converts
+  //   snake → camel, so camel-writes were silently ignored.
+  const dbKey = (key as string).replace(/[A-Z]/g, (m: string, idx: number) =>
+    idx === 0 ? m.toLowerCase() : `_${m.toLowerCase()}`,
+  );
   await query(
     `INSERT INTO admin_settings (key, value, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-    [key, stringValue],
+    [dbKey, stringValue],
   );
 }
 

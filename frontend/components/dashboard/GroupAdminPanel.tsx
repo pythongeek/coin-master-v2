@@ -17,7 +17,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Users, RefreshCw, Search, Snowflake, Trash2, AlertOctagon, ChevronRight, X, Eye, Flag, ChevronLeft } from 'lucide-react';
+import { Users, RefreshCw, Search, Snowflake, Trash2, AlertOctagon, ChevronRight, X, Eye, Flag, ChevronLeft, Undo2 } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
 import { useToast } from '@/components/providers/ToastProvider';
 
@@ -186,7 +186,7 @@ export default function GroupAdminPanel() {
   }, [authHeaders, backendBase]);
 
   // ── POST handlers ───────────────────────────────────────────
-  const doPost = useCallback(async (groupId: string, path: 'force-cancel' | 'freeze' | 'mark-fraud', body: Record<string, any> = {}) => {
+  const doPost = useCallback(async (groupId: string, path: 'force-cancel' | 'freeze' | 'mark-fraud' | 'refund' | 'shadow' | `kick/${string}`, body: Record<string, any> = {}) => {
     try {
       const r = await fetch(`${backendBase}/admin/groups/${groupId}/${path}`, {
         method: 'POST',
@@ -205,6 +205,11 @@ export default function GroupAdminPanel() {
       return null;
     }
   }, [authHeaders, backendBase, toast, fetchList, fetchDetail, selected]);
+
+  // ── Kick a specific member (Day 9) ────────────────────────
+  const doKick = useCallback(async (groupId: string, userId: string, reason: string) => {
+    return doPost(groupId, `kick/${userId}` as `kick/${string}`, { reason });
+  }, [doPost]);
 
   return (
     <div className="space-y-4">
@@ -407,6 +412,31 @@ export default function GroupAdminPanel() {
             >
               <Flag size={14} /> Mark fraud
             </button>
+            {/* Day 9: Refund (reverses a FINISHED room's payouts) */}
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Refund this resolved room? This will debit every winner\'s balance and zero out their payout. Continue?')) {
+                  doPost(selected.id, 'refund', { reason: 'admin refund from console' });
+                }
+              }}
+              disabled={selected.status !== 'resolved'}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              <Undo2 size={14} /> Refund
+            </button>
+            {/* Day 9: Shadow (admin silently observes) */}
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Shadow this group? You will silently observe (no state change). Continue?')) {
+                  doPost(selected.id, 'shadow', { reason: 'admin shadow from console' });
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-text-muted/30 text-text-secondary hover:text-text-primary hover:bg-surface/50 transition"
+            >
+              <Eye size={14} /> Shadow
+            </button>
           </div>
 
           {/* Members */}
@@ -423,21 +453,39 @@ export default function GroupAdminPanel() {
                     <th className="px-2 py-1 text-right">Weight</th>
                     <th className="px-2 py-1 text-right">Payout</th>
                     <th className="px-2 py-1">Winner</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selected.members.map((m) => (
-                    <tr key={m.user_id} className="border-t border-border">
-                      <td className="px-2 py-1 font-mono">{m.user_id.slice(0, 8)}…</td>
-                      <td className="px-2 py-1 font-mono text-text-secondary">{m.role}</td>
-                      <td className="px-2 py-1 font-mono">{m.choice}</td>
-                      <td className="px-2 py-1 text-right font-mono">{fmtMoney(m.stake)}</td>
-                      <td className="px-2 py-1 text-right font-mono">{m.weight}</td>
-                      <td className="px-2 py-1 text-right font-mono">{m.payout_amount === null ? '—' : fmtMoney(m.payout_amount)}</td>
-                      <td className="px-2 py-1 text-center">{m.is_winner === null ? '—' : m.is_winner ? '✓' : '✗'}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                                      <th className="px-2 py-1">Action</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {selected.members.map((m) => (
+                                      <tr key={m.user_id} className="border-t border-border">
+                                        <td className="px-2 py-1 font-mono">{m.user_id.slice(0, 8)}…</td>
+                                        <td className="px-2 py-1 font-mono text-text-secondary">{m.role}</td>
+                                        <td className="px-2 py-1 font-mono">{m.choice}</td>
+                                        <td className="px-2 py-1 text-right font-mono">{fmtMoney(m.stake)}</td>
+                                        <td className="px-2 py-1 text-right font-mono">{m.weight}</td>
+                                        <td className="px-2 py-1 text-right font-mono">{m.payout_amount === null ? '—' : fmtMoney(m.payout_amount)}</td>
+                                        <td className="px-2 py-1 text-center">{m.is_winner === null ? '—' : m.is_winner ? '✓' : '✗'}</td>
+                                        <td className="px-2 py-1 text-center">
+                                          {['resolved', 'cancelled', 'expired'].includes(selected.status) ? (
+                                            <span className="text-text-muted text-[10px]">—</span>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (window.confirm(`Kick ${m.user_id.slice(0,8)}… from this group? Their stake (${fmtMoney(m.stake)}) will be refunded.`)) {
+                                                  doKick(selected.id, m.user_id, 'admin kick from console');
+                                                }
+                                              }}
+                                              className="text-rose-400 hover:bg-rose-500/10 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest"
+                                            >
+                                              Kick
+                                            </button>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
               </table>
             </div>
           </div>
