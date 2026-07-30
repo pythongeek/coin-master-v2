@@ -1414,6 +1414,48 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-29]`
 
+- [x] **[GP-4] Group Play — Phase 1 / Day 4: expiry sweep + per-member refund + audit mirror** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**: `backend/src/services/group-bet-expiry.ts` (NEW, ~290 lines); `backend/src/index.ts` (+3 lines, `startGroupBetExpiryWorker(60_000)`); `backend/src/test/gp-1-04-group-bet-expiry.test.ts` (NEW, ~400 lines); `scripts/test-group-bet-expiry.sh` (NEW, ~95 lines)
+  - **Issue/Gap**: Phase 1 §3 promised "cancel/expire → all contributions refunded" but no sweep existed — rooms would sit in `open`/`ready` past `expires_at` forever, locking up user stakes and creating stale UI.
+  - **Proposed Fix**: A `setInterval`-based sweep worker that runs every 60s, finds expired rooms (status in `('open','ready')`, `expires_at < NOW()`, not frozen), refunds each member's stake via `creditPayout()` from `bonus.ts`, writes `transactions(type='admin_adjustment', direction='credit')` ledger rows, and flips the room's status via the Day-1 state machine.
+  - **Implementation Notes (2026-07-30)**:
+    - **`backend/src/services/group-bet-expiry.ts`** (NEW):
+      - **`sweepExpiredGroupBets({maxPerTick?, lockTtlSec?})`** — the core entrypoint:
+        1. Acquires Redis SETNX lock `group_bet:expiry:sweep` (120s TTL) so two backend pods don't race
+        2. `SELECT id FROM group_bet WHERE status IN ('open','ready') AND expires_at < NOW() AND is_frozen = false ORDER BY expires_at ASC LIMIT $1` — uses the partial index `idx_group_bet_expires_open` from the Day-1 migration
+        3. For each candidate: `refundOneRoom(id)` in a separate SERIALIZABLE TX
+        4. Returns `{processed, refundedMembers, refundedTotal, errors, durationMs}` for the caller (test / log)
+      - **`refundOneRoom(groupId)`**:
+        1. Pre-check SELECT (status + expires_at sanity, no lock)
+        2. SERIALIZABLE TX: `SELECT ... FOR UPDATE` re-check → load members → `creditPayout(user, stake, 'withdrawable')` per member → INSERT `transactions(type='admin_adjustment', direction='credit')` per member for user-visible history
+        3. After commit, `transitionGroupStatus(open|ready → expired)` writes `group_bet_audit(action='expire')` + `audit_log(category='group_play', action='group_play.expire', severity='info')` mirror
+        4. **Idempotent**: if the state machine throws `GROUP_BET_INVALID_TRANSITION` (because another tick already flipped), swallow it — refunds already succeeded in the prior TX
+      - **`startGroupBetExpiryWorker(intervalMs=60_000)`** — `setInterval` loop with immediate first tick, matches `startAuditBackupWorker` pattern. Re-entrancy guard (`if (sweepRunning) return`) prevents pile-up if a tick runs long. Logs `processed/refundedMembers/refundedTotal/errors/durationMs` when there's activity.
+      - **`stopGroupBetExpiryWorker()`** for clean shutdown.
+      - **Exports**: `sweepExpiredGroupBets`, `startGroupBetExpiryWorker`, `stopGroupBetExpiryWorker`, plus `__internals__.refundOneRoom` for the test.
+      - **Bounded concurrency**: `HARD_MAX_PER_TICK = 50` so a backlog can't lock the sweep loop forever. Caller overrides via `maxPerTick`.
+    - **`backend/src/index.ts`** (+3 lines): imports `startGroupBetExpiryWorker`, calls it after `startWebhookWorker()` with `60_000` ms interval. Container boot now logs `⏰ Group-bet expiry worker started (interval: 60s).`
+    - **`backend/src/test/gp-1-04-group-bet-expiry.test.ts`** (NEW, ~400 lines): **8-case integration test against LIVE Postgres** (bypasses `setup.ts` shared mock the same way as Day-1/Day-2/Day-3). 33 assertions across:
+      1. **No-op when no expired rooms** — sweep returns `processed=0, errors=0`
+      2. **open room past expires_at → expired + refund** — status flips, 3 members refunded (+50 each), `refundedTotal=150`
+      3. **ready room past expires_at → expired + refund** — same flow from `ready` state
+      4. **frozen expired room → NOT swept** — `is_frozen=true` respected
+      5. **audit_log mirror** — `category='group_play', action='group_play.expire', severity='info'` row + `group_bet_audit(action='expire')` row
+      6. **transactions(type='admin_adjustment', direction='credit')** rows — 3 refund ledger rows with correct amounts
+      7. **Idempotent** — second sweep on the same expired rooms is a no-op (no double refunds, no balance change)
+      8. **`maxPerTick` honored** — creating 3 expired rooms + sweeping with `maxPerTick=2` processes 2, then a second sweep processes the remaining 1
+      - **All 33 PASS** in ~0.5s against live DB. Stable across 3 consecutive runs.
+    - **`scripts/test-group-bet-expiry.sh`** (NEW): same runner pattern as Day-2/Day-3 — auto-socat forwarders (pg + redis), 3 ACTIVE users promoted to `kyc_tier=1`, restored on exit.
+    - **Container rebuild**: backend image rebuilt, container boots clean, `/api/health` 200, sweep worker logs `⏰ Group-bet expiry worker started (interval: 60s).`
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against the new service + index.ts wiring → exit 0.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200, container logs `⏰ Group-bet expiry worker started (interval: 60s).`
+    - `bash scripts/test-group-bet-expiry.sh` (×3) → 🎉 all 8 cases pass, 33 assertions, all test rows cleaned.
+    - Home-page safety check: `/`, `/game`, `/dashboard`, `/api/health` all 200.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker

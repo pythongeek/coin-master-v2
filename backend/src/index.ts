@@ -22,6 +22,7 @@ import { csrfMiddleware, helmetConfig } from './middleware/security';
 import { errorHandler, setSentryCapture } from './middleware/error-handler';
 import { rateLimitErrorMiddleware } from './middleware/rate-limiter';
 import { startAuditBackupWorker } from './services/audit-backup';
+import { startGroupBetExpiryWorker } from './services/group-bet-expiry';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
 import adminPaymentsQrRoutes from './routes/admin-payments-qr';
@@ -320,6 +321,9 @@ async function start() {
 
   // Start webhook dispatcher worker
   startWebhookWorker();
+
+  // Start group-bet expiry sweep (every 60s)
+  startGroupBetExpiryWorker(60_000);
 
   // Start Binance Pay QR background services
   try {
