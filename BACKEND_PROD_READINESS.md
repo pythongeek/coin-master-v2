@@ -1508,6 +1508,67 @@
     - Commit: see follow-up.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
+- [x] **[GP-6] Group Play — Phase 1 / Day 6: 11-event socket layer + member leave + creator cancel** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**: `backend/src/services/socket-group-bet.ts` (NEW, ~230 lines); `backend/src/services/group-bet-leave.ts` (NEW, ~370 lines); `backend/src/services/socket-manager.ts` (+10 lines); `backend/src/services/group-bet-state.ts` (+2 audit actions); `backend/src/services/group-bet-create.ts` (+16 lines for emit hook); `backend/src/services/group-bet-join.ts` (+25 lines); `backend/src/services/group-bet-flip.ts` (+18 lines); `backend/src/services/group-bet-expiry.ts` (+13 lines); `backend/src/routes/group-bet.ts` (+50 lines for /leave + /cancel); `backend/src/db/migrations-group-play.sql` (+2 audit actions); `backend/src/test/gp-1-06-group-bet-socket-leave.test.ts` (NEW, ~430 lines); `scripts/test-group-bet-socket-leave.sh` (NEW, ~95 lines)
+  - **Issue/Gap**: Phase 1 §7 listed 11 socket events but none were implemented. Phase 1 §5 promised "leave" and "cancel" flows but the routes returned 501 stubs.
+  - **Proposed Fix**: A real-time socket module (`socket-group-bet.ts`) that emits 10 server → room events + handles 2 client → server events (group:spectate, group:invite_share, group:unspectate). A leave service (`group-bet-leave.ts`) that handles the two flows (member leaves open room + creator cancels). Domain services (`createGroupBet`, `joinGroupBet`, `flipGroup`, `groupBetExpiry`, `cancelGroupBet`, `leaveGroupBet`) call `emitGroupBetEvent()` after commits.
+  - **Implementation Notes (2026-07-30)**:
+    - **`backend/src/services/socket-group-bet.ts`** (NEW, ~230 lines):
+      - **10 server → room events**: `group:created`, `group:join`, `group:leave`, `group:ready`, `group:flip_start`, `group:resolved`, `group:cancelled`, `group:expired`, `group:frozen`, `group:updated`
+      - **3 client → server handlers**: `group:spectate` (resolves short_code → groupId, joins `group_<id>` room, sends snapshot), `group:invite_share` (writes `group_bet_invite` row), `group:unspectate` (leaves room)
+      - **Singleton io accessor pattern**: `setGroupBetIo(io)` called once from `socket-manager.ts`; `emitGroupBetEvent(eventName, payload)` is the public emit helper that domain services call without importing the io instance.
+      - **No-op when io is null** (e.g., during boot or in unit tests): returns `false` so the caller can decide whether to log.
+    - **`backend/src/services/group-bet-leave.ts`** (NEW, ~370 lines):
+      - **`leaveGroupBet(groupId, userId, ipAddress?)`** — member leaves an OPEN room:
+        - Refuses if status !== 'open' (`ROOM_NOT_OPEN`)
+        - Refuses if user isn't a member (`NOT_A_MEMBER`)
+        - Refunds stake via `creditPayout(user, stake, 'withdrawable')`
+        - Writes `transactions(type='admin_adjustment', direction='credit')` for audit
+        - DELETEs member row + DECREMENTs `current_members` and `total_pool`
+        - Writes `group_bet_audit(action='leave')`
+        - Emits `group:leave` + `group:updated`
+        - Returns `{groupId, refundedAmount, remainingMembers, status, wasCreator}`
+      - **`cancelGroupBet(groupId, creatorId, reason, ipAddress?)`** — creator cancels their own room:
+        - Refuses if non-creator (`NOT_CREATOR`)
+        - Refuses if status not in `('open', 'ready')` (`ALREADY_RESOLVED`)
+        - Refunds ALL members (creator + N members)
+        - Writes 1 `group_bet_audit(action='creator_cancel')` row
+        - Writes N `transactions(type='admin_adjustment')` rows
+        - Flips status to `cancelled` via Day-1 state machine (idempotent — race tolerated)
+        - Emits `group:cancelled` + `group:updated`
+        - Returns `{refundedMembers, refundedTotal, status}`
+      - **Custom error class** `GroupBetLeaveError` with `code: GROUP_NOT_FOUND | NOT_A_MEMBER | ROOM_NOT_OPEN | NOT_CREATOR | ALREADY_RESOLVED`. Routes map to HTTP 400/403/404/409.
+    - **`backend/src/services/socket-manager.ts`** (+10 lines): imports `setGroupBetIo` + `registerGroupBetHandlers`; calls `setGroupBetIo(io)` at setup; calls `registerGroupBetHandlers(io, socket, user)` in the per-socket connection handler.
+    - **`backend/src/services/group-bet-create.ts`** (+16 lines): emits `group:created` after the create TX commits.
+    - **`backend/src/services/group-bet-join.ts`** (+25 lines): emits `group:join` after the join TX; also emits `group:ready` if the join triggered an auto-ready transition.
+    - **`backend/src/services/group-bet-flip.ts`** (+18 lines): emits `group:resolved` after the flip resolves (with `serverSeedHash`, `resultHash`, `roll`, `payouts` in payload).
+    - **`backend/src/services/group-bet-expiry.ts`** (+13 lines): emits `group:expired` + `group:updated` after the per-room refund completes.
+    - **`backend/src/routes/group-bet.ts`** (+50 lines): replaces 501 stubs on `/leave` + `/cancel` with real handlers calling the new service; proper error-to-HTTP mapping.
+    - **`backend/src/services/group-bet-state.ts`** (+2 actions): added `creator_cancel` + `cancel_via_create` to `GroupBetAuditAction` union type.
+    - **`backend/src/db/migrations-group-play.sql`** (+2 actions): added `creator_cancel` + `cancel_via_create` to the `group_bet_audit_action_check` CHECK constraint (also applied to the live DB via `ALTER TABLE`).
+    - **`backend/src/test/gp-1-06-group-bet-socket-leave.test.ts`** (NEW, ~430 lines): **10-case integration test against LIVE Postgres**. 28 assertions across:
+      1. **member leaves OPEN room** — refunded + member deleted + audit + socket emit (7 assertions)
+      2. **creator leaves own OPEN room** — refunded + wasCreator=true (3)
+      3. **leave refuses if status is ready** — `ROOM_NOT_OPEN` (2)
+      4. **leave refuses if not a member** — `NOT_A_MEMBER` (1)
+      5. **creator cancels OPEN room** — all 3 members refunded + status=cancelled + audit + txn rows + socket emit (6)
+      6. **creator cancels READY room** — same flow from ready state (2)
+      7. **cancel refuses if non-creator** — `NOT_CREATOR` (1)
+      8. **cancel refuses if resolved** — `ALREADY_RESOLVED` (1)
+      9. **emitGroupBetEvent direct sanity** — fires + payload shape correct (3)
+      10. **socket module imports cleanly** — `registerGroupBetHandlers` is a function (1)
+      - **All 28 PASS** in ~0.5s against live DB. **Stable across 3 consecutive runs.**
+      - Uses a `FakeIO` class that captures `io.to(room).emit(event, payload)` calls so the test verifies event names + room targeting + payload shape without needing a live socket.io server.
+    - **`scripts/test-group-bet-socket-leave.sh`** (NEW): same auto-socat + auto-KYC pattern as Day-2/Day-3/Day-4/Day-5.
+  - **Verification / Test Method**:
+    - `npx tsc --noEmit` against the new services + index.ts wiring → exit 0.
+    - `python3 compose-with-secrets.py build backend` → exit 0.
+    - `python3 compose-with-secrets.py up -d backend` → healthy, `/api/health` 200, `/api/group-bet/TEST/leave` returns 401 without auth.
+    - `bash scripts/test-group-bet-socket-leave.sh` (×3) → 🎉 all 28 PASS, all test rows cleaned.
+    - Home-page safety check: `/`, `/game`, `/dashboard`, `/api/health` all 200.
+    - Commit: see follow-up.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ---
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker

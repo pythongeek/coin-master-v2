@@ -33,6 +33,7 @@ import { query, withTransaction } from '../config/database';
 import { redis } from '../config/redis';
 import { determineBalanceSource, debitBalanceForBet } from './bonus';
 import { transitionGroupStatus, GroupBetTransitionError } from './group-bet-state';
+import { emitGroupBetEvent } from './socket-group-bet';
 import { GroupBetValidationError, GroupBetNotAllowedError, GroupBetInsufficientBalanceError, GroupBetDuplicateError } from './group-bet-create';
 
 // ─── Public type contract ──────────────────────────────────────
@@ -392,17 +393,44 @@ export async function joinGroupBet(input: JoinGroupBetInput): Promise<JoinedMemb
     await redis.del(lockKey).catch(() => {});
   }
 
-  // ── 7. Redis idempotency fallback ──
-  if (input.clientRequestId && input.clientRequestId.length >= 8) {
-    await redis.set(
-      `group_bet:idem:join:${input.userId}:${input.clientRequestId}`,
-      result.memberId,
-      'EX', REDIS_IDEM_TTL_SEC,
-    ).catch(() => {});
-  }
+  // Redis idempotency fallback ──
+    if (input.clientRequestId && input.clientRequestId.length >= 8) {
+      await redis.set(
+        `group_bet:idem:join:${input.userId}:${input.clientRequestId}`,
+        result.memberId,
+        'EX', REDIS_IDEM_TTL_SEC,
+      ).catch(() => {});
+    }
 
-  return result;
-}
+    // ── 8. Socket emit (best-effort) ──────────────────────────
+    const shortCodeR = await query<{ short_code: string }>(
+      `SELECT short_code FROM group_bet WHERE id = $1`, [room.id],
+    );
+    const shortCode = shortCodeR.rows[0]?.short_code;
+    emitGroupBetEvent('group:join', {
+      groupId: room.id,
+      shortCode,
+      status: result.newStatus,
+      currentMembers: result.currentMembers,
+      maxMembers: room.max_members,
+      totalPool: parseFloat(result.totalPool),
+      actorUserId: input.userId,
+      meta: { role: 'member', choice: input.choice },
+    });
+    if (result.newStatus === 'ready') {
+      emitGroupBetEvent('group:ready', {
+        groupId: room.id,
+        shortCode,
+        status: 'ready',
+        currentMembers: result.currentMembers,
+        maxMembers: room.max_members,
+        totalPool: parseFloat(result.totalPool),
+        meta: { reason: 'min_members_reached' },
+      });
+    }
+
+    return result;
+  }
 
 async function roomMinMembers(groupId: string): Promise<number> {
   const r = await query<{ min_members: number }>(

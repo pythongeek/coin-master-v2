@@ -268,6 +268,8 @@ CREATE TABLE IF NOT EXISTS group_bet_audit (
                     'flip_start',
                     'flip_resolve',
                     'cancel',
+                    'cancel_via_create',
+                    'creator_cancel',
                     'expire',
                     'refund',
                     'settle',

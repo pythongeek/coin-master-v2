@@ -41,8 +41,14 @@ import { registerGameHandlers } from './socket-game';
 import { registerRainHandlers } from './socket-rain';
 import { registerSquadHandlers } from './socket-squad';
 import { registerStreakHandlers } from './socket-streak';
+import { registerGroupBetHandlers, setGroupBetIo } from './socket-group-bet';
 
 export function setupSocketHandlers(io: SocketIOServer): void {
+  // Register the io singleton so domain services (createGroupBet, joinGroupBet,
+  // flipGroup, groupBetExpiry, groupBetLeave) can emit room events without
+  // importing the io instance directly.
+  setGroupBetIo(io);
+
   // Set up connection lifecycle (auth middleware + disconnect cleanup).
   // This MUST run before per-socket handlers below so socket.data.user
   // is populated by the time domain handlers read it.
@@ -61,5 +67,6 @@ export function setupSocketHandlers(io: SocketIOServer): void {
     registerRainHandlers(io, socket, user);
     registerSquadHandlers(io, socket, user);
     registerStreakHandlers(socket, user);
+    registerGroupBetHandlers(io, socket, user);
   });
 }

@@ -60,6 +60,8 @@ export type GroupBetAuditAction =
   | 'flip_start'
   | 'flip_resolve'
   | 'cancel'
+  | 'cancel_via_create'        // alias for creator-driven cancel
+  | 'creator_cancel'           // explicit creator-cancel
   | 'expire'
   | 'refund'
   | 'settle'

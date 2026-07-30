@@ -49,6 +49,7 @@ import { query, withTransaction } from '../config/database';
 import { redis } from '../config/redis';
 import { creditPayout } from './bonus';
 import { transitionGroupStatus, GroupBetTransitionError } from './group-bet-state';
+import { emitGroupBetEvent } from './socket-group-bet';
 
 // ─── Constants ───────────────────────────────────────────────────
 const HARD_MAX_PER_TICK = 50;       // bounded concurrency per sweep
@@ -186,6 +187,19 @@ async function refundOneRoom(groupId: string): Promise<{
     }
     throw e;
   }
+
+  // Outside the TX: emit the socket event so spectating clients see it
+  emitGroupBetEvent('group:expired', {
+    groupId,
+    shortCode: undefined,  // not loaded here; UI uses groupId to re-fetch
+    status: 'expired',
+    meta: { refundedMembers: refundedCount, refundedTotal: totalAmount.toFixed(8) },
+  });
+  emitGroupBetEvent('group:updated', {
+    groupId,
+    status: 'expired',
+    meta: { refundedMembers: refundedCount },
+  });
 
   return {
     refunded: refundedCount,

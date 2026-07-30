@@ -34,6 +34,7 @@ import { query, withTransaction } from '../config/database';
 import { redis } from '../config/redis';
 import { determineBalanceSource, debitBalanceForBet } from './bonus';
 import { transitionGroupStatus } from './group-bet-state';
+import { emitGroupBetEvent } from './socket-group-bet';
 
 // ─── Error class hierarchy ─────────────────────────────────────
 export class GroupBetValidationError extends Error {
@@ -423,7 +424,7 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
       return groupRow;
     });
 
-    // ── 6. Cache the idempotency window (Redis fallback in case
+    // Cache the idempotency window (Redis fallback in case
     //     the clientRequestId route-level check misses). ───────────
     if (input.clientRequestId && input.clientRequestId.length >= 8) {
       await redis.set(
@@ -433,6 +434,18 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
         REDIS_IDEM_TTL_SEC,
       );
     }
+
+    // ── Socket emit (best-effort; room is `group_<id>`) ──────
+    emitGroupBetEvent('group:created', {
+      groupId: result.id,
+      shortCode: result.short_code,
+      status: 'open',
+      currentMembers: 1,
+      maxMembers: result.max_members,
+      totalPool: parseFloat(String(result.total_pool)),
+      actorUserId: input.userId,
+      meta: { payoutMode: result.payout_mode, turnMode: result.turn_mode },
+    });
 
     return {
       id: result.id,

@@ -48,6 +48,7 @@ import {
 } from './server-seed';
 import { creditPayout } from './bonus';
 import { transitionGroupStatus, GroupBetTransitionError } from './group-bet-state';
+import { emitGroupBetEvent } from './socket-group-bet';
 import {
   GroupBetValidationError,
   GroupBetNotAllowedError,
@@ -535,7 +536,23 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
     },
   );
 
-  // ── 9. Build the response ──
+  // Build the response ──
+  emitGroupBetEvent('group:resolved', {
+    groupId: room.id,
+    shortCode: room.short_code,
+    status: 'resolved',
+    maxMembers: room.max_members,
+    totalPool,
+    winningSide,
+    meta: {
+      serverSeedHash,
+      resultHash: outcome.rawHash,
+      roll: outcome.roll,
+      payoutMode: room.payout_mode,
+      payouts: payouts.map(p => ({ userId: p.userId, payout: p.payout.toFixed(8), isWinner: p.isWinner })),
+    },
+  });
+
   return {
     groupId: room.id,
     status: 'resolved',

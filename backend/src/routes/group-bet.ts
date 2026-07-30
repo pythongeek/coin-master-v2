@@ -52,6 +52,7 @@ import {
 } from '../services/group-bet-create';
 import { joinGroupBet } from '../services/group-bet-join';
 import { flipGroup } from '../services/group-bet-flip';
+import { leaveGroupBet, cancelGroupBet, GroupBetLeaveError } from '../services/group-bet-leave';
 import { GroupBetTransitionError } from '../services/group-bet-state';
 import { z } from 'zod';
 
@@ -197,29 +198,57 @@ router.post(
   },
 );
 
-// ─── 3-4. POST /api/group-bet/:id/leave | /cancel — Day-4 stubs ───
+// POST /api/group-bet/:id/leave — member leaves an OPEN room (Day 6) ─
 router.post(
   '/:id/leave',
   authMiddleware,
   validateParams(idParamSchema),
-  async (_req: Request, res: Response) => {
-    return res.status(501).json({
-      success: false,
-      error: 'group-bet:leave not yet implemented (Day 4)',
-      code: 'NOT_IMPLEMENTED',
-    });
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const userId = (req as any).user.userId;
+      const ipAddress = typeof req.ip === 'string' ? req.ip : undefined;
+      const out = await leaveGroupBet(id, userId, ipAddress ?? null);
+      return res.status(200).json({ success: true, data: out });
+    } catch (e) {
+      if (e instanceof GroupBetLeaveError) {
+        const status =
+          e.code === 'GROUP_NOT_FOUND' ? 404 :
+          e.code === 'NOT_A_MEMBER' ? 403 :
+          e.code === 'ROOM_NOT_OPEN' ? 409 :
+          400;
+        return res.status(status).json({ success: false, error: e.message, code: e.code });
+      }
+      next(e);
+    }
   },
 );
+
+// POST /api/group-bet/:id/cancel — creator cancels their room (Day 6) ─
 router.post(
   '/:id/cancel',
   authMiddleware,
   validateParams(idParamSchema),
-  async (_req: Request, res: Response) => {
-    return res.status(501).json({
-      success: false,
-      error: 'group-bet:cancel not yet implemented (Day 4)',
-      code: 'NOT_IMPLEMENTED',
-    });
+  validateBody(z.object({ reason: z.string().min(3).max(500) })),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const userId = (req as any).user.userId;
+      const ipAddress = typeof req.ip === 'string' ? req.ip : undefined;
+      const { reason } = req.body;
+      const out = await cancelGroupBet(id, userId, reason, ipAddress ?? null);
+      return res.status(200).json({ success: true, data: out });
+    } catch (e) {
+      if (e instanceof GroupBetLeaveError) {
+        const status =
+          e.code === 'GROUP_NOT_FOUND' ? 404 :
+          e.code === 'NOT_CREATOR' ? 403 :
+          e.code === 'ALREADY_RESOLVED' ? 409 :
+          400;
+        return res.status(status).json({ success: false, error: e.message, code: e.code });
+      }
+      next(e);
+    }
   },
 );
 
