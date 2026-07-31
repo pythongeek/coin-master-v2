@@ -19,6 +19,7 @@
  */
 
 import crypto from 'crypto';
+import QRCode from 'qrcode';
 import { query, withTransaction } from '../config/database';
 import { getGroupConfigKey } from './admin-group-config';
 
@@ -64,6 +65,8 @@ export interface ResolvedInvite {
   redeemedCount?: number;
   expiresAt?: string;
   campaign?: string | null;
+  /** PNG data URL containing a QR code of the share URL (Day-12 modal) */
+  qrDataUrl?: string;
 }
 
 /**
@@ -176,6 +179,10 @@ export async function resolveInvite(token: string): Promise<ResolvedInvite> {
     redeemedCount: row.redeemed_count,
     expiresAt: row.expires_at,
     campaign: row.campaign,
+    qrDataUrl: await QRCode.toDataURL(`/g/invite/${token}`, {
+      errorCorrectionLevel: 'M', margin: 1, width: 240,
+      color: { dark: '#0b0e11', light: '#ffffff' },
+    }).catch(() => undefined as unknown as string | undefined),
   };
 }
 
