@@ -27,6 +27,10 @@
  *     18.  GET  /api/group-bet/user/history        — every room the requester
  *                                                  has CREATED or JOINED, any
  *                                                  status, newest first.
+ *   19-21. Day 11 invite endpoints (Phase 2 §2.4):
+ *     19.  POST /api/group-bet/:id/invite         — creator generates a share link
+ *     20.  GET  /api/group-bet/invites/:token     — public resolver (sanitized)
+ *     21.  POST /api/group-bet/invites/:token/redeem — redeem + credit bonus + join
  *
  *  Each endpoint maps `GroupBet*Error` subclasses to HTTP status codes
  *  via a single `mapError()` helper. The defensive layering matches
@@ -64,6 +68,7 @@ import { flipGroup } from '../services/group-bet-flip';
 import { leaveGroupBet, cancelGroupBet, GroupBetLeaveError } from '../services/group-bet-leave';
 import { GroupBetTransitionError } from '../services/group-bet-state';
 import { listOpenGroups, listFriendsActiveGroups, listUserHistory } from '../services/group-bet-lobby';
+import { createInvite, resolveInvite, redeemInvite, InviteError } from '../services/group-bet-invite';
 import { z } from 'zod';
 
 const router = Router();
@@ -141,6 +146,23 @@ const userHistoryQuerySchema = z.object({
 
 const friendsActiveQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+// Day 11 invite-token schemas
+const createInviteBodySchema = z.object({
+  maxRedemptions: z.coerce.number().int().min(1).max(100).optional(),
+  expiresInHours: z.coerce.number().int().min(1).max(24 * 30).optional(),
+  channel: z.enum(['whatsapp','telegram','twitter','email','copy','qr','link']).optional(),
+  campaign: z.string().max(64).optional(),
+});
+
+const inviteTokenParamSchema = z.object({
+  token: z.string().min(8).max(48).regex(/^[a-z0-9]+$/),
+});
+
+const redeemInviteBodySchema = z.object({
+  ipAddress: z.string().optional(),
+  userAgent: z.string().max(512).optional(),
 });
 
 // ─── 1. POST /api/group-bet — create room ─────────────────────────
@@ -488,6 +510,106 @@ router.get(
         },
       });
     } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 19. POST /api/group-bet/:id/invite — creator generates link ─
+router.post(
+  '/:id/invite',
+  authMiddleware,
+  validateParams(idParamSchema),
+  validateBody(createInviteBodySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as AuthedRequest).user;
+      const body = (req as any).body as z.infer<typeof createInviteBodySchema>;
+      const idRaw: string | string[] | undefined = req.params.id;
+      const idSingle = String(Array.isArray(idRaw) ? idRaw[0] : idRaw);
+      const ipRaw: string | string[] | undefined = req.ip;
+      const ipSingle: string | undefined = Array.isArray(ipRaw) ? ipRaw[0] : ipRaw;
+      const uaRaw: string | string[] | undefined = req.headers['user-agent'] as any;
+      const uaSingle: string | undefined = Array.isArray(uaRaw) ? uaRaw[0] : uaRaw;
+      // Only the room creator can generate invite links
+      const r = await query<{ creator_id: string }>(
+        `SELECT creator_id FROM group_bet WHERE id = $1`,
+        [idSingle],
+      );
+      if (!r.rows.length) {
+        return res.status(404).json({ success: false, error: 'group not found', code: 'GROUP_NOT_FOUND' });
+      }
+      if (r.rows[0].creator_id !== user.userId && !user.isAdmin) {
+        return res.status(403).json({
+          success: false,
+          error: 'only the creator or an admin can generate invite links',
+          code: 'NOT_CREATOR',
+        });
+      }
+
+      const invite = await createInvite({
+        groupId: idSingle,
+        inviterId: user.userId,
+        maxRedemptions: body.maxRedemptions,
+        expiresInHours: body.expiresInHours,
+        campaign: body.campaign,
+        channel: body.channel ?? 'link',
+        ipAddress: ipSingle,
+        userAgent: uaSingle,
+      });
+      return res.status(201).json({ success: true, data: invite });
+    } catch (e) {
+      if (e instanceof InviteError) {
+        return res.status(e.httpStatus).json({ success: false, error: e.message, code: e.code });
+      }
+      next(e);
+    }
+  },
+);
+
+// ─── 20. GET /api/group-bet/invites/:token — public resolver ─────
+router.get(
+  '/invites/:token',
+  validateParams(inviteTokenParamSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const tokenRaw: string | string[] | undefined = req.params.token;
+      const tokenSingle = String(Array.isArray(tokenRaw) ? tokenRaw[0] : tokenRaw);
+      const info = await resolveInvite(tokenSingle);
+      return res.status(200).json({ success: true, data: info });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 21. POST /api/group-bet/invites/:token/redeem — redeem + bonus + join
+router.post(
+  '/invites/:token/redeem',
+  authMiddleware,
+  validateParams(inviteTokenParamSchema),
+  validateBody(redeemInviteBodySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as AuthedRequest).user;
+      const body = (req as any).body as z.infer<typeof redeemInviteBodySchema>;
+      const tokenRaw: string | string[] | undefined = req.params.token;
+      const tokenSingle = String(Array.isArray(tokenRaw) ? tokenRaw[0] : tokenRaw);
+      const ipRaw: string | string[] | undefined = req.ip;
+      const ipSingle: string | undefined = Array.isArray(ipRaw) ? ipRaw[0] : ipRaw;
+      const uaRaw: string | string[] | undefined = req.headers['user-agent'] as any;
+      const uaSingle: string | undefined = Array.isArray(uaRaw) ? uaRaw[0] : uaRaw;
+      const outcome = await redeemInvite({
+        token: tokenSingle,
+        inviteeUserId: user.userId,
+        ipAddress: body.ipAddress ?? ipSingle ?? null,
+        userAgent: body.userAgent ?? uaSingle ?? null,
+      });
+      return res.status(200).json({ success: true, data: outcome });
+    } catch (e) {
+      if (e instanceof InviteError) {
+        return res.status(e.httpStatus).json({ success: false, error: e.message, code: e.code });
+      }
       next(e);
     }
   },

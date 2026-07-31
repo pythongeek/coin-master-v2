@@ -1735,6 +1735,48 @@
   - **SPEC VERIFICATION flip**: Phase 2 §1.4 (rows 10, 11, 12 in the API matrix) are now LIVE. The "lobby browser UI" requirement is now backend-complete; Day 12 will wire the React lobby page.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
 
+- [x] **[GP-11] Group Play — Phase 2 / Day 11: invite-token redemption + bonus credits** ✓ TESTED & PASSED 2026-07-30
+  - **File(s) Affected**:
+    - `backend/src/db/migration-invite-link.sql` — NEW (~75 lines, creates `group_bet_invite_link` table with token + group_id + inviter_id + max_redemptions + redemption_count + expires_at + campaign + first/last_redeemed_at; 4 indexes including a partial index for not-yet-fully-redeemed links)
+    - `backend/src/services/group-bet-invite.ts` — NEW (~510 lines, 3 functions: `createInvite` / `resolveInvite` / `redeemInvite` + custom `InviteError` class + `generateToken` helper)
+    - `backend/src/routes/group-bet.ts` — added 3 routes (Post 19, 20, 21) with Zod schemas (`createInviteBodySchema` / `inviteTokenParamSchema` / `redeemInviteBodySchema`); existing `group_bet_audit.action` enum already had `invite_share` + `bonus_award` values — no constraint migration needed
+    - `backend/src/test/gp-2-04-invite.test.ts` — NEW (~370 lines, 10 cases, 36 assertions)
+    - `scripts/test-group-bet-invite.sh` — NEW (~95 lines, auto-socat + auto-KYC + per-test-user isolation)
+    - `backend/src/db/schema_migrations` — recorded migration entry (idempotent)
+  - **Endpoints shipped**:
+    - `POST /api/group-bet/:id/invite` — auth required, creator-only (admins also allowed). Generates a fresh token. Body: `{maxRedemptions?, expiresInHours?, channel?, campaign?}`. Honors admin-config defaults `groupInviteMaxRedemptionsDefault` (default 1) + `groupInviteExpiryHoursDefault` (default 168 = 7 days). Returns 201 with `{id, token, url, groupId, inviterId, maxRedemptions, expiresAt, campaign, createdAt}`. Writes `group_bet_audit(action='invite_share')`.
+    - `GET /api/group-bet/invites/:token` — public, sanitized resolver. Returns `{valid, reason?, groupId?, shortCode?, maxRedemptions?, redeemedCount?, expiresAt?, campaign?}` with reasons `'EXPIRED' | 'EXHAUSTED' | 'NOT_FOUND'`.
+    - `POST /api/group-bet/invites/:token/redeem` — auth required. Atomic TX:
+      1. SELECT FOR UPDATE the link row, re-check expiry + redemption-count
+      2. Refuse self-redeem (inviter ≠ invitee)
+      3. Compute today's inviter-bonus sum from `transactions` (UTC date truncation), apply daily cap from `groupInviterBonusCapPerUserPerDay`
+      4. Credit inviter + invitee via `UPDATE users SET bonus_balance_coins = bonus_balance_coins + $1` + INSERT 2 `transactions(type='admin_adjustment', direction='credit', metadata.reason='group_invite_bonus')` rows
+      5. INSERT into `group_bet_invite` (event log with bonus_awarded + channel + IP + UA) + 2 audit rows (`bonus_award` + `invite_share`)
+      6. Increment link.redemption_count + update first/last_redeemed_at timestamps
+      7. JOIN the group via Day-2 `joinGroupBet` (separate TX — nested TX risk avoided)
+      Returns `{token, groupId, inviterId, inviterBonus, inviteeBonus, totalBonus, inviterBonusCapped, dailyInviterBonusAfter, joinResult}`. Errors map to HTTP: 404 NOT_FOUND, 410 EXPIRED, 409 EXHAUSTED, 409 GROUP_NOT_JOINABLE, 400 SELF_REDEEM.
+  - **Schema decisions**:
+    - Added NEW `group_bet_invite_link` table instead of overloading existing `group_bet_invite` (which is an event log, not a token store).
+    - Migration registered in `schema_migrations` for idempotent re-apply.
+  - **Bugs hit & fixed (Day 11 mid-session)**:
+    1. `tsc: Version 6.0.3` came from wrong PATH (`npx`) → switched to `./node_modules/.bin/tsc`
+    2. `txQuery<T>` callback type doesn't accept generics → dropped `<T>` from 5 call sites
+    3. `req.params.id`, `req.ip`, `req.headers['user-agent']` are `string | string[]` → manually destructure with `Array.isArray` fallback
+    4. `createInvite` doesn't accept `ipAddress/userAgent` in interface → extended `CreateInviteOptions`
+    5. `validateQuery` not yet imported in routes/group-bet.ts → already imported in Day-10; no-op
+    6. `column reference "id" is ambiguous` when `SELECT id` joins `group_bet_invite_link` + `group_bet` → fully qualify with `l.id`
+    7. Token length flaky: `Math.ceil(32*5/8)` base64url strips `+/-_` resulting in variable length → switched to over-generate + slice to exactly `length`
+    8. Daily cap didn't kick in (case 8): `todaysTotal` included leftover rows from prior cases → added per-case `DELETE FROM transactions ... group_invite_bonus TODAY` to nuke case-7 leftovers
+    9. Cleanup `metadata::text LIKE` failed on `group_bet_audit`, `group_bet_invite`, `group_bet_invite_link` columns that don't have `metadata` → wrapped each cleanup in its own try/catch
+    10. Test query `metadata->>'campaign' = $3` failed (service doesn't store campaign in bonus-credits metadata) → switched to `metadata->>'groupId' = $3`
+    11. `redemption_count` type-gen wrong → renamed to actual column name in test type
+  - **Smoke check** (post-rebuild):
+    - `POST /api/group-bet/TEST/invite` (no-auth) → **401** (auth gate working)
+    - `POST /api/group-bet/invites/TESTTOKEN/redeem` (no-auth) → **401** (auth gate working)
+    - `GET /api/group-bet/invites/TESTTOKEN` → **400** (Zod regex rejects `TESTTOKEN`)
+  - **SPEC VERIFICATION flip**: Phase 2 §2.4 admin-config thresholds #11 (invite bonuses) are now LIVE. The invite redemption flow is now functional — React landing page (Day-12 modal) can call these 3 endpoints to show the share-modal + bonus banner.
+  - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)
