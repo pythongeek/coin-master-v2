@@ -1,0 +1,28 @@
+name: CrofReg
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  reg:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Try crof signup
+        run: |
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+          # Visit login to get cookies
+          curl -sk -c /tmp/cj -A "$UA" https://crof.ai/login -o /tmp/login.html
+          echo "login: $(head -c 100 /tmp/login.html)"
+          # Try signup POST
+          curl -sk -b /tmp/cj -c /tmp/cj -A "$UA" -X POST https://crof.ai/signup             -H 'Content-Type: application/x-www-form-urlencoded'             -d 'username=testuser9922&password=TestPass9922!&email=testuser9922@proton.me'             -o /tmp/signup.html -w "signup_code: %{http_code}\n"
+          echo "signup body: $(head -c 300 /tmp/signup.html)"
+          echo "cookies: $(cat /tmp/cj | grep -v '^#' | awk '{print $6}' | tr '\n' ' ')"
+          # Try login with the new account
+          curl -sk -b /tmp/cj -c /tmp/cj -A "$UA" -X POST https://crof.ai/login             -H 'Content-Type: application/x-www-form-urlencoded'             -d 'username=testuser9922&password=TestPass9922!'             -o /tmp/login2.html -w "login_code: %{http_code}\n"
+          echo "login2: $(head -c 200 /tmp/login2.html)"
+          echo "cookies2: $(cat /tmp/cj | grep -v '^#' | awk '{print $6}' | tr '\n' ' ')"
+          # Check dashboard
+          curl -sk -b /tmp/cj -A "$UA" https://crof.ai/dashboard -o /tmp/dash.html
+          echo "dash: $(grep -o 'usable_requests[^<]*' /tmp/dash.html | head -1)"
+          echo "dash cookies: $(cat /tmp/cj | grep -v '^#' | awk '{print $6}' | tr '\n' ' ')"
