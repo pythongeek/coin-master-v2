@@ -46,9 +46,10 @@ import {
   reserveNonce,
   getSeedSecretById,
 } from './server-seed';
-import { creditPayout } from './bonus';
+import { creditPayout, creditWagering } from './bonus';
 import { transitionGroupStatus, GroupBetTransitionError } from './group-bet-state';
 import { emitGroupBetEvent } from './socket-group-bet';
+import { getGroupConfigKey } from './admin-group-config';
 import {
   GroupBetValidationError,
   GroupBetNotAllowedError,
@@ -59,6 +60,11 @@ import {
 const HOUSE_EDGE_PERCENT = 2.0;
 const TARGET_MULTIPLIER = 2.0;       // Coinflip: heads=2.0x, tails=2.0x
 const FOUNDER_BOOST_PERCENT = 10.0;   // 10% extra to creator (Roobet pattern)
+// Gap 4: hard-coded fallback for group bonus wager weight (%). The
+// admin-configured value (groupBonusWagerWeight) takes precedence at
+// call time; this is the last-line fallback if the admin_settings row
+// is missing.
+const GROUP_BONUS_WAGER_WEIGHT_FALLBACK = 50;
 
 // ─── Type contracts ──────────────────────────────────────────────
 export interface FlipGroupInput {
@@ -339,6 +345,14 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
     );
   }
 
+  // ── 1.5. Group bonus-wager weight (Gap 4). Read admin-config once
+  // so the same value is used for every member in this resolve. Set to
+  // 0 to disable the bonus wager credit entirely (member still gets
+  // paid the payout, but no wagering progress is recorded). ───────
+  const groupBonusWagerWeight = await getGroupConfigKey('groupBonusWagerWeight')
+    .catch(() => GROUP_BONUS_WAGER_WEIGHT_FALLBACK);
+  const groupBonusWagerWeightNum = Number(groupBonusWagerWeight) || 0;
+
   // ── 2. Load members (use FOR UPDATE in the flip TX below) ──
   const memberRows = await query<any>(
     `SELECT user_id, role, choice, stake::text AS stake, weight::text AS weight,
@@ -491,6 +505,25 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
           }),
         ],
       );
+    }
+
+    // 7c.2. Gap 4: every group member's wager obligation was RISKED at
+    // JOIN time, regardless of win/loss. Credit the weighted stake to
+    // the per-claim FIFO + user-level denormalized counter via the
+    // same `creditWagering` function that single-player bets use, so
+    // the group contribution lands in the same `users.wagering_completed_coins`
+    // field the bonus-clearing UI/dashboard reads. Weight defaults to
+    // 50% (groups clear bonus slower because the variance is shared).
+    // Loss-path members are included — they risked the stake, so the
+    // bonus-clearing credit applies. The `if (groupBonusWagerWeightNum > 0)`
+    // short-circuit lets admins disable the credit entirely by setting
+    // the value to 0 in admin_settings.
+    if (groupBonusWagerWeightNum > 0) {
+      for (const p of payouts) {
+        const weighted = (p.stake * groupBonusWagerWeightNum) / 100;
+        if (weighted <= 0) continue;
+        await creditWagering(p.userId, weighted, txQuery as any);
+      }
     }
 
     // 7c.1. Gap 9: house-side `ledger_entries` accounting triple.

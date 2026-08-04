@@ -90,6 +90,7 @@ export interface GameConfig {
   groupLossHouseEdgePercent: number;
   groupMinHouseEdgeSpreadVsSolo: number;
   // Invites & bonuses
+  groupBonusWagerWeight: number;
   groupInviterBonusCoins: number;
   groupInviteeBonusCoins: number;
   groupInviterBonusCapPerUserPerDay: number;
@@ -257,6 +258,7 @@ export const GAME_CONFIG_LABELS: Partial<Record<keyof GameConfig, {
   groupLossHouseEdgePercent: { label: 'Group Loss House Edge', description: 'Edge on losses (e.g. plinko).', unit: '%', min: 0, max: 1, type: 'number', category: 'Group Play' },
   groupMinHouseEdgeSpreadVsSolo: { label: 'Min House Edge Spread vs Solo', description: 'Prevents arb between solo and group.', unit: '%', min: 0, max: 2, type: 'number', category: 'Group Play' },
   // Invites & bonuses
+  groupBonusWagerWeight:   { label: 'Group Bonus Wager Weight', description: 'Percentage of stake that counts toward bonus wagering clearance on group resolve. 50 = half-credit. 0 = no credit.', unit: '%', min: 0, max: 100, type: 'number', category: 'Group Play' },
   groupInviterBonusCoins:  { label: 'Inviter Bonus Coins', description: 'Coins credited to inviter when invitee joins. 0 = no bonus.', unit: 'coins', min: 0, max: 100, type: 'number', category: 'Group Play' },
   groupInviteeBonusCoins:  { label: 'Invitee Bonus Coins', description: 'Coins credited to invitee when they join. 0 = no bonus.', unit: 'coins', min: 0, max: 100, type: 'number', category: 'Group Play' },
   groupInviterBonusCapPerUserPerDay: { label: 'Inviter Bonus Daily Cap', description: 'Anti-fraud cap on inviter bonuses per user per day.', unit: 'coins', min: 0, max: 500, type: 'number', category: 'Group Play' },
@@ -325,6 +327,7 @@ export const GAME_DEFAULT_CONFIG: Partial<GameConfig> = {
   groupHouseEdgePercent: 1.0,
   groupLossHouseEdgePercent: 0,
   groupMinHouseEdgeSpreadVsSolo: 0.5,
+  groupBonusWagerWeight: 50, // gap4: groups clear bonus at 50% of stake
   groupInviterBonusCoins: 0,
   groupInviteeBonusCoins: 0,
   groupInviterBonusCapPerUserPerDay: 50,

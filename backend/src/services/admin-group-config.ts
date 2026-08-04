@@ -82,6 +82,10 @@ export interface GroupConfig {
   groupMinHouseEdgeSpreadVsSolo: number;
 
   // ── Invites & bonuses ──
+  /** Percentage of stake that counts toward bonus wagering clearance
+   *  on group resolve. 50 = half-credit vs solo (groups clear bonus
+   *  slower because the variance is shared). Range 0-100. */
+  groupBonusWagerWeight: number;
   /** Coins credited to inviter when invitee joins via token */
   groupInviterBonusCoins: number;
   /** Coins credited to invitee when they join via token */
@@ -127,6 +131,7 @@ export const DEFAULT_GROUP_CONFIG: GroupConfig = {
   groupLossHouseEdgePercent: 0,
   groupMinHouseEdgeSpreadVsSolo: 0.5,
 
+  groupBonusWagerWeight: 50, // gap4: groups clear bonus at 50% of stake
   groupInviterBonusCoins: 0,
   groupInviteeBonusCoins: 0,
   groupInviterBonusCapPerUserPerDay: 50,
@@ -255,6 +260,12 @@ export const GROUP_CONFIG_LABELS: Record<keyof GroupConfig, ConfigLabelMeta> = {
     label: 'Min House Edge Spread vs Solo',
     description: 'Minimum extra house edge for groups vs solo. Prevents arb.',
     unit: '%', min: 0, max: 2, type: 'number',
+    category: 'Group Play',
+  },
+  groupBonusWagerWeight: {
+    label: 'Group Bonus Wager Weight',
+    description: 'Percentage of stake that counts toward bonus wagering clearance on group resolve. 50 = half-credit (groups clear bonus slower because the variance is shared). 0 = no credit.',
+    unit: '%', min: 0, max: 100, type: 'number',
     category: 'Group Play',
   },
   groupInviterBonusCoins: {

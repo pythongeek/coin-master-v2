@@ -387,7 +387,14 @@ export async function claimDepositMatchBonus(
 // ── 3. creditWagering ──────────────────────────────────────────
 
 /**
- * Called from game-engine after every bet.
+ * Called from game-engine after every single-player bet AND from
+ * group-bet-flip.ts after every group resolve (Gap 4). The second
+ * caller passes `stake * groupBonusWagerWeight / 100` so that the
+ * group contribution is admin-tunable (default 50%). Both call sites
+ * feed the same per-claim FIFO + user-level denormalized counter, so
+ * `users.wagering_completed_coins` is the single source of truth for
+ * how much of the user's bonus obligation has been cleared.
+ *
  * Increments wagering_completed on bonus_claims where it counts,
  * marks claims completed when target reached.
  *
@@ -395,7 +402,7 @@ export async function claimDepositMatchBonus(
  * on completion (so future bets don't continue "completing" the same bonus).
  *
  * @param userId     the betting user
- * @param betAmount  amount of the bet in coins
+ * @param betAmount  amount of the bet in coins (already weighted for groups)
  * @returns number of claims completed by this bet
  */
 export async function creditWagering(
