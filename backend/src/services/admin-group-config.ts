@@ -45,6 +45,12 @@ export interface GroupConfig {
   /** Hard cap (overrides user choice) */
   groupAbsoluteMaxMembers: number;
 
+  // ── Eligibility gate (Gap 6) ──
+  /** Minimum lifetime confirmed deposits (USD) a user must have before
+   *  they can create OR join a group. Anti-bot: keeps brand-new
+   *  accounts with $0 deposit history from polluting the pool. */
+  groupMinUserDepositHistory: number;
+
   // ── Stake caps ──
   /** Default min stake per member */
   groupDefaultContributionMin: number;
@@ -103,6 +109,8 @@ export const DEFAULT_GROUP_CONFIG: GroupConfig = {
   groupDefaultMinMembers: 2,
   groupDefaultMaxMembers: 5,
   groupAbsoluteMaxMembers: 10,
+
+  groupMinUserDepositHistory: 50, // gap6: $50 lifetime deposits
 
   groupDefaultContributionMin: 0.10,
   groupDefaultContributionMax: 10000,
@@ -175,6 +183,12 @@ export const GROUP_CONFIG_LABELS: Record<keyof GroupConfig, ConfigLabelMeta> = {
     label: 'Absolute Max Members (hard cap)',
     description: 'Hard cap overriding any per-group choice.',
     unit: 'members', min: 2, max: 10, type: 'number',
+    category: 'Group Play',
+  },
+  groupMinUserDepositHistory: {
+    label: 'Min Lifetime Deposit to Create Group',
+    description: 'Minimum lifetime confirmed deposits (USD) a user must have to create or join a group. Anti-bot gate — set to 0 to disable. Default 50 USD.',
+    unit: '$', min: 0, max: 1000, type: 'number',
     category: 'Group Play',
   },
   groupDefaultContributionMin: {

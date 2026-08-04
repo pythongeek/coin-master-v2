@@ -1944,6 +1944,32 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: The `ledger_entries` table now records the closed-system accounting triple for every group resolve. The accounting dashboard's `SUM(amount) WHERE entry_type IN ('group_pool_received', 'group_pool_paid_out', 'group_house_take') GROUP BY ref_id` query is the canonical "pool is closed at zero" invariant check. The `LedgerEntryType` enum now has 13 values total (10 + 3 group). The `currencies` table is no longer empty. The `_house` sentinel user is the canonical house-side counter-party, comparable to how staking ledgers use a `treasury` account.
   - **Status**: `[x] [TESTED & PASSED 2026-08-04]` (Gap 9)
 
+- [x] **[GP-6] Group Play — Gap 6: lifetime-deposit eligibility gate uses the right admin-config key (closes the $0-deposit bypass)** ✓ TESTED & PASSED 2026-08-04
+  - **File(s) Affected**: `backend/migrations/051_seed_group_min_user_deposit_history.sql` (NEW ~25 lines — INSERT `admin_settings.group_min_user_deposit_history='50'` with `ON CONFLICT (key) DO NOTHING`); `backend/src/services/admin-group-config.ts` (+~15 lines — added `groupMinUserDepositHistory: number` to the `GroupConfig` interface, default 50, label entry under `Group Play` category); `backend/src/services/admin-game-config.ts` (+~3 lines — mirrored the same field in the `GameConfig` barrel); `backend/src/services/group-bet-create.ts` (~2 lines — changed `getGroupConfigKey('groupDefaultContributionMin')` to `getGroupConfigKey('groupMinUserDepositHistory')` for the lifetime-deposit floor); `backend/src/services/group-bet-join.ts` (~10 lines — replaced the hard-coded `50` in `userCanJoin()` with a read of the same admin-config key, gated by `if (minDeposit > 0)` so admins can disable the gate entirely by setting the value to 0).
+  - **Issue/Gap**: The lifetime-deposit eligibility gate in `group-bet-create.ts:runGates()` was reading `groupDefaultContributionMin` as a proxy for the lifetime-deposit floor. That config is the per-member stake minimum (default 0.10 USD), not the lifetime-deposit minimum. The result: a brand-new user with $0 lifetime deposits could create a group as long as their per-member stake was above $0.10. The intent of the gate (anti-bot — keep $0-deposit accounts from polluting the pool) was completely bypassed. The join path (`group-bet-join.ts:userCanJoin()`) had a separately hard-coded `< 50` check that was not admin-configurable at all.
+  - **Proposed Fix**:
+    1. Added a new dedicated 25th setting `groupMinUserDepositHistory` (default 50, range 0–1000) to `admin-group-config.ts` AND the mirrored `admin-game-config.ts` barrel (so the UI tab and the full GameConfig interface both see it).
+    2. Migration 051 seeds the value at 50 via `INSERT INTO admin_settings (key, value) VALUES ('group_min_user_deposit_history', '50') ON CONFLICT (key) DO NOTHING`. Migration also recorded in `pgmigrations` table.
+    3. `group-bet-create.ts` reads the new key. The hard-coded 50 fallback in `SOFT_MIN_DEPOSIT_HISTORY_FALLBACK` is preserved so a missing admin_settings row doesn't crash the create endpoint.
+    4. `group-bet-join.ts` also reads the new key (was hard-coded 50). The check is wrapped in `if (minDeposit > 0)` so an admin can disable both paths by setting the value to 0.
+  - **Live verification (post-deploy, 2026-08-04)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | `admin_settings` row exists | `group_min_user_deposit_history=50` | ✅ confirmed |
+    | k6test_28 (0 deposits) POST /api/group-bet/ | 403/JSON body `code:'LIFETIME_DEPOSIT_TOO_LOW'` | ✅ exactly: `{"success":false,"error":"lifetime_deposit_too_low","code":"LIFETIME_DEPOSIT_TOO_LOW"}` |
+    | k6test_28 (0 deposits) POST /api/group-bet/<id>/join | 403/JSON body `code:'LIFETIME_DEPOSIT_TOO_LOW'` | ✅ exactly: `{"success":false,"error":"lifetime deposit < $50","code":"LIFETIME_DEPOSIT_TOO_LOW"}` (join path now uses admin-config too) |
+    | k6test_0 (100 deposits) POST /api/group-bet/ | 201 success | ✅ exactly |
+    | admin (bypass via `is_admin`) POST /api/group-bet/ | 201 success | ✅ exactly |
+    | Set key to 0 in admin_settings, retry k6test_28 | 201 success (gate disabled) | ✅ exactly |
+  - **Coverage audit (per "on all paths?" prompt)**:
+    1. **Create path** (`POST /api/group-bet/`) → gate fires before debit. ✅ verified.
+    2. **Join path** (`POST /api/group-bet/<id>/join`) → gate fires before debit. ✅ verified.
+    3. **Admin bypass** (`is_admin=true`) → both paths skip the gate. ✅ verified by code inspection + admin live test.
+    4. **Gate disable** (`value=0`) → both paths skip the check. ✅ verified.
+    5. **Cancellation/refund paths** → no eligibility gate needed (admin-only operations; the user being refunded already passed the gate when they joined).
+  - **SPEC VERIFICATION flip**: The 25th group-play admin setting is now live in both the `GroupConfig` interface and the `GameConfig` barrel. The lifetime-deposit eligibility gate uses the correct key in both create and join paths. The hard-coded `50` in `group-bet-join.ts` is gone. Brand-new users without $50 lifetime deposits can no longer create or join groups.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-04]` (Gap 6)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

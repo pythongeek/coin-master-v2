@@ -133,19 +133,25 @@ async function userCanJoin(
         message: 'group play is not available in your country',
       };
     }
-    // Lifetime-deposit gate (cheap aggregate; ~1ms even on big DB)
-    const dep = await query<any>(
-      `SELECT COALESCE(SUM(amount), 0)::float8 AS lifetime
-         FROM transactions
-        WHERE user_id = $1 AND type = 'deposit' AND status = 'confirmed'`,
-      [userId],
-    );
-    if ((dep.rows[0]?.lifetime ?? 0) < 50) {
-      return {
-        ok: false,
-        code: 'LIFETIME_DEPOSIT_TOO_LOW',
-        message: 'lifetime deposit < $50',
-      };
+    // Lifetime-deposit gate (Gap 6: same admin-config key as group-bet-create.ts).
+    // Reads `groupMinUserDepositHistory` (default 50); set to 0 in admin
+    // to disable the gate entirely. Cheap aggregate; ~1ms even on big DB.
+    const minDeposit = await getGroupConfigKey('groupMinUserDepositHistory')
+      .catch(() => 50);
+    if (minDeposit > 0) {
+      const dep = await query<any>(
+        `SELECT COALESCE(SUM(amount), 0)::float8 AS lifetime
+           FROM transactions
+          WHERE user_id = $1 AND type = 'deposit' AND status = 'confirmed'`,
+        [userId],
+      );
+      if ((dep.rows[0]?.lifetime ?? 0) < minDeposit) {
+        return {
+          ok: false,
+          code: 'LIFETIME_DEPOSIT_TOO_LOW',
+          message: `lifetime deposit < $${minDeposit}`,
+        };
+      }
     }
   }
   const available = parseFloat(u.wd) + parseFloat(u.bonus);

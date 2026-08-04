@@ -72,6 +72,8 @@ export interface GameConfig {
   groupDefaultMinMembers: number;
   groupDefaultMaxMembers: number;
   groupAbsoluteMaxMembers: number;
+  // Eligibility gate (Gap 6) — minimum lifetime deposits (USD) to create/join
+  groupMinUserDepositHistory: number;
   // Stake caps
   groupDefaultContributionMin: number;
   groupDefaultContributionMax: number;
@@ -238,6 +240,7 @@ export const GAME_CONFIG_LABELS: Partial<Record<keyof GameConfig, {
   groupDefaultMinMembers:  { label: 'Default Min Members', description: 'Default minimum members when creator does not specify.', unit: 'members', min: 2, max: 10, type: 'number', category: 'Group Play' },
   groupDefaultMaxMembers:  { label: 'Default Max Members', description: 'Default maximum members when creator does not specify.', unit: 'members', min: 2, max: 10, type: 'number', category: 'Group Play' },
   groupAbsoluteMaxMembers: { label: 'Absolute Max Members', description: 'Hard cap overriding any per-group choice.', unit: 'members', min: 2, max: 10, type: 'number', category: 'Group Play' },
+  groupMinUserDepositHistory: { label: 'Min Lifetime Deposit to Create Group', description: 'Minimum lifetime confirmed deposits (USD) a user must have to create or join a group. Anti-bot gate. Set to 0 to disable.', unit: '$', min: 0, max: 1000, type: 'number', category: 'Group Play' },
   // Stake caps
   groupDefaultContributionMin: { label: 'Default Min Stake', description: 'Default minimum contribution per member.', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'Group Play' },
   groupDefaultContributionMax: { label: 'Default Max Stake', description: 'Default maximum contribution per member.', unit: '$', min: 1, max: 50000, type: 'number', category: 'Group Play' },
@@ -310,6 +313,7 @@ export const GAME_DEFAULT_CONFIG: Partial<GameConfig> = {
   groupDefaultMinMembers: 2,
   groupDefaultMaxMembers: 5,
   groupAbsoluteMaxMembers: 10,
+  groupMinUserDepositHistory: 50, // gap6: $50 lifetime deposits
   groupDefaultContributionMin: 0.10,
   groupDefaultContributionMax: 10000,
   groupAbsolutePoolCap: 50000,

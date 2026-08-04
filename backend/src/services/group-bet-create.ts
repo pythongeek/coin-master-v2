@@ -219,7 +219,7 @@ async function runGates(
     }
   }
 
-  // 3. Lifetime deposits ≥ admin-config floor (anti-bot; Day 8 reads from groupDefaultContributionMin as a proxy)
+  // 3. Lifetime deposits ≥ admin-config floor (Gap 6: separate from per-member stake — uses groupMinUserDepositHistory, default $50)
   if (u.lifetime_deposits < softMinDeposit && !u.is_admin) {
     return {
       ok: false,
@@ -249,7 +249,7 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
   const [softMaxMembers, softMaxPool, softMinDeposit, expiryMinutes] = await Promise.all([
     getGroupConfigKey('groupAbsoluteMaxMembers').catch(() => SOFT_MAX_MEMBERS_FALLBACK),
     getGroupConfigKey('groupAbsolutePoolCap').catch(() => SOFT_MAX_POOL_FALLBACK),
-    getGroupConfigKey('groupDefaultContributionMin').catch(() => SOFT_MIN_DEPOSIT_HISTORY_FALLBACK),
+    getGroupConfigKey('groupMinUserDepositHistory').catch(() => SOFT_MIN_DEPOSIT_HISTORY_FALLBACK),
     getGroupConfigKey('groupExpiryMinutes').catch(() => 30),
   ]);
 
