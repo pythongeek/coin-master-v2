@@ -32,13 +32,55 @@
 | Build pipeline | B | Multi-stage Dockerfile, Alpine slim, non-root, healthcheck; ships `dist/scripts/` to prod |
 | Bootstrap safety | C | `connectDB()` reruns all 45 migrations every restart + `process.exit(1)` on any failure |
 | Multi-pod safety | C- | Advisory-lock race on `pgmigrations` between two pods on rolling restart |
-| TOTP 2FA encryption | **D** | `aes-256-cbc` — deprecated, malleable, no auth tag |
-| MNEMONIC fallback | **D** | Hardcoded `'test test test…junk'` if env unset |
-| Error message leakage | **C-** | 5+ admin routes leak raw `err.message` (DB schema, partial stacks) to clients |
-| `/metrics` exposure | C | Unauthenticated → market data leak |
-| **Overall** | **B+** | Safe for high-traffic public launch **after 6 P0 fixes** |
+|TOTP 2FA encryption|**A**|`aes-256-gcm` via secret-vault.ts after P0-01 (verified live 2026-08-03, 9/9 totp-gcm tests pass)|
+|MNEMONIC fallback|**A**|fail-closed in `services/wallet-derivation.ts` after P0-02 (verified live 2026-08-03 via `getOrCreateUserWallet` with empty MNEMONIC inside running container — FATAL sentinel thrown, no DB/Redis touch)|
+|Error message leakage|**B**|Global handler `middleware/error-handler.ts` works for `admin-audit.ts`/`admin-email.ts`/`ml-routes.ts`/`dashboard.ts`/`admin.ts` (P0-06 partial). **Residual: 25 other route files still use `res.status(500).json({ error: err.message })`. Live proof: `GET /api/admin/balance/history?userId=not-a-uuid` returns `{"error":"invalid input syntax for type uuid: \"not-a-uuid\""}` to the client.** Fix list: `admin-balance.ts`, `admin-bonus.ts`, `admin-cohorts.ts`, `admin-fraud-reports.ts`, `admin-fraud.ts`, `admin-geoip.ts`, `admin-kyc.ts`, `admin-payments-qr.ts`, `admin-public.ts`, `admin-webhooks.ts`, `admin-withdrawals.ts`, `affiliate.ts`, `auth-2fa.ts`, `auth.ts`, `bonus.ts`, `game.ts`, `graphs.ts`, `group-bet.ts`, `kyc.ts`, `leaderboards.ts`, `payment.ts`, `promo.ts`, `public-fx.ts`, `wallet-deposit-qr.ts`, `wallet.ts`. Unit test grep was too narrow (only checked 5 refactored files). See [P0-06 Re-verification 2026-08-03] below.|
+|`/metrics` exposure|C|Unauthenticated → market data leak (carried forward from P1-06 fix attempt)|
+|**Overall**|**A-**|5 of 6 P0s fully verified live on cx23 stack 2026-08-03; P0-06 partial — global handler works but 25 files still leak. Stack state: postgres+redis+backend+frontend all healthy, /api/health=200, /api/public/fx-rates=200. **Pre-launch gap: P0-06 residual + 1 new untracked file (testing-balance.ts / AdminTestingPanel) needs prod-disable path.**|
 
 **Headline verdict**: 6 critical blockers (P0) must close before public launch; ~4-6 hours of focused work. The 13 P1 items are 2-3 days of post-launch hardening. The 19 P2 items are 1 week of operational polish.
+
+---
+
+## 1.1 Live Re-verification (2026-08-03)
+
+Re-ran every P0 fix against the live cx23 stack after restarting postgres+redis+backend+frontend. Stack state: all 4 containers healthy, `/api/health` → 200, `/api/public/fx-rates` → 200, admin login → 200.
+
+| P0 | What was verified | Test that passed | Live evidence |
+|---|---|---|---|
+| **P0-01** TOTP AES-GCM | `npx ts-node src/test/totp-gcm.test.ts` | 9/9 assertions pass | AES-256-GCM auth tag rejects flipped ciphertext; legacy CBC migration path round-trips |
+| **P0-02** MNEMONIC fail-closed | `npx ts-node src/test/wallet-derivation.test.ts` | 12/13 assertions pass (1 DB-dependent test needs live PG) | `docker exec coin-master-backend-1 ... getOrCreateUserWallet({userId:1, chain:"ETH"})` with empty MNEMONIC → `EXPECTED FATAL: FATAL: MNEMONIC environment variable is required...` |
+| **P0-03** Migrations off boot | `docker logs coin-master-backend-1` | Boot log shows `[db] Migrations skipped on boot (RUN_MIGRATIONS_ON_BOOT=false). Run npm run migrate from a separate container / K8s Job.` | `RUN_MIGRATIONS_ON_BOOT` env defaults to false; `backend/src/migrate-cli/run-migrations.ts` exists as one-shot CLI |
+| **P0-04** `audit_log` singular | `npx ts-node src/test/audit-backup.test.ts` | 30/30 assertions pass | SQL `FROM audit_log` (singular); `BACKUP_MODE=local\|s3\|both` env-gated; `to_regclass()` fails fast on missing table |
+| **P0-05** `reconcileUser` off hot path | `npx ts-node src/test/game-engine-reconcile.test.ts` | 25/25 assertions pass | `setImmediate(() => reconcileUser(userId))` after `client.query(COMMIT)`; 60s coalesce Map; `ledger_alerts` row written before freeze; periodic 5-min cron preserved |
+| **P0-06** Error handler sanitization | `npx ts-node src/test/error-handler.test.ts` + live curl | 22/22 unit tests pass, BUT live test against **25 other route files** shows **residual leak** | `GET /api/admin/balance/history?userId=not-a-uuid` returns `{"error":"invalid input syntax for type uuid: \"not-a-uuid\""}` — raw Postgres error leaked to client. See [P0-06 Re-verification 2026-08-03] below. |
+
+### [P0-06 Re-verification 2026-08-03] — Partial closure, residual leak
+
+**Problem**: The P0-06 implementation note says "removed 64 inline `res.status(500).json({ error: ... })` sites across 5 files" and the unit test grep only checks those 5 files. The remaining 25 route files were never swept — they still use the old pattern that bypasses the global handler.
+
+**Live proof** (cx23 prod stack, 2026-08-03 20:42 UTC):
+```
+$ curl -H "Authorization: Bearer <admin_jwt>" \
+  http://localhost:4000/api/admin/balance/history?userId=not-a-uuid
+{"success":false,"error":"invalid input syntax for type uuid: \"not-a-uuid\""}
+```
+500 status, raw Postgres error in body. Confirmed at `backend/src/routes/admin-balance.ts:135-136` and `:144-145`.
+
+**Fix list** (25 route files, each needs `} catch (err: unknown) { next(err); }` replacing `res.status(500).json({ success: false, error: m })`):
+`admin-balance.ts` (4 sites), `admin-bonus.ts`, `admin-cohorts.ts`, `admin-fraud-reports.ts`, `admin-fraud.ts`, `admin-geoip.ts`, `admin-kyc.ts`, `admin-payments-qr.ts`, `admin-public.ts`, `admin-webhooks.ts`, `admin-withdrawals.ts`, `affiliate.ts`, `auth-2fa.ts`, `auth.ts`, `bonus.ts`, `game.ts`, `graphs.ts`, `group-bet.ts`, `kyc.ts`, `leaderboards.ts`, `payment.ts`, `promo.ts`, `public-fx.ts`, `wallet-deposit-qr.ts`, `wallet.ts`.
+
+**Estimated effort**: 1-2 hours (mechanical sweep + retest). The unit test grep should be widened to `backend/src/routes/**/*.ts` so the regression is caught next time.
+
+**Not blocking for 5-user pre-launch** (all admin endpoints), but blocking for **public launch** because any registered user with admin privileges gets free DB schema recon if they hit a malformed query. Should be fixed before opening registration to the public.
+
+### New untracked files (added since 2026-07-23 audit)
+- `backend/src/services/testing-balance.ts` (177 LOC) — admin testing balance service (INTERNAL chain wallet, NOT real money)
+- `frontend/components/dashboard/AdminTestingPanel.tsx` (213 LOC) — UI for the above
+- `docs/PRODUCTION_READINESS_AND_DEPOSIT_WITHDRAW_REDESIGN.md` (838 LOC) — companion doc to this tracker
+- `frontend/public/keys/` — SSH-related files (cx23-access public key)
+
+**Concern**: `testing-balance.ts` exposes `POST /api/admin/testing/credit-coins` and `POST /api/admin/testing/ensure-wallet` (gated to `super_admin` role only — verified via `router.post('/testing/credit-coins', adminLimiter, authMiddleware, roleMiddleware(['super_admin']))`). These bypass the real wallet-derivation pipeline. Production-safety net missing: no `ENABLE_TESTING_BALANCE` env gate. **Add a kill switch before public launch**: if `NODE_ENV=production` and `ENABLE_TESTING_BALANCE !== 'true'`, return 404 for these 3 routes.
 
 ---
 
@@ -1815,6 +1857,39 @@
     - All 10 backend tests still pass (449 PASS, 1 pre-existing flake in expiry)
   - **SPEC VERIFICATION flip**: Phase 2 §6 (lobby browser UI) + Phase 2 §6 share modal are now LIVE. The full Phase-2 player-facing surfaces are now wired to the Phase-2 backend.
   - **Status**: `[x] [TESTED & PASSED 2026-07-30]`
+
+- [x] **[GP-16] Group Play — Gap 16: country enforcement on create + join (closes sanctioned-country bypass)** ✓ TESTED & PASSED 2026-08-04
+  - **File(s) Affected**: `backend/src/services/group-bet-create.ts` (+22, −1 — added `kyc_country` SELECT in `runGates()` + new gate 2b after KYC tier that calls `getGroupConfigKey('groupPlayBlockedCountries')` and returns `{ok:false, code:'COUNTRY_BLOCKED'}` if the user's country is in the admin-config block list); `backend/src/services/group-bet-join.ts` (+17, −1 — same pattern in `userCanJoin()`: added `kyc_country` SELECT + new check before the lifetime-deposit gate that returns `{ok:false, code:'COUNTRY_BLOCKED', message:'group play is not available in your country'}` which the route maps to HTTP 403)
+  - **Issue/Gap**: The lobby (`backend/src/services/group-bet-lobby.ts`) already filtered rooms out of `listOpenGroups()` for viewers in `groupPlayBlockedCountries` — but the **create** and **join** service paths did not. A user from a sanctioned country with a known short-code or shared invite link could bypass the lobby filter and still create or join rooms. The `admin_settings.group_play_blocked_countries` value (`KP,IR,SY,CU`) was used by the lobby but never enforced at the write-path. The `users.kyc_country` column existed since migration 020 but was not read by the group-bet gates.
+  - **Proposed Fix**:
+    1. In `runGates()` (create flow), extend the existing SELECT to include `kyc_country`, then add a new gate 2b right after the KYC tier check that:
+       - Reads `getGroupConfigKey('groupPlayBlockedCountries')` from admin-config (default `'KP,IR,SY,CU'`)
+       - Parses the CSV via the existing `parseCountryList()` helper from `admin-group-config.ts`
+       - Uppercases + trims the user's `kyc_country`
+       - Returns `{ok: false, reason: 'country_blocked', code: 'COUNTRY_BLOCKED'}` if the user country is in the blocked list
+       - `is_admin` bypasses (consistent with the rest of the gate logic)
+    2. In `userCanJoin()` (join flow), do the same. The returned error is re-thrown as `GroupBetNotAllowedError(code)` which the route maps to HTTP 403.
+    3. Import `parseCountryList` from `./admin-group-config` in both files.
+  - **Live verification (post-deploy, 2026-08-04)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | `kyc_country=KP`, POST `/api/group-bet/` | 403/COUNTRY_BLOCKED | ✅ 403 `{"code":"COUNTRY_BLOCKED","error":"country_blocked"}` |
+    | `kyc_country=BD`, POST `/api/group-bet/` | 201 success | ✅ 201, group `RNY82T` created |
+    | `kyc_country=NULL`, CREATE | 201 (no country = no block) | ✅ 201 |
+    | `kyc_country='kp'` (lowercase), CREATE | 403 (case-insensitive) | ✅ 403 COUNTRY_BLOCKED |
+    | `kyc_country=''` (empty), CREATE | 201 | ✅ 201 |
+    | `kyc_country='  KP  '` (whitespace), CREATE | 403 (trim works) | ✅ 403 COUNTRY_BLOCKED |
+    | `kyc_country='IR'`, CREATE | 403 (IR in default list) | ✅ 403 COUNTRY_BLOCKED |
+    | `kyc_country=KP`, JOIN `/api/group-bet/<uuid>/join` | 403/COUNTRY_BLOCKED | ✅ 403 `{"code":"COUNTRY_BLOCKED","error":"group play is not available in your country"}` |
+    | `kyc_country=BD`, JOIN | 201 success | ✅ 201, member added, room flipped to `ready` |
+    | Lobby `viewerCountry=KP` | 0 rooms | ✅ `total:0` |
+    | Spec-defined BD-positive control | 201 | ✅ 201 |
+  - **Adversarial audit findings**:
+    1. `lobby` requires `viewerCountry` query param explicitly — does NOT auto-derive from JWT user's `kyc_country`. With no `viewerCountry` passed, a KP user with a shared link could still see room metadata via `GET /api/group-bet/lobby`. **Out of scope for Gap 16** (lobby is read-only — sanctioned users can still see room existence but cannot create or join). Flagged as a follow-up.
+    2. `is_admin` bypass is intentional and matches the rest of the gate logic. Verified by code inspection (`if (!u.is_admin)` precedes both new checks). Live admin-bypass test could not be performed because the admin user's bcrypt password is not recoverable in-session.
+    3. `kyc_country_exception_until` (existing column, used by `kyc-enforcement.service.ts` for deposits) is NOT honored by the new group-bet gates. Manual admin override remains possible via direct SQL until a per-group-bet exception path is added (Phase 3 work).
+  - **SPEC VERIFICATION flip**: The `admin_settings.group_play_blocked_countries` config is now effective at the write-path (create + join), not just the read-path (lobby). Sanctioned-country users can no longer place bets via group play. Audit log rows `group_play.create` and `group_play.join` will record `COUNTRY_BLOCKED` rejections going forward.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-04]`
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 

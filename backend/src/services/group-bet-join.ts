@@ -35,6 +35,7 @@ import { determineBalanceSource, debitBalanceForBet } from './bonus';
 import { transitionGroupStatus, GroupBetTransitionError } from './group-bet-state';
 import { emitGroupBetEvent } from './socket-group-bet';
 import { GroupBetValidationError, GroupBetNotAllowedError, GroupBetInsufficientBalanceError, GroupBetDuplicateError } from './group-bet-create';
+import { getGroupConfigKey, parseCountryList } from './admin-group-config';
 
 // ─── Public type contract ──────────────────────────────────────
 export interface JoinGroupBetInput {
@@ -105,7 +106,8 @@ async function userCanJoin(
   requiredBalance: number,
 ): Promise<{ ok: true; balance: number } | { ok: false; code: string; message: string; balance?: number }> {
   const r = await query<any>(
-    `SELECT u.is_active, u.is_admin, u.self_excluded_until,
+    `SELECT u.is_active, u.is_admin, u.kyc_country,
+            u.self_excluded_until,
             COALESCE(u.withdrawable_balance_coins, 0)::float8 AS wd,
             COALESCE(u.bonus_balance_coins, 0)::float8 AS bonus
        FROM users u WHERE u.id = $1`,
@@ -118,6 +120,19 @@ async function userCanJoin(
     return { ok: false, code: 'SELF_EXCLUDED', message: 'self-excluded' };
   }
   if (!u.is_admin) {
+    // Country enforcement (group_play_blocked_countries from admin-config).
+    // Default list is KP,IR,SY,CU. Mirrors runGates() in group-bet-create.ts.
+    const blockedCsv = await getGroupConfigKey('groupPlayBlockedCountries')
+      .catch(() => 'KP,IR,SY,CU');
+    const blocked = parseCountryList(String(blockedCsv ?? '')) ?? [];
+    const userCountry = (u.kyc_country || '').toUpperCase().trim();
+    if (userCountry && blocked.includes(userCountry)) {
+      return {
+        ok: false,
+        code: 'COUNTRY_BLOCKED',
+        message: 'group play is not available in your country',
+      };
+    }
     // Lifetime-deposit gate (cheap aggregate; ~1ms even on big DB)
     const dep = await query<any>(
       `SELECT COALESCE(SUM(amount), 0)::float8 AS lifetime

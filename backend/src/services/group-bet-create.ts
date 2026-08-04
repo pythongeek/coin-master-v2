@@ -35,7 +35,7 @@ import { redis } from '../config/redis';
 import { determineBalanceSource, debitBalanceForBet } from './bonus';
 import { transitionGroupStatus } from './group-bet-state';
 import { emitGroupBetEvent } from './socket-group-bet';
-import { getGroupConfigKey } from './admin-group-config';
+import { getGroupConfigKey, parseCountryList } from './admin-group-config';
 
 // ─── Error class hierarchy ─────────────────────────────────────
 export class GroupBetValidationError extends Error {
@@ -160,6 +160,7 @@ async function runGates(
         u.is_admin,
         u.kyc_tier,
         u.kyc_status,
+        u.kyc_country,
         u.self_excluded_until,
         COALESCE(u.withdrawable_balance_coins, 0)::float8 AS withdrawable_balance,
         COALESCE(u.bonus_balance_coins, 0)::float8 AS bonus_balance,
@@ -197,6 +198,25 @@ async function runGates(
       reason: 'kyc_required',
       code: 'KYC_TIER_INSUFFICIENT',
     };
+  }
+
+  // 2b. Country enforcement (group_play_blocked_countries from admin-config).
+  //     Default list is KP,IR,SY,CU (sanctioned). Admin-configurable via
+  //     admin_settings.group_play_blocked_countries (parsed as CSV).
+  //     Lobby already hides rooms from blocked-country viewers; this
+  //     closes the create-side bypass. is_admin bypasses.
+  if (!u.is_admin) {
+    const blockedCsv = await getGroupConfigKey('groupPlayBlockedCountries')
+      .catch(() => 'KP,IR,SY,CU');
+    const blocked = parseCountryList(String(blockedCsv ?? '')) ?? [];
+    const userCountry = (u.kyc_country || '').toUpperCase().trim();
+    if (userCountry && blocked.includes(userCountry)) {
+      return {
+        ok: false,
+        reason: 'country_blocked',
+        code: 'COUNTRY_BLOCKED',
+      };
+    }
   }
 
   // 3. Lifetime deposits ≥ admin-config floor (anti-bot; Day 8 reads from groupDefaultContributionMin as a proxy)
