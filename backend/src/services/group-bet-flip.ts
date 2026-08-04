@@ -493,6 +493,67 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
       );
     }
 
+    // 7c.1. Gap 9: house-side `ledger_entries` accounting triple.
+    // The pool is a closed system: every coin came from a member, and
+    // every coin is either paid back to a winner or retained by the
+    // house. We record all three legs so the accounting dashboard can
+    // verify the invariant `SUM(pool_received) = SUM(pool_paid_out) +
+    // SUM(house_take)` per group. The sentinel `_house` user_id
+    // (UUID 00000000-0000-0000-0000-000000000001) and the `USD`
+    // currency_id (from migration 050) are required because
+    // ledger_entries.user_id and currency_id are NOT NULL. The
+    // reference_id is unique per row per group (the column has a UNIQUE
+    // index) so the 3 rows are keyed by group_id + entry_type.
+    const totalPaidOut = payouts.reduce((s, p) => s + p.payout, 0);
+    const houseTake = Math.max(totalPool - totalPaidOut, 0);
+    const winnerCount = payouts.filter(p => p.isWinner && p.payout > 0).length;
+    const memberCount = payouts.length;
+    const HOUSE_USER_ID = '00000000-0000-0000-0000-000000000001';
+    const USD_CURRENCY_ID = '00000000-0000-0000-0000-0000000000aa';
+    const ledgerRows = [
+      {
+        entry_type: 'group_pool_received',
+        amount: totalPool,
+        reference_id: `group-${room.id}-pool_received`,
+        metadata: { memberCount, payoutMode: room.payout_mode, winningSide },
+      },
+      {
+        entry_type: 'group_pool_paid_out',
+        amount: totalPaidOut,
+        reference_id: `group-${room.id}-pool_paid_out`,
+        metadata: { winnerCount, memberCount, payoutMode: room.payout_mode },
+      },
+      {
+        entry_type: 'group_house_take',
+        amount: houseTake,
+        reference_id: `group-${room.id}-house_take`,
+        metadata: { houseEdgePct: HOUSE_EDGE_PERCENT, totalPool, totalPaidOut },
+      },
+    ];
+    for (const r of ledgerRows) {
+      await txQuery(
+        `INSERT INTO ledger_entries
+           (id, user_id, currency_id, entry_type, amount,
+            balance_before, balance_after,
+            reference_id, previous_hash, current_hash, signature, metadata)
+         VALUES (uuid_generate_v4(), $1, $2, $3, $4,
+                 0, 0,
+                 $5, '', '', '', $6::jsonb)`,
+        [
+          HOUSE_USER_ID,
+          USD_CURRENCY_ID,
+          r.entry_type,
+          r.amount.toFixed(8),
+          r.reference_id,
+          JSON.stringify({
+            ...r.metadata,
+            ref_type: 'group_bet',
+            ref_id: room.id,
+          }),
+        ],
+      );
+    }
+
     // 7d. Audit mirror (group_bet_audit) — action='flip_resolve' already
     //     written by transitionGroupStatus below; we add per-payout detail
     //     to the payload via a follow-up UPDATE on the audit row we just
