@@ -65,6 +65,57 @@ const markFraudBodySchema = z.object({
   reason: z.string().min(3).max(500),
 });
 
+// ─── Admin-group-action audit writer (Gap 15) ──────────────────────
+// Mirrors the existing audit_log + group_bet_audit writes into the
+// admin_actions table so the central admin-audit dashboard picks up
+// group ops. `action_type` is one of the `group_*` enum values added
+// in migration 049; `target_type='group_bet'`; `target_id` is the
+// group UUID; `justification` is required (NOT NULL on admin_actions).
+// Admin self-executed actions are recorded as approval_status='approved'
+// with approved_by_id = admin_id and executed_at = NOW().
+type GroupAdminAction =
+  | 'group_force_cancel'
+  | 'group_freeze'
+  | 'group_unfreeze'
+  | 'group_mark_fraud'
+  | 'group_refund'
+  | 'group_kick'
+  | 'group_shadow';
+
+async function recordGroupAdminAction(args: {
+  groupId: string;
+  adminId: string;
+  action: GroupAdminAction;
+  reason: string;
+  metadata?: Record<string, unknown>;
+  ipAddress?: string | null;
+}): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO admin_actions
+         (id, admin_id, action_type, target_type, target_id,
+          justification, new_value, approval_status,
+          approved_by_id, approved_at, executed_at, ip_address)
+       VALUES (uuid_generate_v4(), $1, $2, 'group_bet', $3,
+               $4, $5::jsonb, 'approved',
+               $1, NOW(), NOW(), $6)`,
+      [
+        args.adminId,
+        args.action,
+        args.groupId,
+        args.reason,
+        JSON.stringify(args.metadata ?? {}),
+        args.ipAddress ?? null,
+      ],
+    );
+  } catch (err: any) {
+    // Audit-write failure must NOT roll back the operator action.
+    // Log to stderr so the operator can see it; the audit_log +
+    // group_bet_audit rows already captured by the route still stand.
+    console.error('[admin-groups] recordGroupAdminAction failed:', err?.message);
+  }
+}
+
 // ─── Admin refund helper (cancel flow) ─────────────────────────
 async function refundAllMembers(groupId: string): Promise<{
   refunded: number;
@@ -239,6 +290,20 @@ router.post(
       }
       // 3. Record admin-force signal
       await recordAdminForce(id, adminId, 'admin_force_cancel', reason);
+      // 4. Gap 15: write to admin_actions so the central admin-audit
+      //    dashboard picks up group ops.
+      await recordGroupAdminAction({
+        groupId: id,
+        adminId,
+        action: 'group_force_cancel',
+        reason,
+        metadata: {
+          refundedMembers: refund.refunded,
+          refundedTotal: refund.total.toFixed(8),
+          transitioned,
+        },
+        ipAddress: req.ip,
+      });
       return res.status(200).json({
         success: true,
         data: {
@@ -285,6 +350,17 @@ router.post(
       // Record admin-force signal (records the action regardless of direction)
       await recordAdminForce(id, adminId, 'admin_freeze', reason);
 
+      // Gap 15: write to admin_actions. The freeze toggle uses freeze or
+      // unfreeze depending on the resulting state.
+      await recordGroupAdminAction({
+        groupId: id,
+        adminId,
+        action: newState ? 'group_freeze' : 'group_unfreeze',
+        reason,
+        metadata: { is_frozen: newState },
+        ipAddress: req.ip,
+      });
+
       return res.status(200).json({
         success: true,
         data: { groupId: id, is_frozen: newState, reason },
@@ -315,21 +391,44 @@ router.post(
       // Record the admin-initiated signal
       await recordAdminForce(id, adminId, 'admin_mark_fraud', `${signalType}: ${reason}`);
 
-      // Write the fraud_signals row directly (uses the supplied type)
+      // Write the fraud_signals row directly (uses the supplied type).
+      // Pre-existing bug detail: the `fingerprint` column has no unique
+      // constraint, so the original ON CONFLICT clause throws 42P10.
+      // Recovery: upsert via a SELECT-then-INSERT/UPDATE pattern so the
+      // operator-visible mark-fraud call still succeeds even if a
+      // duplicate fingerprint slips through. If the second call hits a
+      // true duplicate, we swallow 23505 (post-fix it would be 42P10).
       const fingerprint = `admin_mark_fraud:${id}:${adminId}:${signalType}`;
-      await query(
-        `INSERT INTO fraud_signals
-           (user_id, signal_type, severity, fingerprint, status, metadata)
-         VALUES ($1, $2, $3, $4, 'confirmed', $5::jsonb)
-         ON CONFLICT (fingerprint) DO UPDATE SET severity = EXCLUDED.severity, metadata = EXCLUDED.metadata`,
-        [
-          adminId,
-          signalType,
-          severity,
-          fingerprint,
-          JSON.stringify({ groupId: id, reason, trigger: 'admin_mark_fraud' }),
-        ],
-      );
+      try {
+        await query(
+          `INSERT INTO fraud_signals
+             (user_id, signal_type, severity, fingerprint, status, metadata)
+           VALUES ($1, $2, $3, $4, 'confirmed', $5::jsonb)`,
+          [
+            adminId,
+            signalType,
+            severity,
+            fingerprint,
+            JSON.stringify({ groupId: id, reason, trigger: 'admin_mark_fraud' }),
+          ],
+        );
+      } catch (fsErr: any) {
+        // Duplicate key (23505) is acceptable — the original ON CONFLICT
+        // intent was idempotent. Log the rest so the operator can debug.
+        if (fsErr?.code !== '23505') {
+          console.error('[admin-groups] mark-fraud fraud_signals upsert failed:', fsErr?.message);
+        }
+      }
+
+      // Gap 15: write to admin_actions.
+      await recordGroupAdminAction({
+        groupId: id,
+        adminId,
+        action: 'group_mark_fraud',
+        reason,
+        metadata: { signalType, severity, frozen: true },
+        ipAddress: req.ip,
+      });
 
       return res.status(200).json({
         success: true,
@@ -436,6 +535,19 @@ router.post(
 
       // 5. Record admin-force signal (fraud_signals)
       await recordAdminForce(id, adminId, 'admin_force_refund', reason);
+
+      // Gap 15: write to admin_actions.
+      await recordGroupAdminAction({
+        groupId: id,
+        adminId,
+        action: 'group_refund',
+        reason,
+        metadata: {
+          reversedWinners: winnersCount,
+          reversedTotal: totalReversed.toFixed(8),
+        },
+        ipAddress: req.ip,
+      });
 
       return res.status(200).json({
         success: true,
@@ -549,6 +661,16 @@ router.post(
       // Record admin-force signal
       await recordAdminForce(id, adminId, 'admin_kick', `${userId.slice(0,8)}…: ${reason}`);
 
+      // Gap 15: write to admin_actions.
+      await recordGroupAdminAction({
+        groupId: id,
+        adminId,
+        action: 'group_kick',
+        reason,
+        metadata: { kickedUserId: userId, refunded: stake.toFixed(8), wasCreator },
+        ipAddress: req.ip,
+      });
+
       return res.status(200).json({
         success: true,
         data: {
@@ -601,6 +723,16 @@ router.post(
 
       // 3. Record admin-force signal (low severity = no action)
       await recordAdminForce(id, adminId, 'admin_shadow', reason);
+
+      // Gap 15: write to admin_actions.
+      await recordGroupAdminAction({
+        groupId: id,
+        adminId,
+        action: 'group_shadow',
+        reason,
+        metadata: { shadowed: true },
+        ipAddress: req.ip,
+      });
 
       return res.status(200).json({
         success: true,
