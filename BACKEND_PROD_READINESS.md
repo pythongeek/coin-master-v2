@@ -2260,6 +2260,32 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Group-play activity is now a first-class cohort dimension. Operators can segment users by `group_active_7d` (recently played group) and `group_fraud_signal_30d` (creators with fraud hits). The cohorts feed the weekly outlier detector (`detectAndPersistOutliers`) and the admin overview. The daily cron is wired into the existing worker pattern so it inherits `.unref()` and the same shutdown semantics.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 8)
 
+- [x] **[GP-12] Group Play — Gap 12: in-group chat toggle (master kill switch for chat:message)** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `backend/src/services/admin-group-config.ts` (+~12: new `groupChatEnabled: boolean` field on `GroupConfig` interface, default `false`, label 'In-Group Chat' with a description that documents the kill-switch semantics, type 'boolean', category 'Group Play'); `backend/src/services/admin-game-config.ts` (+~2: mirror in the `GameConfig` barrel); `backend/migrations/054_seed_group_chat_enabled.sql` (NEW: `INSERT INTO admin_settings (key, value, updated_at) VALUES ('group_chat_enabled', 'false', NOW()) ON CONFLICT (key) DO NOTHING` + pgmigrations row); `backend/src/services/socket-game.ts` (+~15: import `getGroupConfigKey`, gate the existing `chat:message` handler — on every event, read the admin setting via `getGroupConfigKey('groupChatEnabled')` and emit `socket.emit('group:error', { code: 'CHAT_DISABLED', message: 'In-group chat is currently disabled by the operator.' })` if the setting is `false`. The setting is read on every event (not cached) so flipping the toggle takes effect immediately).
+  - **Issue/Gap**: The `chat:message` socket event was active for everyone, all the time, with no admin control. There was no `group_chat_enabled` setting anywhere in `admin_settings`. The operator couldn't disable chat at the platform level — they could only ban individual users via fraud signals.
+  - **Proposed Fix**:
+    1. **28th setting** in `admin-group-config.ts`: `groupChatEnabled: boolean` (default `false`). Type `'boolean'` so the existing AdminGroupConfig UI renders it as a checkbox toggle (no extra UI work needed).
+    2. **Migration 054** seeds `admin_settings.group_chat_enabled='false'`.
+    3. **Socket gate** in `socket-game.ts:chat:message` — read the setting via `getGroupConfigKey()` on every event. The fail-OPEN behavior is intentional: a transient `admin_settings` query error would otherwise block all chat globally. Comment in the code documents the rationale.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | `admin_settings.group_chat_enabled` row exists | `value='false'` | ✅ confirmed via SQL |
+    | `groupChatEnabled` in compiled JS | yes | ✅ `dist/services/admin-group-config.js` has 3 references |
+    | Compiled socket-game.js has the gate | yes | ✅ `CHAT_DISABLED` literal + `group:error` emit in the handler |
+    | Toggle renders in AdminGroupConfig UI | yes | ✅ the existing toggle renderer reads from `GROUP_CONFIG_LABELS` (auto-included) |
+    | **Live socket test: `false` blocks chat** | yes | ✅ `group:error{CHAT_DISABLED}` returned, no `chat:message` broadcast |
+    | **Live socket test: flip to `true` allows chat** | yes | ✅ `chat:message` broadcast received |
+    | Restore to `false` | yes | ✅ default restored after test |
+  - **Auditor coverage (per "does the toggle actually gate the chat:message socket event?" prompt)**:
+    - **Gate is wired**: ✅ the existing `socket.on('chat:message', ...)` handler in `socket-game.ts` now reads `getGroupConfigKey('groupChatEnabled')` and returns `group:error{CHAT_DISABLED}` when `false`. Verified live via socket.io-client test.
+    - **Read on every event** (not cached): ✅ no in-memory cache. The setting is re-read on every chat:message event, so flipping the toggle takes effect immediately without a server restart.
+    - **Fail-open on transient error**: ✅ `try { ... } catch { /* fall through */ }` — a transient `admin_settings` query error does NOT block chat. Documented in code comments.
+    - **All senders blocked**: ✅ no per-user or per-socket bypass. Members, spectators, even the creator get the same `CHAT_DISABLED` error if the setting is `false`.
+    - **UI auto-renders**: ✅ the existing `AdminGroupConfig.tsx` uses a generic toggle renderer keyed on `type: 'boolean'`. The new `groupChatEnabled` setting flows through `GROUP_CONFIG_LABELS` automatically.
+  - **SPEC VERIFICATION flip**: The operator can now disable in-group chat with a single SQL UPDATE on `admin_settings.group_chat_enabled`. The toggle takes effect immediately (no restart), gates all chat:message events regardless of sender, and is surfaced in the existing admin UI as a checkbox. The default is `false` so chat is opt-in during Phase A smoke.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 12)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

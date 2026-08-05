@@ -52,6 +52,7 @@ export interface GroupConfig {
   groupMinUserDepositHistory: number;
   groupLeaderboardEnabled: boolean;
   groupDeepLinkFirstDepositBonus: number;
+  groupChatEnabled: boolean;
 
   // ── Stake caps ──
   /** Default min stake per member */
@@ -136,6 +137,7 @@ export const DEFAULT_GROUP_CONFIG: GroupConfig = {
   groupBonusWagerWeight: 50, // gap4: groups clear bonus at 50% of stake
   groupLeaderboardEnabled: true, // gap3: include groups in the public/admin leaderboard
   groupDeepLinkFirstDepositBonus: 5, // gap5: bonus coins credited to a first-ever-deposit invitee redeeming a deep link
+  groupChatEnabled: false, // gap12: in-group chat toggle (master kill switch for the chat:message socket event)
   groupInviterBonusCoins: 0,
   groupInviteeBonusCoins: 0,
   groupInviterBonusCapPerUserPerDay: 50,
@@ -282,6 +284,12 @@ export const GROUP_CONFIG_LABELS: Record<keyof GroupConfig, ConfigLabelMeta> = {
     label: 'Deep-Link First-Deposit Bonus',
     description: 'Bonus coins credited to a new invitee when they redeem a deep link (e.g. from WhatsApp/Telegram) AND have never made a confirmed deposit. Caps at one-time-per-user via the absence of any prior `group_invite_first_deposit` row. Set to 0 to disable. Defaults to 5 coins.',
     unit: 'coins', min: 0, max: 100, type: 'number',
+    category: 'Group Play',
+  },
+  groupChatEnabled: {
+    label: 'In-Group Chat',
+    description: 'When enabled, members can send chat:message events inside a group room. When disabled, the server returns group:error{CHAT_DISABLED} for every chat:message regardless of sender. Default false so chat is opt-in during Phase A smoke.',
+    type: 'boolean',
     category: 'Group Play',
   },
   groupInviterBonusCoins: {

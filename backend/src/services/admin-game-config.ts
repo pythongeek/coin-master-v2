@@ -76,6 +76,7 @@ export interface GameConfig {
   groupMinUserDepositHistory: number;
   groupLeaderboardEnabled: boolean;
   groupDeepLinkFirstDepositBonus: number;
+  groupChatEnabled: boolean;
   // Stake caps
   groupDefaultContributionMin: number;
   groupDefaultContributionMax: number;
@@ -319,7 +320,8 @@ export const GAME_DEFAULT_CONFIG: Partial<GameConfig> = {
   groupAbsoluteMaxMembers: 10,
   groupMinUserDepositHistory: 50,
   groupLeaderboardEnabled: true,
-  groupDeepLinkFirstDepositBonus: 5, // gap6: $50 lifetime deposits
+  groupDeepLinkFirstDepositBonus: 5,
+  groupChatEnabled: false, // gap6: $50 lifetime deposits
   groupDefaultContributionMin: 0.10,
   groupDefaultContributionMax: 10000,
   groupAbsolutePoolCap: 50000,

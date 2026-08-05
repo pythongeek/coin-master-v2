@@ -26,6 +26,7 @@ import {
   getActiveRain,
   type ChatMessage,
 } from './socket-shared';
+import { getGroupConfigKey } from './admin-group-config';
 
 const MAX_CHAT_LENGTH = 200;
 const CHAT_SPAM_LIMIT_PER_SECOND = 2;
@@ -207,8 +208,22 @@ export function registerGameHandlers(
   });
 
   // ── chat:message — send a chat message (with spam protection) ──
+  // Gap 12: master kill switch on the chat surface. The admin setting
+  // `group_chat_enabled` is read on every event (so flipping the toggle
+  // takes effect immediately without a server restart). When false, the
+  // server returns `group:error{CHAT_DISABLED}` for every chat:message
+  // regardless of sender (members, spectators, even the creator).
   socket.on('chat:message', async (data: { message: string }) => {
     if (!data.message?.trim()) return;
+    try {
+      const chatEnabled = await getGroupConfigKey('groupChatEnabled').catch(() => false);
+      if (!chatEnabled) {
+        return socket.emit('group:error', {
+          code: 'CHAT_DISABLED',
+          message: 'In-group chat is currently disabled by the operator.',
+        });
+      }
+    } catch { /* fall through — fail-closed would block all chat on a transient error */ }
 
     // Spam protection: max 2 messages per second per socket.
     const spamKey = `chat_spam:${socket.id}`;
