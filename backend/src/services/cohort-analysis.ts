@@ -208,6 +208,87 @@ export async function assignCohortsForAllUsers(lookbackDays: number): Promise<{
   return { scanned, cohortsTouched: groups.size };
 }
 
+// ── Gap 8: Group-Play cohorts ───────────────────────────────
+// Two synthetic cohorts derived from `group_bet_member` and `fraud_signals`:
+//   1. `group_active_7d` — every user_id with a group_bet_member row in the
+//      last 7 days. `cohort_features_hash` is the 0x7d-prefixed literal
+//      so it doesn't collide with the country/kyc/age/device hash from
+//      `assignCohortsForAllUsers`.
+//   2. `group_fraud_signal_30d` — every `creator_id` whose rooms have at
+//      least one fraud_signals row in the last 30 days.
+//
+// These cohorts feed the weekly outlier detector (`detectAndPersistOutliers`)
+// and the admin overview (`/api/admin/cohorts/overview`).
+//
+// Returns: { assigned, totalActive, totalFraud } so the cron tick can log it.
+export async function assignGroupCohorts(lookbackDays = 7, fraudLookbackDays = 30): Promise<{
+  assigned: number;
+  totalActive: number;
+  totalFraud: number;
+}> {
+  // ── Cohort 1: group_active_7d ───────────────────────────────
+  // DISTINCT user_ids who joined a group in the last `lookbackDays`.
+  const activeRows = (await query(
+    `SELECT DISTINCT m.user_id::text AS user_id
+       FROM group_bet_member m
+       JOIN group_bet g ON g.id = m.group_id
+      WHERE m.joined_at >= NOW() - ($1 || ' days')::interval
+        AND g.is_frozen = false`,
+    [lookbackDays],
+  )).rows as Array<{ user_id: string }>;
+  const totalActive = activeRows.length;
+  const ACTIVE_HASH = '0x7d0000000000000000000000000000' + '01'.repeat(8); // 32 hex chars
+
+  // Upsert into behavioral_cohort_assignments. The ON CONFLICT DO UPDATE
+  // updates cohort_key + features_hash + cohort_size + last_assigned_at.
+  let assigned = 0;
+  for (const row of activeRows) {
+    await query(
+      `INSERT INTO behavioral_cohort_assignments
+         (user_id, cohort_key, cohort_features_hash, cohort_size, last_assigned_at)
+       VALUES ($1::uuid, $2, $3, $4, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET cohort_key = EXCLUDED.cohort_key,
+             cohort_features_hash = EXCLUDED.cohort_features_hash,
+             cohort_size = EXCLUDED.cohort_size,
+             last_assigned_at = NOW()`,
+      [row.user_id, 'group_active_7d', ACTIVE_HASH, totalActive],
+    );
+    assigned++;
+  }
+
+  // ── Cohort 2: group_fraud_signal_30d ───────────────────────
+  // DISTINCT creator_ids whose rooms have at least one fraud_signals
+  // row (via the metadata->>'groupId' link) in the last 30 days.
+  const fraudRows = (await query(
+    `SELECT DISTINCT g.creator_id::text AS creator_id
+       FROM group_bet g
+       JOIN fraud_signals f
+         ON f.metadata->>'groupId' = g.id::text
+        AND f.detected_at >= NOW() - ($1 || ' days')::interval`,
+    [fraudLookbackDays],
+  )).rows as Array<{ creator_id: string }>;
+  const totalFraud = fraudRows.length;
+  const FRAUD_HASH = '0x7d0000000000000000000000000000' + '02'.repeat(8);
+
+  for (const row of fraudRows) {
+    await query(
+      `INSERT INTO behavioral_cohort_assignments
+         (user_id, cohort_key, cohort_features_hash, cohort_size, last_assigned_at)
+       VALUES ($1::uuid, $2, $3, $4, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET cohort_key = EXCLUDED.cohort_key,
+             cohort_features_hash = EXCLUDED.cohort_features_hash,
+             cohort_size = EXCLUDED.cohort_size,
+             last_assigned_at = NOW()`,
+      [row.creator_id, 'group_fraud_signal_30d', FRAUD_HASH, totalFraud],
+    );
+    assigned++;
+  }
+
+  return { assigned, totalActive, totalFraud };
+}
+
 // ── Cohort metric aggregation ─────────────────────────────────
 
 interface UserBehaviorRow {
@@ -507,4 +588,38 @@ export function startWeeklyCohortWorker(tickMs = 60 * 60 * 1000): ReturnType<typ
   // without waiting until Sunday 04:00 UTC.
   setTimeout(() => { tick(); }, 10_000);
   return weeklyHandle;
+}
+
+// ── Gap 8: Daily group-cohort worker ─────────────────────────
+// Assigns users to the `group_active_7d` and `group_fraud_signal_30d`
+// cohorts once per day. The default 24h cadence is the same as the
+// expiry-sweep and fraud-export workers. The first tick fires
+// immediately on boot so an admin can see fresh data during a fresh
+// deploy without waiting 24h.
+let dailyGroupHandle: ReturnType<typeof setInterval> | null = null;
+export function startDailyGroupCohortWorker(tickMs = 24 * 60 * 60 * 1000): ReturnType<typeof setInterval> {
+  if (dailyGroupHandle) return dailyGroupHandle;
+  const tick = async () => {
+    try {
+      const r = await assignGroupCohorts(7, 30);
+      if (r.assigned > 0) {
+        console.log('[cohort-analysis] daily group cohorts: assigned=%d active=%d fraud=%d',
+          r.assigned, r.totalActive, r.totalFraud);
+      }
+    } catch (err) {
+      console.error('[cohort-analysis] daily group-cohort tick failed:', err instanceof Error ? err.message : err);
+    }
+  };
+  // First tick immediately on boot (don't block server start — fire-and-forget).
+  setTimeout(() => { tick(); }, 5_000);
+  dailyGroupHandle = setInterval(tick, tickMs);
+  if (typeof dailyGroupHandle.unref === 'function') dailyGroupHandle.unref();
+  return dailyGroupHandle;
+}
+export function stopDailyGroupCohortWorker(): void {
+  if (dailyGroupHandle) {
+    clearInterval(dailyGroupHandle);
+    dailyGroupHandle = null;
+    console.log('⏰ Daily group-cohort worker stopped.');
+  }
 }

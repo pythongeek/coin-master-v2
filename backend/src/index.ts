@@ -17,6 +17,7 @@ import { redis, redisHealthCheck } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
 import { startReconciliationLoop } from './services/reconciliation';
 import { groupActiveCountGauge } from './routes/metrics';
+import { startDailyGroupCohortWorker } from './services/cohort-analysis';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
@@ -310,6 +311,12 @@ async function start() {
   }
   
   startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
+
+  // Gap 8: daily group-cohort worker (Gap 8). Assigns users to the
+  // `group_active_7d` and `group_fraud_signal_30d` synthetic cohorts once
+  // per day. The cohorts feed the weekly outlier detector and the admin
+  // `/api/admin/cohorts/overview` endpoint.
+  startDailyGroupCohortWorker();
 
   // Gap 7: refresh the groupActiveCount gauge every 30s. Avoids hitting
   // the DB on every Prometheus scrape (which can be 10+/s) and ensures
