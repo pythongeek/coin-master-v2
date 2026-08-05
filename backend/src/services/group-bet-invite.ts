@@ -303,9 +303,12 @@ export async function redeemInvite(opts: RedeemOptions): Promise<RedeemOutcome> 
   const inviterB = await getGroupConfigKey('groupInviterBonusCoins').catch(() => 0);
   const inviteeB = await getGroupConfigKey('groupInviteeBonusCoins').catch(() => 0);
   const capPerDay = await getGroupConfigKey('groupInviterBonusCapPerUserPerDay').catch(() => 100);
+  const deepLinkFirstDepositBonusB = await getGroupConfigKey('groupDeepLinkFirstDepositBonus').catch(() => 5);
   const inviterBase = typeof inviterB === 'number' ? inviterB : parseFloat(String(inviterB)) || 0;
   const inviteeBase = typeof inviteeB === 'number' ? inviteeB : parseFloat(String(inviteeB)) || 0;
   const cap = typeof capPerDay === 'number' ? capPerDay : parseFloat(String(capPerDay)) || 100;
+  const deepLinkFirstDepositBonus =
+    typeof deepLinkFirstDepositBonusB === 'number' ? deepLinkFirstDepositBonusB : parseFloat(String(deepLinkFirstDepositBonusB)) || 0;
 
   // Lazy import to avoid a circular dep with join-flow
   const { joinGroupBet } = require('./group-bet-join');
@@ -319,6 +322,46 @@ export async function redeemInvite(opts: RedeemOptions): Promise<RedeemOutcome> 
     const curCount = lock.rows[0]?.redemption_count ?? 0;
     if (curCount >= link.max_redemptions) {
       throw new InviteError('invite exhausted (max redemptions reached)', 'INVITE_EXHAUSTED', 409);
+    }
+
+    // Gap 5: deep-link first-deposit bonus. A new invitee who has NEVER
+    // made a confirmed deposit earns +5 coins (configurable). The bonus
+    // is capped at one-time-per-user via the unique
+    // `metadata->>'reason' = 'group_invite_first_deposit'` check.
+    // Without this guard a user could repeatedly redeem new invite links
+    // and harvest the bonus forever. We use the same `transactions` row
+    // that already has the audit-trail + UNIQUE-style intent (we
+    // additionally check via `existingFirstDepositBonus` below).
+    const firstDepositCheck = await txQuery(
+      `SELECT 1 FROM transactions
+        WHERE user_id = $1
+          AND type = 'deposit'
+          AND status = 'confirmed'
+        LIMIT 1`,
+      [opts.inviteeUserId],
+    );
+    const hasAnyConfirmedDeposit = firstDepositCheck.rows.length > 0;
+    let isFirstDeposit = false;
+    let deepLinkFirstDepositAwarded = 0;
+    let priorDeepLinkFirstDepositBonuses: { amount: string; created_at: string }[] = [];
+    if (!hasAnyConfirmedDeposit && deepLinkFirstDepositBonus > 0) {
+      // Cap at once-per-user: read prior first-deposit bonuses of this
+      // kind and refuse if any exist.
+      const priorDeepLink = await txQuery(
+        `SELECT amount::text AS amount, created_at
+           FROM transactions
+          WHERE user_id = $1
+            AND type = 'admin_adjustment'
+            AND direction = 'credit'
+            AND metadata->>'reason' = 'group_invite_first_deposit'
+          ORDER BY created_at ASC`,
+        [opts.inviteeUserId],
+      );
+      priorDeepLinkFirstDepositBonuses = priorDeepLink.rows;
+      if (priorDeepLinkFirstDepositBonuses.length === 0) {
+        isFirstDeposit = true;
+        deepLinkFirstDepositAwarded = deepLinkFirstDepositBonus;
+      }
     }
 
     // Sum today's inviter-bonus credits (UTC date) to enforce cap
@@ -345,7 +388,7 @@ export async function redeemInvite(opts: RedeemOptions): Promise<RedeemOutcome> 
         inviterBonusCapped = true;
       }
     }
-    const inviteeBonus = inviteeBase;
+    const inviteeBonus = inviteeBase + deepLinkFirstDepositAwarded;
     const totalBonus = inviterBonus + inviteeBonus;
 
     // Credit inviter (if any bonus remains)
@@ -399,11 +442,16 @@ export async function redeemInvite(opts: RedeemOptions): Promise<RedeemOutcome> 
           inviteeBonus.toFixed(8),
           JSON.stringify({
             pool: 'group_play',
-            reason: 'group_invite_bonus',
+            reason: deepLinkFirstDepositAwarded > 0 ? 'group_invite_first_deposit' : 'group_invite_bonus',
             inviteToken: token.slice(0, 8) + '***',
             inviter: link.inviter_id,
             invitee: opts.inviteeUserId,
             groupId: link.group_id,
+            ...(deepLinkFirstDepositAwarded > 0 ? {
+              baseBonus: inviteeBase,
+              firstDepositBonus: deepLinkFirstDepositAwarded,
+              deepLink: true,
+            } : {}),
           }),
         ],
       );

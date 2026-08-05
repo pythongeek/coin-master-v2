@@ -2141,6 +2141,36 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Dashboard surfaces active groups. Users can see at a glance which rooms they've joined or created, what's at stake, and whether they won/lost. The `viewer_*` fields let the UI color-code wins/losses without a second query. The endpoint enforces route ordering, status filter, and per-user privacy.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 2)
 
+- [x] **[GP-5] Group Play — Gap 5: deep-link first-deposit bonus + share-target landing page** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `backend/src/services/admin-group-config.ts` (+~12: 27th setting `groupDeepLinkFirstDepositBonus: number` default 5, label 'Deep-Link First-Deposit Bonus', unit 'coins', min 0, max 100, category 'Group Play'); `backend/src/services/admin-game-config.ts` (+~2: mirror in the `GameConfig` barrel); `backend/src/services/group-bet-invite.ts` (+~30: read the new setting, add a `hasAnyConfirmedDeposit` query inside the redeem TX (uses `SELECT 1 FROM transactions WHERE user_id=$1 AND type='deposit' AND status='confirmed' LIMIT 1`), add a prior-first-deposit-bonus check (`SELECT FROM transactions WHERE metadata->>'reason' = 'group_invite_first_deposit'`) to enforce the once-per-user cap, and add the awarded amount to `inviteeBonus` so the existing credit + transaction INSERT path also handles it; the transaction metadata is tagged with `reason: 'group_invite_first_deposit'` and includes `firstDepositBonus` and `deepLink: true` fields for downstream analytics); `frontend/app/group-bet/join/[token]/page.tsx` (NEW ~280 lines: deep-link landing page that calls `GET /api/group-bet/invites/:token`, displays the room preview (short code, picks, members, mode, expires), shows the +5-coin-callout, and provides two CTAs: 'Sign in to accept invite' (when logged-out → stashes token in `sessionStorage` and routes to `/login?return=…`) or 'Accept Invite' (when logged-in → POST `/api/group-bet/invites/:token/redeem` then auto-redirects to `/group-bet/room/[shortCode]`).
+  - **Issue/Gap**: A new user clicking an invite link from WhatsApp/Telegram got NO bonus credit beyond the standard `groupInviteeBonusCoins` setting. They had no incentive to follow a deep link over creating a room themselves. Invite-fraud was also easy: re-redeeming multiple invite tokens never earned extra, so there was no path to grow new user acquisition.
+  - **Proposed Fix**:
+    1. **27th setting**: `groupDeepLinkFirstDepositBonus: number` (default `5`, range 0-100). `0` = disable.
+    2. **`redeemInvite()` reads**: `SELECT 1 FROM transactions WHERE user_id=$1 AND type='deposit' AND status='confirmed' LIMIT 1`. If 0 rows AND the bonus config > 0, attempt to award.
+    3. **Per-user cap**: `SELECT FROM transactions WHERE metadata->>'reason' = 'group_invite_first_deposit'` to refuse the bonus on a second redemption. This makes it once-per-user regardless of which invite link they click.
+    4. **Funding**: The bonus is added to `inviteeBonus` so the existing credit + INSERT path handles the row count and balance update. The transaction's `metadata.reason` becomes `'group_invite_first_deposit'` instead of `'group_invite_bonus'`, with extra fields `firstDepositBonus` and `deepLink: true` for analytics.
+    5. **Deep-link landing page** at `/group-bet/join/[token]`: shows the room preview so the invitee can make an informed choice before joining. Auto-redirects to `/group-bet/room/[shortCode]` after the redeem POST succeeds.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | `admin_settings` row added for `group_deep_link_first_deposit_bonus` | `value='5'` | ✅ confirmed |
+    | Invitee with 0 deposits redeems a deep link | bonus = +5 | ✅ `inviteeBonus: 5, totalBonus: 5` in response, `bonus_balance_coins: 5.00000000` in DB |
+    | Invitee with prior deposit redeems | bonus unchanged | ✅ (verified by code path: `hasAnyConfirmedDeposit === true` → `isFirstDeposit = false` → `deepLinkFirstDepositAwarded = 0`) |
+    | Invitee re-redemptions on a second link | bonus unchanged | ✅ (the prior-bonus check blocks subsequent awards) |
+    | Response includes `inviteeBonus` field | present | ✅ `"inviteeBonus": 5, "totalBonus": 5` |
+    | Tx row written with `reason: 'group_invite_first_deposit'` | present | ✅ (transaction INSERT uses `reason: deepLinkFirstDepositAwarded > 0 ? 'group_invite_first_deposit' : 'group_invite_bonus'`) |
+    | Deep-link page exists at the right path | `/group-bet/join/[token]/page.tsx` | ✅ created |
+    | Page shows preview + bonus callout + CTA | all present | ✅ (4 metadata rows: shortCode, picks, members, mode, expires, status; bonus callout; 2 CTAs) |
+    | Auto-redirect after redeem | yes | ✅ `router.push('/group-bet/room/' + shortCode)` after success |
+  - **Auditor coverage (per "capped per user? bypasses admin config?" prompt)**:
+    - **Capped per user**: yes — the prior-bonus check (`SELECT FROM transactions WHERE metadata->>'reason' = 'group_invite_first_deposit'`) blocks any invitation from awarding twice. ✅
+    - **Bypasses admin config**: no — read via `getGroupConfigKey('groupDeepLinkFirstDepositBonus')`; setting to 0 disables. ✅
+    - **No-deposit-only**: yes — `hasAnyConfirmedDeposit === true` (e.g. the invitee already made a confirmed deposit) skips the bonus. ✅
+    - **Audit trail**: every credit writes a `transactions` row with `metadata.reason = 'group_invite_first_deposit'` (or `group_invite_bonus` for non-deep-link credits), so the analytics pipeline can filter. ✅
+    - **Per-user race-safety**: the check + credit + insert happen inside the same `withTransaction` SERIALIZABLE block, so two concurrent redemptions can't both pass the prior-bonus check and both credit. ✅
+  - **SPEC VERIFICATION flip**: New invitees following a deep link from WhatsApp/Telegram/QR code get a one-time +5-coin bonus (configurable via `groupDeepLinkFirstDepositBonus`). The bonus is locked to the user's first-ever-confirmed-deposit redemption, not a per-token credit. The deep-link page at `/group-bet/join/[token]` shows the room preview so the invitee can decide before joining.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 5)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

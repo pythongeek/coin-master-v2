@@ -1,309 +1,311 @@
-/**
- * ════════════════════════════════════════════════════════════════
- *  GROUP-BET INVITE LANDING — Phase 2 / Day 12
- *  ════════════════════════════════════════════════════════════════
- *
- *  Public-ish page that consumes an invite token and renders the
- *  "You've been invited to play CryptoFlip with @creator!" summary.
- *
- *  Behaviour:
- *    - GET /api/group-bet/invites/:token   → fetch invite summary
- *    - If invalid/expired/exhausted → show reason
- *    - If valid + logged-in → show "Join now" button + auto-trigger
- *      POST /api/group-bet/invites/:token/redeem on click
- *    - If valid + not logged-in → show "Log in to redeem" CTA
- *    - On success → toast + redirect to /group-bet/room/[shortCode]
- *
- *  Route: /group-bet/join/[token]
- *  The token is a 32-char base32 URL-safe string (no dashes).
- * ════════════════════════════════════════════════════════════════
- */
-
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+/**
+ * ════════════════════════════════════════════════════════════════
+ *  /group-bet/join/[token] — Deep-link landing page (Gap 5)
+ *  ════════════════════════════════════════════════════════════════
+ *
+ *  Receives the invitee when they tap a `group_invite` link from
+ *  WhatsApp / Telegram / a QR code / etc. Flow:
+ *    1. Resolve the token via GET /api/group-bet/invites/:token
+ *    2. Display the room preview (short code, creator, pool, mode,
+ *       max members, expires_at) so the invitee can make an informed
+ *       decision before joining.
+ *    3. If logged-in: call POST /api/group-bet/invites/:token/redeem
+ *       and auto-redirect to /group-bet/room/[shortCode].
+ *    4. If not logged-in: render a sign-in CTA + keep the token in
+ *       sessionStorage so we can attach it to the next signup login.
+ */
+
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import {
-  Users,
-  Coins,
-  Crown,
-  Equal,
-  Sparkles,
-  Clock,
-  CircleDot,
-  AlertCircle,
-  CheckCircle2,
-  Loader2,
-  Copy,
-  ChevronRight,
-} from 'lucide-react';
-import { useToast } from '@/components/providers/ToastProvider';
+import { Loader2, Sparkles, ArrowRight, LogIn, Hash, Trophy, Users, Clock, AlertTriangle, Gift } from 'lucide-react';
 import { getApiBase } from '@/lib/api/base';
 
-const API = getApiBase();
+interface InvitePreview {
+  token: string;
+  groupId: string;
+  shortCode: string;
+  creatorUsername: string | null;
+  creatorId: string;
+  maxRedemptions: number;
+  redemptionsLeft: number;
+  expiresAt: string;
+  status: 'ok' | 'expired' | 'exhausted' | 'not_found' | 'joiin_failed';
+  invalidReason: 'expired' | 'exhausted' | 'not_found' | null;
+  // Optional room preview (resolved from group_bet JOIN)
+  room?: {
+    shortCode: string;
+    creatorChoice: 'heads' | 'tails';
+    perMemberStake: string;
+    currentMembers: number;
+    maxMembers: number;
+    payoutMode: 'equal' | 'proportional' | 'founder_boost';
+    turnMode: 'creator' | 'auto_on_full' | 'random_lottery';
+    expiresAt: string;
+    status: string;
+    shareUrl: string;
+  };
+}
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
   return localStorage.getItem('cf_token') || '';
 }
 
-const PAYOUT_ICON: Record<string, any> = {
-  equal: Equal,
-  proportional: Sparkles,
-  founder_boost: Crown,
-};
-const PAYOUT_LABEL: Record<string, string> = {
-  equal: 'Equal split',
-  proportional: 'Proportional',
-  founder_boost: 'Founder +10%',
-};
-
-function fmtMoney(n: number | string): string {
-  const v = typeof n === 'string' ? parseFloat(n) : n;
-  return isFinite(v) ? v.toFixed(2) : '0.00';
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return '—';
+  try { return new Date(s).toLocaleString(); } catch { return s; }
 }
 
-export default function GroupInvitePage() {
-  const router = useRouter();
-  const toast = useToast();
+function fmtMoney(s: string | number | null | undefined): string {
+  if (s === null || s === undefined) return '—';
+  const n = typeof s === 'string' ? parseFloat(s) : s;
+  if (Number.isNaN(n)) return String(s);
+  return `$${n.toFixed(2)}`;
+}
+
+function PickEmoji(side: 'heads' | 'tails'): string {
+  return side === 'heads' ? '🪙 heads' : '🎯 tails';
+}
+
+export default function DeepLinkJoinPage() {
   const params = useParams<{ token: string }>();
-  const token = params?.token || '';
+  const router = useRouter();
+  const token = (params?.token ?? '') as string;
 
-  const [invite, setInvite] = useState<any>(null);
-  const [room, setRoom] = useState<any>(null);
+  const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [errMsg, setErrMsg] = useState<string>('');
-  const [hasToken, setHasToken] = useState<boolean>(false);
+  const [err, setErr] = useState<string>('');
   const [redeeming, setRedeeming] = useState<boolean>(false);
-  const [redeemError, setRedeemError] = useState<string>('');
-  const [joined, setJoined] = useState<boolean>(false);
+  const [redeemResult, setRedeemResult] = useState<{ shortCode: string; bonus?: { inviterBonus?: number; inviteeBonus?: number; totalBonus?: number; firstDepositBonus?: number } } | null>(null);
+  const [authToken] = useState<string>(getToken());
 
-  // ── On mount: load invite summary + (if valid) the room's public preview
-  useEffect(() => {
-    if (!token || !/^[a-z0-9]{8,48}$/.test(token)) {
-      setErrMsg('Invalid invite link.');
-      setLoading(false);
-      return;
-    }
-    setHasToken(Boolean(getToken()));
-    let cancelled = false;
+  // Step 1: resolve the invite token via GET /api/group-bet/invites/:token
+  const fetchPreview = useCallback(async () => {
     setLoading(true);
-    (async () => {
-      try {
-        const r = await fetch(`${API}/group-bet/invites/${token}`);
-        const j = await r.json();
-        if (cancelled) return;
-        if (!r.ok || !j.success) {
-          setErrMsg(j.error || 'Could not load invite');
-          return;
-        }
-        setInvite(j.data);
-        if (j.data?.shortCode && j.data?.valid !== false) {
-          // Fetch public room preview for richer card
-          try {
-            const r2 = await fetch(`${API}/group-bet/by-code/${j.data.shortCode}`);
-            const j2 = await r2.json();
-            if (!cancelled && r2.ok && j2.success) setRoom(j2.data);
-          } catch {}
-        }
-      } catch (e: any) {
-        setErrMsg(e?.message || 'Unknown error');
-      } finally {
-        if (!cancelled) setLoading(false);
+    setErr('');
+    try {
+      const base = getApiBase();
+      const r = await fetch(`${base}/group-bet/invites/${encodeURIComponent(token)}`, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        setPreview({
+          token,
+          groupId: '',
+          shortCode: '',
+          creatorUsername: null,
+          creatorId: '',
+          maxRedemptions: 0,
+          redemptionsLeft: 0,
+          expiresAt: '',
+          status: j?.code === 'INVITE_EXPIRED' ? 'expired' : j?.code === 'INVITE_EXHAUSTED' ? 'exhausted' : 'not_found',
+          invalidReason: j?.code === 'INVITE_EXPIRED' ? 'expired' : j?.code === 'INVITE_EXHAUSTED' ? 'exhausted' : 'not_found',
+        });
+      } else {
+        setPreview(j.data as InvitePreview);
       }
-    })();
-    return () => { cancelled = true; };
+    } catch (e: any) {
+      setErr(e?.message || 'failed to load invite');
+    } finally {
+      setLoading(false);
+    }
   }, [token]);
 
-  // ── On click of "Join now" — POST /api/group-bet/invites/:token/redeem
-  const handleJoin = useCallback(async () => {
-    const authToken = getToken();
+  useEffect(() => {
+    if (token) fetchPreview();
+  }, [token, fetchPreview]);
+
+  // Step 3: auto-redeem. If already logged in, redeem on user action.
+  const handleRedeem = useCallback(async () => {
     if (!authToken) {
-      // Save current location so login redirects back here
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('cf_post_login_redirect', window.location.pathname);
-      }
-      router.push(`/login?redirect=/group-bet/join/${token}`);
+      // Stash token in sessionStorage so the post-signup auth can resume the redeem.
+      if (typeof window !== 'undefined') sessionStorage.setItem('pending_invite_token', token);
+      router.push(`/login?return=/group-bet/join/${encodeURIComponent(token)}`);
       return;
     }
     setRedeeming(true);
-    setRedeemError('');
     try {
-      const r = await fetch(`${API}/group-bet/invites/${token}/redeem`, {
+      const base = getApiBase();
+      const r = await fetch(`${base}/group-bet/invites/${encodeURIComponent(token)}/redeem`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
       });
       const j = await r.json();
-      if (!r.ok || !j.success) {
-        setRedeemError(j.error || `HTTP ${r.status}`);
-        return;
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setRedeemResult({
+        shortCode: j.data?.groupId ? '' : '', // filled below
+        bonus: {
+          inviterBonus: j.data?.inviterBonus,
+          inviteeBonus: j.data?.inviteeBonus,
+          totalBonus: j.data?.totalBonus,
+        },
+      });
+      // Resolve the short code via the joined room's group_identifier
+      // (the redeem response includes the groupId; we need the short code)
+      // The room is fetched by id; for brevity we route via the getGroupPreview.
+      const roomRes = await fetch(`${base}/group-bet/${encodeURIComponent(j.data?.groupId ?? '')}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const roomJ = await roomRes.json();
+      const shortCode = roomJ?.data?.shortCode ?? '';
+      // Auto-redirect per the spec: /group-bet/room/[shortCode]
+      if (shortCode) {
+        router.push(`/group-bet/room/${encodeURIComponent(shortCode)}`);
       }
-      const data = j.data;
-      toast.addToast(
-        `Joined! +${data.inviteeBonus ?? 0} bonus credited${data.totalBonus ? ` (inviter got +${data.inviterBonus})` : ''}.`,
-        'success',
-      );
-      setJoined(true);
-      // Redirect to the room after a brief celebratory moment
-      setTimeout(() => {
-        if (invite?.shortCode) {
-          router.push(`/group-bet/room/${invite.shortCode}`);
-        }
-      }, 1100);
     } catch (e: any) {
-      setRedeemError(e?.message ?? 'Network error');
+      setErr(e?.message || 'redeem failed');
     } finally {
       setRedeeming(false);
     }
-  }, [token, invite?.shortCode, router, toast]);
+  }, [authToken, router, token]);
 
-  // ── Loading state
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-surface/50 p-4 text-text-muted">
-        <Loader2 size={28} className="animate-spin mb-2" />
-        <span className="font-mono text-sm">Loading invite…</span>
-      </div>
+      <main className="min-h-screen flex items-center justify-center p-6">
+        <div className="text-text-muted font-mono text-sm flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin" />
+          Loading invite…
+        </div>
+      </main>
     );
   }
 
-  // ── Token is invalid or expired/exhausted
-  if (errMsg || !invite || invite.valid === false) {
-    const reason = invite?.reason || 'NOT_FOUND';
-    const title =
-      reason === 'EXPIRED' ? 'This invite has expired'
-      : reason === 'EXHAUSTED' ? 'This invite is fully redeemed'
-      : 'Invite not found';
-    const detail =
-      reason === 'EXPIRED' ? 'The room owner needs to send a new invite.'
-      : reason === 'EXHAUSTED' ? 'No seats left on this invite.'
-      : 'The link may be incorrect or the room no longer exists.';
+  if (err && !preview) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-surface/50 p-4">
-        <div className="glass-card p-6 max-w-md w-full text-center space-y-3">
-          <AlertCircle size={36} className="mx-auto text-amber-400" />
-          <h1 className="text-xl font-bold text-text-primary">{title}</h1>
-          <p className="text-text-muted text-sm">{detail}</p>
-          <Link href="/group-bet/lobby" className="inline-flex items-center gap-1 px-4 py-2 rounded-lg border border-brand-green/60 bg-brand-green/10 text-brand-green">
-            Browse lobby <ChevronRight size={14} />
-          </Link>
+      <main className="min-h-screen flex items-center justify-center p-6">
+        <div className="glass-card max-w-md w-full p-6 rounded-xl border border-brand-red/30 bg-brand-red/5">
+          <h1 className="text-lg font-mono font-bold text-brand-red mb-2">Invite error</h1>
+          <p className="text-sm text-text-secondary">{err}</p>
+          <Link href="/dashboard" className="mt-4 inline-block text-xs font-mono text-brand-info hover:underline">← Back to dashboard</Link>
         </div>
-      </div>
+      </main>
     );
   }
 
-  // ── Valid invite — render the summary card
-  const expiry = invite.expiresAt ? new Date(invite.expiresAt) : null;
-  const expMins = expiry ? Math.max(0, Math.floor((expiry.getTime() - Date.now()) / 60000)) : null;
+  if (!preview) return null;
 
+  // Invalid invite: expired / exhausted / not_found
+  if (preview.status !== 'ok') {
+    const msg = preview.status === 'expired' ? 'This invite has expired.'
+      : preview.status === 'exhausted' ? 'This invite has reached its maximum redemptions.'
+      : 'This invite is invalid or no longer available.';
+    return (
+      <main className="min-h-screen flex items-center justify-center p-6">
+        <div className="glass-card max-w-md w-full p-6 rounded-xl border border-amber-500/30 bg-amber-500/5">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle size={18} className="text-amber-400" />
+            <h1 className="text-lg font-mono font-bold text-amber-400">Invite unavailable</h1>
+          </div>
+          <p className="text-sm text-text-secondary">{msg}</p>
+          <Link href="/dashboard" className="mt-4 inline-block text-xs font-mono text-brand-info hover:underline">← Back to dashboard</Link>
+        </div>
+      </main>
+    );
+  }
+
+  const room = preview.room;
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-surface/50 p-4">
-      <div className="max-w-md w-full">
-        {/* Header / brand */}
-        <div className="text-center mb-3">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-green/10 border border-brand-green/40 text-brand-green text-xs uppercase tracking-widest font-mono">
-            <Users size={14} />
-            Group Bet invite
-          </div>
+    <main className="min-h-screen flex items-center justify-center p-6">
+      <div className="glass-card max-w-md w-full p-6 rounded-xl">
+        <div className="flex items-center gap-2 mb-3">
+          <Gift size={18} className="text-brand-green" />
+          <h1 className="text-lg font-mono font-bold text-text-primary">You're invited to join</h1>
         </div>
 
-        {/* Room summary card */}
-        <div className="glass-card p-5 mb-3">
-          <div className="flex items-center gap-2 mb-2">
-            <CircleDot size={16} className="text-brand-green" />
-            <span className="font-mono font-bold text-text-primary">{invite.shortCode ?? room?.shortCode ?? '—'}</span>
-            {room && (
-              <span className="text-[10px] uppercase tracking-widest font-mono text-text-muted">
-                {room.status}
+        {room && (
+          <div className="space-y-2 mb-5">
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-text-muted flex items-center gap-1.5">
+                <Hash size={12} /> Short code
               </span>
-            )}
-          </div>
-
-          {room ? (
-            <div className="space-y-2 mb-3">
-              <div className="flex items-center gap-2">
-                {(() => {
-                  const Icon = PAYOUT_ICON[room.payoutMode] || Equal;
-                  return (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded border border-brand-info/30 text-brand-info text-[10px] uppercase tracking-widest font-mono">
-                      <Icon size={10} />
-                      {PAYOUT_LABEL[room.payoutMode] || room.payoutMode}
-                    </span>
-                  );
-                })()}
-              </div>
-              <div className="flex items-baseline gap-2">
-                <Coins size={16} className="text-brand-green" />
-                <span className="font-bold text-text-primary text-lg">{fmtMoney(room.totalPool)}</span>
-                <span className="text-xs text-text-muted">pool · {fmtMoney(room.perMemberStake)}/seat</span>
-              </div>
-              <div className="flex items-center justify-between text-xs text-text-muted">
-                <span className="font-mono">
-                  {room.currentMembers}/{room.maxMembers} joined
-                </span>
-                {expMins != null && expMins > 0 && (
-                  <span className="font-mono inline-flex items-center gap-1">
-                    <Clock size={10} />
-                    {expMins}m left
-                  </span>
-                )}
-              </div>
+              <Link href={`/group-bet/room/${room.shortCode}`} className="text-brand-info hover:underline">
+                {room.shortCode}
+              </Link>
             </div>
-          ) : (
-            <div className="text-text-muted text-xs font-mono mb-3">Room preview unavailable.</div>
-          )}
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-text-muted flex items-center gap-1.5">
+                <Sparkles size={12} /> Picks {PickEmoji(room.creatorChoice)}
+              </span>
+              <span className="text-text-primary">{fmtMoney(room.perMemberStake)} / member</span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-text-muted flex items-center gap-1.5">
+                <Users size={12} /> Members
+              </span>
+              <span className="text-text-primary">{room.currentMembers} / {room.maxMembers}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-text-muted flex items-center gap-1.5">
+                <Trophy size={12} /> Mode
+              </span>
+              <span className="text-text-primary">{room.payoutMode} / {room.turnMode}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-text-muted flex items-center gap-1.5">
+                <Clock size={12} /> Expires
+              </span>
+              <span className="text-text-primary">{fmtDate(room.expiresAt)}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs font-mono">
+              <span className="text-text-muted">Status</span>
+              <span className="text-brand-info">{room.status}</span>
+            </div>
+          </div>
+        )}
 
-          {/* reason EXPIRED/EXHAUSTED was already handled by the early-return above */}
+        <div className="border-t border-border pt-4 mb-4">
+          <p className="text-[11px] font-mono text-text-muted mb-2">
+            ✨ First-time invitee bonus: <strong className="text-brand-green">+5 coins</strong> (one-time only).
+          </p>
+          <p className="text-[11px] font-mono text-text-muted">
+            By joining, you'll be debited <strong className="text-text-primary">{fmtMoney(room?.perMemberStake)}</strong> from your balance (refundable if the group expires).
+          </p>
         </div>
 
-        {/* CTA panel */}
-        {joined ? (
-          <div className="glass-card p-4 text-center border-brand-green/40">
-            <CheckCircle2 size={32} className="mx-auto text-brand-green mb-2" />
-            <h2 className="text-text-primary font-bold mb-1">Joined! Bringing you in…</h2>
-            <p className="text-text-muted text-xs">
-              Your bonus has been credited (if admin enabled it).{room ? '' : ''}
+        {redeemResult && (
+          <div className="border border-brand-green/30 bg-brand-green/5 rounded-lg p-3 mb-3">
+            <p className="text-sm font-mono text-brand-green">
+              ✓ Joined! Routing to room…
             </p>
+            {redeemResult.bonus?.totalBonus ? (
+              <p className="text-[11px] font-mono text-text-muted mt-1">
+                Bonus: inviter +{redeemResult.bonus.inviterBonus ?? 0}, invitee +{redeemResult.bonus.inviteeBonus ?? 0}
+              </p>
+            ) : null}
           </div>
-        ) : hasToken ? (
+        )}
+
+        {authToken ? (
           <button
-            type="button"
-            onClick={handleJoin}
+            onClick={handleRedeem}
             disabled={redeeming}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-brand-green/60 bg-brand-green text-surface font-bold hover:bg-brand-green/90 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            className="w-full px-4 py-3 rounded-xl bg-brand-green text-bg-base font-mono font-semibold text-sm hover:bg-brand-green/90 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
           >
-            {redeeming ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
-            {redeeming ? 'Joining…' : 'Join now & accept invite'}
+            {redeeming ? (
+              <><Loader2 size={14} className="animate-spin" /> Redeeming…</>
+            ) : (
+              <>Accept Invite <ArrowRight size={14} /></>
+            )}
           </button>
         ) : (
-          <div className="glass-card p-4 text-center">
-            <p className="text-text-secondary text-sm mb-3">
-              Log in to join this group.
-            </p>
-            <Link
-              href={`/login?redirect=/group-bet/join/${token}`}
-              className="inline-flex items-center gap-1 px-4 py-2 rounded-lg border border-brand-green/60 bg-brand-green/10 text-brand-green font-bold"
-            >
-              Log in to join
-              <ChevronRight size={14} />
-            </Link>
-          </div>
+          <Link
+            href={`/login?return=/group-bet/join/${encodeURIComponent(token)}`}
+            className="w-full px-4 py-3 rounded-xl bg-brand-info text-bg-base font-mono font-semibold text-sm hover:bg-brand-info/90 transition-all flex items-center justify-center gap-2"
+          >
+            <LogIn size={14} /> Sign in to accept invite
+          </Link>
         )}
 
-        {/* Error message after failed redeem */}
-        {redeemError && (
-          <div className="glass-card p-3 mt-3 border-rose-500/40 text-rose-400 text-xs">
-            <AlertCircle size={14} className="inline mr-1" />
-            {redeemError}
-          </div>
-        )}
-
-        <p className="text-center text-[10px] text-text-muted font-mono mt-3">
-          Don't share this invite beyond your friends — each redemption seat is one-of-a-kind.
+        <p className="text-[10px] font-mono text-text-muted text-center mt-3">
+          Inviter: <span className="text-text-secondary">{preview.creatorUsername ?? preview.creatorId.slice(0, 8)}</span>
+          {' · '}
+          Redemptions left: {preview.redemptionsLeft} / {preview.maxRedemptions}
         </p>
       </div>
-    </div>
+    </main>
   );
 }

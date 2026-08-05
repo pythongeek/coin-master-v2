@@ -75,6 +75,7 @@ export interface GameConfig {
   // Eligibility gate (Gap 6) — minimum lifetime deposits (USD) to create/join
   groupMinUserDepositHistory: number;
   groupLeaderboardEnabled: boolean;
+  groupDeepLinkFirstDepositBonus: number;
   // Stake caps
   groupDefaultContributionMin: number;
   groupDefaultContributionMax: number;
@@ -317,7 +318,8 @@ export const GAME_DEFAULT_CONFIG: Partial<GameConfig> = {
   groupDefaultMaxMembers: 5,
   groupAbsoluteMaxMembers: 10,
   groupMinUserDepositHistory: 50,
-  groupLeaderboardEnabled: true, // gap6: $50 lifetime deposits
+  groupLeaderboardEnabled: true,
+  groupDeepLinkFirstDepositBonus: 5, // gap6: $50 lifetime deposits
   groupDefaultContributionMin: 0.10,
   groupDefaultContributionMax: 10000,
   groupAbsolutePoolCap: 50000,
