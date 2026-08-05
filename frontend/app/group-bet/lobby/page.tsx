@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
 import { getApiBase } from '@/lib/api/base';
+import { useGameStore } from '@/lib/store';
 
 const API = getApiBase();
 
@@ -107,6 +108,18 @@ function fmtRelativeTime(iso: string): string {
 export default function GroupBetLobbyPage() {
   const router = useRouter();
   const toast = useToast();
+  // Gap 17: pull country from the game store so the lobby knows the
+  // user's current ISO 3166 country code. We then derive:
+  //   - viewerCountry → sent to /api/group-bet/lobby so the server
+  //     filters rooms (server-side filter is the source of truth).
+  //   - userIsBlocked → if the user's country doesn't fall in the
+  //     locally-known allow list (we treat `'*'` as "everyone").
+  //   - restrictedCountry → if user.country is set AND not in the
+  //     allowlist; we render the "🌍 Restricted country" banner
+  //     and disable the Join buttons on every card.
+  const storeUser = useGameStore((s: any) => s.user);
+  const userCountry: string = (storeUser?.country || '').toUpperCase().trim();
+  const [allowedCountries, setAllowedCountries] = useState<string[]>(['*']);
   const [hasToken, setHasToken] = useState<boolean>(false);
 
   const [filters, setFilters] = useState<{
@@ -129,10 +142,32 @@ export default function GroupBetLobbyPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [errMsg, setErrMsg] = useState<string>('');
 
-  // ── Auth gate on mount ──────────────────────────────────────────
+  // ── Auth gate + country allowlist boot on mount ──────────────
   useEffect(() => {
     setHasToken(Boolean(getToken()));
+    // Fetch the public group-admin config once. This avoids hard-coding
+    // the allowlist on the client (the server is authoritative, but
+    // the client-side filter + badge need the same value). The endpoint
+    // lives at /api/public (no auth required, no admin prefix).
+    fetch(`${API.replace(/\/group-bet$/, '')}/public`)
+      .then((r) => r.json().catch(() => null))
+      .then((j) => {
+        const v = j?.data?.groupPlayAllowedCountries ?? j?.groupPlayAllowedCountries;
+        if (typeof v === 'string') {
+          setAllowedCountries(
+            v.split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean),
+          );
+        }
+      })
+      .catch(() => {}); // best-effort; UI graceful-degrades to "*"
   }, []);
+
+  // Compute the country-restriction flag. `*` means everyone is allowed.
+  const userIsBlocked =
+    userCountry.length > 0 &&
+    !allowedCountries.includes('*') &&
+    !allowedCountries.includes(userCountry);
+  const restrictedCountry = userCountry.length > 0 && (userIsBlocked || userCountry !== '');
 
   // ── Fetch all 3 endpoints in parallel ────────────────────────────
   const fetchAll = useCallback(async () => {
@@ -144,6 +179,10 @@ export default function GroupBetLobbyPage() {
       ...(filters.payoutMode ? { payoutMode: filters.payoutMode } : {}),
       ...(filters.minPool ? { minPool: filters.minPool } : {}),
       ...(filters.maxPool ? { maxPool: filters.maxPool } : {}),
+      // Gap 17: server-side country filter. Sent as a query param so
+      // the server's listOpenGroups() can cross-check the allowlist
+      // and exclude rooms the user shouldn't see.
+      ...(userCountry ? { viewerCountry: userCountry } : {}),
     });
     const token = getToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
@@ -320,6 +359,28 @@ export default function GroupBetLobbyPage() {
             {loading && <Loader2 size={14} className="text-text-muted animate-spin" />}
           </div>
 
+          {/* Gap 17: surface the country restriction as a clear banner.
+              The server already filtered out rooms, but we render this
+              so the user understands why their list is empty / short. */}
+          {userCountry && userIsBlocked && (
+            <div className="mb-3 p-3 rounded-lg border border-amber-500/40 bg-amber-500/5 flex items-start gap-2">
+              <span className="text-amber-400 text-lg leading-none">🌍</span>
+              <div className="flex-1">
+                <p className="text-sm font-mono text-amber-300">
+                  <strong>Restricted country</strong> ({userCountry})
+                </p>
+                <p className="text-[11px] font-mono text-text-muted mt-0.5">
+                  Your region is not in the operator-configured allowlist
+                  (
+                  {allowedCountries.includes('*')
+                    ? '*'
+                    : allowedCountries.join(', ')}
+                  ). Rooms are hidden and Joining is disabled.
+                </p>
+              </div>
+            </div>
+          )}
+
           {lobby.rooms.length === 0 && !loading && (
             <div className="glass-card p-6 text-center text-text-muted font-mono text-sm">
               No rooms match your filters.{' '}
@@ -335,7 +396,19 @@ export default function GroupBetLobbyPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {lobby.rooms.map((room) => (
-              <RoomCard key={room.id} room={room} authed={hasToken} onClick={() => router.push(`/group-bet/room/${room.shortCode}`)} />
+              <RoomCard
+                key={room.id}
+                room={room}
+                authed={hasToken}
+                disabled={userIsBlocked}
+                onClick={() => {
+                  // Gap 17: don't navigate to a room if the user is
+                  // country-blocked. The server enforces this too, but
+                  // we don't want to even load the room page.
+                  if (userIsBlocked) return;
+                  router.push(`/group-bet/room/${room.shortCode}`);
+                }}
+              />
             ))}
           </div>
 
@@ -425,19 +498,23 @@ export default function GroupBetLobbyPage() {
 }
 
 // ─── Room card ───────────────────────────────────────────────────────
-function RoomCard({ room, authed, onClick }: { room: LobbyRoom; authed: boolean; onClick: () => void }) {
+function RoomCard({ room, authed, disabled, onClick }: { room: LobbyRoom; authed: boolean; disabled?: boolean; onClick: () => void }) {
   const Icon = payoutIcon(room.payoutMode);
   const seatsLeft = Math.max(0, room.maxMembers - room.currentMembers);
   const isFull = seatsLeft === 0;
   const almostFull = !isFull && seatsLeft <= Math.max(1, Math.floor(room.maxMembers / 3));
+  // Gap 17: country-blocked users see the card grayed out and cannot click.
+  const isBlocked = !!disabled;
+  const isUnclickable = isFull || isBlocked;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={isFull}
+      disabled={isUnclickable}
+      title={isBlocked ? 'Group play is restricted in your country' : undefined}
       className={`text-left glass-card p-3 hover:border-brand-green/40 transition relative ${
-        isFull ? 'opacity-60 cursor-not-allowed' : 'hover:bg-surface/40'
+        isUnclickable ? 'opacity-60 cursor-not-allowed' : 'hover:bg-surface/40'
       }`}
     >
       {/* header row */}
@@ -445,8 +522,15 @@ function RoomCard({ room, authed, onClick }: { room: LobbyRoom; authed: boolean;
         <span className="font-mono text-xs text-text-secondary">
           <span className="text-text-primary font-bold">{room.shortCode}</span>
         </span>
-        <span className="text-[10px] uppercase tracking-widest font-mono text-text-muted">
-          {room.status}
+        <span className="flex items-center gap-1.5">
+          {isBlocked && (
+            <span className="flex items-center gap-1 px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-400 text-[10px] uppercase tracking-widest font-mono">
+              🌍 Restricted
+            </span>
+          )}
+          <span className="text-[10px] uppercase tracking-widest font-mono text-text-muted">
+            {room.status}
+          </span>
         </span>
       </div>
 

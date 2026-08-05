@@ -107,6 +107,7 @@ export default function AdminLoginPage() {
         walletAddress: user.walletAddress,
         isFlagged: user.isFlagged ?? false,
         email: user.email,
+        country: user.country ?? '',
       },
       token,
     });

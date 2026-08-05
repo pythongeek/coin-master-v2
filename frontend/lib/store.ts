@@ -24,6 +24,8 @@ export interface User {
   walletAddress?: string;
   isFlagged?: boolean;
   email?: string;
+  /** ISO 3166-1 alpha-2 country code (e.g. 'BD', 'KP'). Empty string if unknown. */
+  country?: string;
 }
 
 export interface BetResult {

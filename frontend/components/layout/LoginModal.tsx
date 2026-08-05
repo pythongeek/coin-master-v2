@@ -53,6 +53,7 @@ export default function LoginModal({ onClose }: Props) {
       walletAddress: data.user.walletAddress as string | undefined,
       isFlagged:     (data.user.isFlagged as boolean) || false,
       email:         data.user.email as string | undefined,
+      country:       (data.user.country as string | undefined) || '',
     };
 
     storeToken(data.token);

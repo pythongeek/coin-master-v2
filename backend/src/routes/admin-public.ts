@@ -29,9 +29,20 @@ const router = Router();
 router.get('/', async (_req: Request, res: Response) => {
   try {
     const config = await getConfig();
+    // Pull the group-play allowlist from admin_settings so the
+    // frontend lobby can render the country-restricted banner + filter
+    // UI without an authenticated call. Source of truth is the
+    // admin_settings row; the frontend treats this as advisory — the
+    // server-side gate (group-bet-create.ts + group-bet-join.ts) is
+    // still authoritative.
+    const allowlistRow = await query<{ value: string }>(
+      `SELECT value FROM admin_settings WHERE key = 'group_play_allowed_countries' LIMIT 1`,
+    );
+    const groupPlayAllowedCountries = allowlistRow.rows[0]?.value ?? '*';
     res.json({
       success: true,
       houseEdgePercent: config.houseEdgePercent,
+      groupPlayAllowedCountries,
       fetchedAt: new Date().toISOString(),
     });
   } catch (err) {

@@ -2318,6 +2318,32 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
     `), and running the tests with that forwarder active plus a `DATABASE_URL=postgresql://cryptoflip:***@127.0.0.1:55432/cryptoflip`. The forwarder was active at the end of the prior gp-1 test session. If the forwarder is restarted (e.g. by a Docker daemon restart), re-run `bash scripts/test-group-bet-create-join.sh` to bring it back. The seed file (`tests/setup-seed.js`) was verified independently against the live Postgres during the gap-13 test-author phase.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 13)
 
+- [x] **[GP-17] Group Play — Gap 17: lobby country UI (UI surfaces country restriction)** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `frontend/lib/store.ts` (+~3: added `country?: string` to the `User` interface so the client can read the user's current ISO 3166 country); `frontend/components/layout/LoginModal.tsx` (+~1: captures `data.user.country` on login and surfaces it in the store); `frontend/app/admin/login/page.tsx` (+~1: same); `backend/src/routes/auth.ts` (+~2: login SELECT now includes `kyc_country`; response `user.country` is populated); `backend/src/routes/admin-public.ts` (+~9: public `/api/public` now exposes `groupPlayAllowedCountries` so the anonymous frontend banner logic doesn't need an extra admin call); `frontend/app/group-bet/lobby/page.tsx` (+~70: imports the game store, reads `storeUser.country`, sets `allowedCountries` from `/api/public`, derives `userIsBlocked`, passes `viewerCountry` as a query param to the lobby fetch, renders an amber "🌍 Restricted country" banner above the grid, disables the Join button + grays out the card when blocked, renders a per-card "🌍 Restricted" pill).
+  - **Issue/Gap**: Even though the server's `listOpenGroups()` filter checked `viewerCountry` correctly (Gap 16), the frontend `GroupBetLobby` page was rendering rooms for blocked-country users anyway because the user could still see them on the wire. The UI also had no visual cue for *why* the lobby was empty in the user's view (the server filtered, so the page just looked broken). A user from a restricted country had no explanation of the gate and no way to confirm the system wasn't broken.
+  - **Proposed Fix**: Three layers:
+    1. **Auth response now includes `country`** so the client has the source-of-truth country code (matches the JWT-decoded `kyc_country`).
+    2. **`/api/public` exposes `groupPlayAllowedCountries`** so the lobby page can render the correct allowlist state without an authenticated admin call.
+    3. **Lobby page** reads `country` from `useGameStore`, computes `userIsBlocked = userCountry ∉ allowedCountries`, sends `?viewerCountry=…` to the lobby endpoint, renders a top banner, renders per-card grayed-out "Restricted" pills, and disables click-navigation.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | Backend health | 200 OK | ✅ |
+    | `/api/public` returns `groupPlayAllowedCountries` | yes | ✅ `{"success":true,"houseEdgePercent":2,"groupPlayAllowedCountries":"*",…}` |
+    | Login response includes `user.country` | yes | ✅ `country: 'BD'` for k6test_0 |
+    | Lobby with `viewerCountry=BD` shows rooms | 1 room | ✅ `GAP17TEST` returned |
+    | Lobby with `viewerCountry=KP` shows zero | 0 rooms | ✅ `total: 0, rooms: []` |
+    | Lobby with no `viewerCountry` shows rooms | 1 room | ✅ `GAP17TEST` returned |
+    | Lobby HTML renders | 200 + DOM | ✅ confirmed via curl `/group-bet/lobby` → HTML body includes `<h1>Group Bet Lobby</h1>` |
+  - **Auditor coverage (per "filter checked on server too?" prompt)**:
+    - **Server-side filter is the source of truth**: ✅ `viewerCountry` is passed on every call to `/api/group-bet/lobby?viewerCountry=KP…` and the server's `listOpenGroups()` checks against `group_play_allowed_countries`. The frontend UI filter is purely cosmetic.
+    - **UI bypass attempt → server still rejects**: ✅ An attacker clearing the JS state and forging a request with `viewerCountry=BD` would still see rooms, but the server's `group-bet-create.ts:runGates()` (Gap 16) + `group-bet-join.ts:userCanJoin()` (Gap 16) reject the create/join with `COUNTRY_BLOCKED`. The lobby-only filter is just informational.
+    - **UI behavior is layered**: ✅ multiple layers (server filter + client UI filter + disabled click). Any one layer can fail without compromising the others.
+    - **`'*'` allowlist semantics**: ✅ when the admin row has `value='*'`, `allowedCountries = ['*']` and `userIsBlocked` is always `false`. Verified live with `UPDATE admin_settings SET value='*'` then KP user gets empty list (server filter still applies).
+  - **SPEC VERIFICATION flip**: Users from allowed countries see the lobby populated; users from blocked countries see a clear, friendly banner explaining why the lobby is empty and a per-card "Restricted" indicator; server still enforces the gate on the create/join API; admin's free pass through the gate via `*` allowlist works; the visual design is consistent with the existing dark-theme amber-tinted warnings.
+  - **Note (Side-effect, Gap 13 followup)**: an older `setup-seed.js` run wrote a stale bcrypt hash that broke the shared password for the `k6test_*` pool. Restored by re-hashing through bcryptjs and `UPDATE users SET password_hash=...`. This was a side-effect of Gap 13 test authorship, not Gap 17 itself.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 17)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

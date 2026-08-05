@@ -338,7 +338,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
     const { username, password } = req.body;
 
     const result = await query(
-      'SELECT id, username, email, password_hash, balance, is_admin, role, two_factor_enabled FROM users WHERE username = $1 AND is_active = true',
+      'SELECT id, username, email, password_hash, balance, is_admin, role, two_factor_enabled, kyc_country FROM users WHERE username = $1 AND is_active = true',
       [username]
     );
 
@@ -403,6 +403,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
         email: user.email,
         balance: parseFloat(user.balance),
         isAdmin: user.is_admin,
+        country: user.kyc_country || '',
       },
     });
   } catch (err: unknown) {
