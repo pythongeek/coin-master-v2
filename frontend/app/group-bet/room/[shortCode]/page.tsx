@@ -16,7 +16,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -72,6 +72,16 @@ export default function GroupRoomPage() {
   const [joined, setJoined] = useState<boolean>(false);
   const [showShare, setShowShare] = useState<boolean>(false);
 
+  // Gap 11: spectator state. isSpectating=true means we called
+  // GET /:id/spectate on mount and we'll call POST /:id/spectate/leave
+  // on unmount. isMember is false → we should spectate, true → no need.
+  const [isSpectating, setIsSpectating] = useState<boolean>(false);
+  const [isMember, setIsMember] = useState<boolean>(false);
+  const [spectatorCount, setSpectatorCount] = useState<number>(0);
+  // Module-level so the leave-cleanup can fire even if `room` is stale.
+  // (We bind by shortCode instead of by room.id to dodge UUID churn.)
+  const spectatedShortCodeRef = useRef<string>('');
+
   useEffect(() => {
     setHasToken(Boolean(getToken()));
     // Try to extract userId from localStorage (cf_user) — optional
@@ -87,6 +97,12 @@ export default function GroupRoomPage() {
         const r = await fetch(`${API}/group-bet/by-code/${shortCode}`);
         const j = await r.json();
         if (cancelled) return;
+        // Detect membership from the by-code response if it includes members
+        const membersList: any[] = Array.isArray(j?.data?.members) ? j.data.members : [];
+        const myId = (() => { try { return JSON.parse(localStorage.getItem('cf_user') || '{}').userId || ''; } catch { return ''; } })();
+        if (myId && membersList.some((m: any) => m.user_id === myId || m.userId === myId)) {
+          setIsMember(true);
+        }
         if (!r.ok || !j.success) {
           setErrMsg(j.error || 'Room not found');
           return;
@@ -100,6 +116,53 @@ export default function GroupRoomPage() {
     })();
     return () => { cancelled = true; };
   }, [shortCode]);
+
+  // Gap 11: register the tab as a spectator when the user is NOT a member.
+  // The leave-cleanup fires on unmount OR shortCode change, and decrements
+  // spectator_count atomically. Safe to re-call on rapid remounts because
+  // the server uses `WHERE spectator_count > 0`.
+  useEffect(() => {
+    if (!shortCode) return;
+    if (isMember) return;          // members don't count as spectators
+    let aborted = false;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/group-bet/${encodeURIComponent(shortCode)}/spectate`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const j = await r.json();
+        if (aborted || !r.ok || !j.success) return;
+        setIsSpectating(true);
+        setSpectatorCount(typeof j.data?.spectator_count === 'number' ? j.data.spectator_count : 0);
+        spectatedShortCodeRef.current = shortCode;
+      } catch {
+        // Best-effort: socket rooms still work, the counter just doesn't move.
+      }
+    })();
+    return () => {
+      if (spectatedShortCodeRef.current) {
+        const toLeave = spectatedShortCodeRef.current;
+        spectatedShortCodeRef.current = '';
+        // best-effort, fire-and-forget on unmount
+        try {
+          const send = navigator.sendBeacon
+            ? navigator.sendBeacon(
+                `${API}/group-bet/${encodeURIComponent(toLeave)}/spectate/leave`,
+                new Blob(['{}'], { type: 'application/json' }),
+              )
+            : fetch(`${API}/group-bet/${encodeURIComponent(toLeave)}/spectate/leave`, {
+                method: 'POST',
+                keepalive: true,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+              });
+          void send;
+        } catch {}
+      }
+      setIsSpectating(false);
+    };
+  }, [shortCode, isMember]);
 
   const handleJoin = async () => {
     if (!hasToken) {
@@ -173,6 +236,16 @@ export default function GroupRoomPage() {
             <div className="flex items-center gap-2">
               <span className="font-mono font-bold text-text-primary">{room.shortCode}</span>
               <span className="text-[10px] uppercase tracking-widest font-mono text-text-muted">{room.status}</span>
+              {/* Gap 11: live spectator badge (read-only — no join) */}
+              {isSpectating && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-blue-500/30 text-blue-400 text-[10px] uppercase tracking-widest font-mono"
+                  title="You are watching this room as a spectator. The room can see you watching (count increments)."
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                  Watching live
+                </span>
+              )}
             </div>
             <span className="flex items-center gap-1 px-2 py-0.5 rounded border border-brand-info/30 text-brand-info text-[10px] uppercase tracking-widest font-mono">
               <Icon size={10} />
@@ -196,6 +269,13 @@ export default function GroupRoomPage() {
             <div className="border border-border rounded-lg p-3 bg-surface/20">
               <div className="text-[10px] uppercase tracking-widest font-mono text-text-muted">Seats left</div>
               <div className="font-bold text-text-primary text-lg">{Math.max(0, room.maxMembers - room.currentMembers)}</div>
+            </div>
+            <div className="border border-border rounded-lg p-3 bg-surface/20">
+              <div className="text-[10px] uppercase tracking-widest font-mono text-text-muted flex items-center gap-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${isSpectating ? 'bg-blue-400 animate-pulse' : 'bg-text-muted/30'}`} />
+                Spectators
+              </div>
+              <div className="font-bold text-text-primary text-lg">{spectatorCount}</div>
             </div>
           </div>
 

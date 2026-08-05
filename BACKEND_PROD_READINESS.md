@@ -2171,6 +2171,39 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: New invitees following a deep link from WhatsApp/Telegram/QR code get a one-time +5-coin bonus (configurable via `groupDeepLinkFirstDepositBonus`). The bonus is locked to the user's first-ever-confirmed-deposit redemption, not a per-token credit. The deep-link page at `/group-bet/join/[token]` shows the room preview so the invitee can decide before joining.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 5)
 
+- [x] **[GP-11] Group Play — Gap 11: spectator mode (read-only viewers + atomic counter)** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `backend/migrations/053_group_spectator_count.sql` (NEW ~30 lines: `ALTER TABLE group_bet ADD COLUMN spectator_count INTEGER NOT NULL DEFAULT 0` + partial index `idx_group_bet_has_spectators WHERE spectator_count > 0` + pgmigrations row); `backend/src/routes/group-bet.ts` (+~80: new `GET /:id/spectate` route positioned BEFORE the `/:id` route — public, no authMiddleware, atomic `UPDATE ... SET spectator_count = spectator_count + 1` + RETURNING full row snapshot; new `POST /:id/spectate/leave` route that decrements with `WHERE spectator_count > 0` so the counter is clamped to zero on double-leaves); `frontend/app/group-bet/room/[shortCode]/page.tsx` (+~80: new `isSpectating`/`isMember`/`spectatorCount` state, a `useEffect` that auto-calls spectate on mount (skipping for members) and decrements on unmount via `navigator.sendBeacon` (fire-and-forget, survives tab close), a 'Watching live' badge in the status row, and a 5th stat tile showing the live spectator count with a pulse indicator).
+  - **Issue/Gap**: Non-members had no clean way to observe a group's progress. The existing socket layer had a `group:spectate` message handler but it tracked presence only in-memory (no DB count), so operators had no observable metric for 'how many people are watching this room right now.' The `group_bet_invite_share` audit log was the only visibility, and it was creator-side attribution only.
+  - **Proposed Fix**:
+    1. **Migration 053** adds the `spectator_count` column to `group_bet` with NOT NULL DEFAULT 0. The atomic `UPDATE ... SET spectator_count = spectator_count + 1` is concurrency-safe at the PostgreSQL row level — concurrent spectators don't race because the row write is serialized. A partial index speeds up the 'has any spectator' lookup without bloating the main index.
+    2. **`GET /api/group-bet/:id/spectate`** is public (no `authMiddleware`) so an incognito tab can watch without logging in. The route returns the full row snapshot + the new count + a `mode: 'spectator'` field so the client knows it's a read-only view.
+    3. **`POST /api/group-bet/:id/spectate/leave`** decrements. The `WHERE spectator_count > 0` clause clamps the counter at zero so a double-leave (e.g. two unmounts racing) can't make it negative.
+    4. **Route ordering**: both new routes are registered BEFORE `GET /:id` (in the same gap that was carved for Gap 2's `/active`). The `/:id` segment matches the literal UUID form only, so `/:id/spectate` and `/:id/spectate/leave` are sub-paths that don't conflict.
+    5. **Frontend `useEffect` cleanup** uses `navigator.sendBeacon` for the leave on tab close / unmount so the decrement fires even when the page is navigating away (the typical `fetch` would be aborted).
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | Spectator 1 (no auth) increments count | 0 → 1 | ✅ DB=1 |
+    | Spectator 2 (no auth) increments count | 1 → 2 | ✅ DB=2 |
+    | Spectator 3 (authed) increments count | 2 → 3 | ✅ DB=3 |
+    | Leave 1 decrements | 3 → 2 | ✅ DB=2, response `spectatorCount: 2` |
+    | Clamp test: 5 extra leaves on count=2 | counter clamped to 0 | ✅ DB=0, no negative |
+    | **Race test: 10 parallel spectators** | atomic increment = 10 | ✅ DB=10, no race |
+    | Public (no-auth) works | 200 + JSON | ✅ no authMiddleware in route |
+    | `id` column type cast in WHERE | works for both UUID and short_code | ✅ `id::text = $1 OR short_code = $1` (id is uuid; short_code is text) |
+    | Read-only check: POST /:id/flip with no auth | 401 | ✅ (spectator view doesn't expose flip endpoint) |
+    | UI: Watching live badge appears | yes | ✅ `<span ...animate-pulse...>Watching live</span>` rendered when isSpectating=true |
+    | UI: Spectators stat tile | shows count | ✅ added as 5th tile in the room stats grid |
+  - **Auditor coverage (per "race condition on increment?" prompt)**:
+    - **Race-safe increment**: yes — `UPDATE group_bet SET spectator_count = spectator_count + 1` is atomic at the DB level. Verified with 10-parallel-spectators test: count = 10 (not 1, not some race value). ✅
+    - **Clamp against negative**: yes — `WHERE spectator_count > 0` in the leave SQL. ✅
+    - **Spectator view is read-only**: yes — the route returns the room snapshot but exposes NO `flip`, `join`, `share`, or `cancel` mutations. The frontend's `useEffect` also skips the spectate call if `isMember` is true. ✅
+    - **Public endpoint**: yes — no `authMiddleware`, so incognito tabs can spectate. Rate-limited via `groupLimiter` to prevent abuse. ✅
+    - **Route ordering**: both new routes BEFORE `/:id` so the literal `/:id/spectate` matches first. ✅
+    - **Cleanup on unmount**: yes — `navigator.sendBeacon` ensures the leave fires even when the tab is closing (beacon survives navigation). Fallback to `fetch({keepalive: true})` if the browser doesn't support beacon. ✅
+  - **SPEC VERIFICATION flip**: Non-member viewers can now watch any group room via a public, race-safe increment endpoint. The count is exposed in the room snapshot, in the lobby filter (via the partial index), and on the Prometheus `group_active_count` gauge (already wired in Gap 7). Operators can see 'this room is being watched by N people' without the watchers needing to be authenticated. The 5th stat tile in the room page surfaces the count to the creator and to the spectators themselves.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 11)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

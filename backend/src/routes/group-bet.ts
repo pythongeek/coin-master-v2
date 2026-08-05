@@ -474,6 +474,79 @@ router.get(
   },
 );
 
+// ─── Gap 11: GET /api/group-bet/:id/spectate — non-member viewer
+// CRITICAL: must be registered BEFORE `GET /:id` so the literal
+// `/:id/spectate` path matches first (Express matches routes by
+// registration order). The endpoint is PUBLIC (no auth) so an
+// incognito tab can watch without logging in. The increment is
+// atomic at the DB row level (UPDATE group_bet SET
+// spectator_count = spectator_count + 1) — concurrent spectators
+// don't race because PostgreSQL serializes the row write.
+router.get(
+  '/:id/spectate',
+  // No authMiddleware — public, by design.
+  groupLimiter,
+  validateParams(idParamSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      // Atomic increment + return the new count + a read-only snapshot
+      const r = await query<any>(
+        `UPDATE group_bet
+            SET spectator_count = spectator_count + 1
+          WHERE id::text = $1 OR short_code = $1
+        RETURNING id, short_code, status, is_frozen,
+                  creator_id, creator_choice, total_pool::text AS total_pool,
+                  current_members, max_members, payout_mode, turn_mode,
+                  expires_at, spectator_count`,
+        [id],
+      );
+      if (!r.rows.length) {
+        return res.status(404).json({ success: false, error: 'group not found', code: 'GROUP_NOT_FOUND' });
+      }
+      return res.status(200).json({
+        success: true,
+        data: {
+          mode: 'spectator',
+          ...r.rows[0],
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// POST /api/group-bet/:id/spectate/leave — decrement on tab close /
+// component unmount. Decrement is bounded by `WHERE spectator_count > 0`
+// so the counter never goes negative (defensive against double-leaves).
+router.post(
+  '/:id/spectate/leave',
+  groupLimiter,
+  validateParams(idParamSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const r = await query<any>(
+        `UPDATE group_bet
+            SET spectator_count = spectator_count - 1
+          WHERE (id::text = $1 OR short_code = $1)
+            AND spectator_count > 0
+        RETURNING spectator_count`,
+        [id],
+      );
+      return res.status(200).json({
+        success: true,
+        data: {
+          spectatorCount: r.rows[0]?.spectator_count ?? 0,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
 // ─── 6. GET /api/group-bet/:id — full view (joined members see all) ─
 router.get(
   '/:id',
