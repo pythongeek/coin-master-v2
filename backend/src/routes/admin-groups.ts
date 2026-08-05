@@ -33,13 +33,9 @@ import { adminLimiter } from '../middleware/rate-limiter';
 import { validateBody, validateParams } from '../middleware/validation';
 import { creditPayout } from '../services/bonus';
 import { transitionGroupStatus, GroupBetTransitionError } from '../services/group-bet-state';
-import {
-  evaluateOnJoin,
-  evaluateOnFlip,
-  recordAdminForce,
-  listGroupFraudSignals,
-} from '../services/group-bet-fraud';
+import { evaluateOnJoin, evaluateOnFlip, recordAdminForce, listGroupFraudSignals } from '../services/group-bet-fraud';
 import { groupAdminActionsTotal } from './metrics';
+import { getGroupConfigKey } from '../services/admin-group-config';
 
 const router = Router();
 
@@ -202,6 +198,83 @@ router.get(
         [...params, limit, offset],
       );
       return res.status(200).json({ success: true, data: r.rows, limit, offset });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+// ─── 11b. GET /api/admin/groups/leaderboard (Gap 3) ────────
+// Returns the top-50 members by group-bet winnings (payout_amount) over
+// the last 7 days. Scoped to a 7-day window so we don't leak historic
+// data. Reads from `group_bet_member.payout_amount` (already populated
+// by flipGroup during the resolve path) — no separate aggregation pass.
+//
+// Respects the `groupLeaderboardEnabled` admin-config: if disabled,
+// returns the empty list (the UI hides the tab in this case).
+//
+// `winnings` here = sum of payout_amount from resolved groups in the
+// window. We deliberately do not include stake (only payout), since
+// the leaderboard is a WIN leaderboard, not a wager-volume leaderboard.
+router.get(
+  '/leaderboard',
+  adminLimiter,
+  authMiddleware,
+  roleMiddleware(['super_admin', 'support', 'finance', 'auditor']),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      // Honor the 26th admin setting: disabled by default is false,
+      // so the operator must explicitly set 0/false to suppress.
+      const enabled = await getGroupConfigKey('groupLeaderboardEnabled').catch(() => true);
+      if (!enabled) {
+        return res.status(200).json({ success: true, data: [], leaderboardEnabled: false, limit: 0 });
+      }
+
+      // 7-day window + last 50 ranked by winnings DESC
+      const r = await query<any>(
+        `WITH ranked AS (
+           SELECT
+             m.user_id,
+             u.username,
+             SUM(COALESCE(m.payout_amount, 0))::numeric(18,8) AS winnings,
+             COUNT(*)::int AS rooms_won,
+             SUM(COALESCE(m.stake, 0))::numeric(18,8) AS total_stake
+           FROM group_bet_member m
+           JOIN group_bet g ON g.id = m.group_id
+           JOIN users u ON u.id = m.user_id
+          WHERE g.status = 'resolved'
+            AND g.resolved_at >= NOW() - INTERVAL '7 days'
+            AND m.payout_amount > 0
+            AND g.is_frozen = false
+          GROUP BY m.user_id, u.username
+         HAVING SUM(COALESCE(m.payout_amount, 0)) > 0
+         ORDER BY winnings DESC
+         LIMIT 50
+         )
+         SELECT
+           ROW_NUMBER() OVER (ORDER BY winnings DESC)::int AS rank,
+           user_id, username,
+           winnings::text AS winnings,
+           rooms_won, total_stake::text AS total_stake
+         FROM ranked`,
+      );
+
+      const data = r.rows.map((row: any) => ({
+        rank: row.rank,
+        userId: row.user_id,
+        username: row.username,
+        winnings: parseFloat(row.winnings),
+        roomsWon: row.rooms_won,
+        totalStake: parseFloat(row.total_stake),
+      }));
+
+      return res.status(200).json({
+        success: true,
+        data,
+        leaderboardEnabled: true,
+        window: '7 days',
+        limit: data.length,
+      });
     } catch (e) {
       next(e);
     }

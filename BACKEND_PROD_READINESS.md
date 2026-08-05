@@ -2082,6 +2082,35 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Group play is now fully observable in Prometheus. The 9 metrics together enable: capacity dashboards (active count + pool size distribution), fraud alerting (fraud signals by type), operator abuse detection (admin actions), performance SLA monitoring (flip duration percentiles), and product analytics (which payout_mode / turn_mode combinations are popular). All metrics are exposed via the existing `/metrics` endpoint with the IP-allowlist protection from P1-06.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 7)
 
+- [x] **[GP-3] Group Play — Gap 3: group-bet leaderboard endpoint + UI sub-tab** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `backend/src/services/admin-group-config.ts` (+~4: 26th setting `groupLeaderboardEnabled: boolean`, default `true`, type='boolean', category='Group Play'); `backend/src/services/admin-game-config.ts` (+~2: mirror in the `GameConfig` barrel so the admin UI sees it); `backend/src/routes/admin-groups.ts` (+~75: new `GET /api/admin/groups/leaderboard` route; positioned BEFORE `/:id` route so the literal `leaderboard` segment doesn't get caught by the param route. Uses a CTE + ROW_NUMBER to rank by SUM(payout_amount) over the 7-day window); `backend/src/services/leaderboard.ts` (+~50: `getLeaderboard()` now UNION ALL's solo bets with `group_bet_member` stakes (when `groupLeaderboardEnabled`) using a CTE tagged with a `source` column, and the row mapping includes the new `groupBets` and `soloBets` counters); `frontend/components/dashboard/GroupAdminPanel.tsx` (+~150: sub-tab toggle, `LeaderboardEntry` interface, `fetchLeaderboard` callback, the new `<LeaderboardTab>` sub-component with refresh button, error/empty/loading states, and a 5-column table rendering rank/user/winnings/rooms/stake).
+  - **Issue/Gap**: The historical leaderboard endpoint (`/api/admin/groups` and the global `services/leaderboard.ts:getLeaderboard()`) had NO data path that aggregated `group_bet_member` stakes. Group winners were invisible in the operator dashboard; only solo bets contributed to the wagering volume ranking. There was also no admin UI surface to browse the top group-bet winners.
+  - **Proposed Fix**: Added 3 layers:
+    1. **26th setting**: `groupLeaderboardEnabled: boolean` (default `true`) gives operators a kill-switch that disables both the public ranking AND the row surface in the admin UI. Wired into both the admin-groups route and the global leaderboard service.
+    2. **`GET /api/admin/groups/leaderboard`**: top-50 by `SUM(payout_amount)` over the last 7 days, scoped to `status='resolved' AND resolved_at >= NOW() - INTERVAL '7 days' AND payout_amount > 0 AND is_frozen = false`. Uses a CTE + `ROW_NUMBER() OVER (ORDER BY winnings DESC)` for proper ranking. Includes `rank`, `userId`, `username`, `winnings`, `roomsWon`, `totalStake` columns. The endpoint is gated by `adminLimiter + authMiddleware + roleMiddleware(['super_admin','support','finance','auditor'])` so it follows the same security model as the rest of `/api/admin/groups`.
+    3. **Frontend `LeaderboardTab` sub-component**: Inside `GroupAdminPanel.tsx`, a new sub-tab toggle (`Group List | Leaderboard (7d)`) lets admins flip between the existing list view and the new leaderboard. The `LeaderboardTab` renders a 5-column table with a refresh button, error state, empty state, and a 'disabled in admin-config' banner.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | `admin_settings` row added for `group_leaderboard_enabled` | `value='true'` | ✅ confirmed (auto-created in defaults) |
+    | `GET /api/admin/groups/leaderboard` returns 200 + `success: true` | 200 + JSON | ✅ |
+    | Response window labelled | `"7 days"` | ✅ `"window": "7 days"` |
+    | Response contains `leaderboardEnabled` flag | present | ✅ `"leaderboardEnabled": true` |
+    | Rows are sorted by winnings DESC | desc | ✅ `rank:1 winnings=1332, rank:2 winnings=1130, rank:3 winnings=1042` |
+    | Each row has rank/userId/username/winnings/roomsWon/totalStake | all 6 keys | ✅ |
+    | Frontend has tab toggle | present | ✅ `<button onClick={() => setActiveTab('leaderboard')}>` renders |
+    | Frontend has fetchLeaderboard callback | present | ✅ wired to `useEffect` on tab change |
+    | Frontend has LeaderboardTab component | present | ✅ renders 5-col table with refresh + error/empty states |
+  - **Auditor coverage (per "scope to time window" prompt)**:
+    - 7-day scope is enforced in TWO places: the SQL `WHERE g.resolved_at >= NOW() - INTERVAL '7 days'` clause in the new route, AND the global `getLeaderboard()` function's `INTERVAL` parameter. ✅
+    - `leaderboardEnabled = false` returns `{ data: [], leaderboardEnabled: false }` immediately, so historic data is NEVER queried in the disabled state. ✅
+    - `is_frozen = false` clause excludes frozen rooms (suspicious ones dropped at flip time). ✅
+    - Row count capped at `LIMIT 50` so worst-case payload = 50 × ~120 bytes = 6 KB. ✅
+    - `rank` derived via `ROW_NUMBER()` not `ROW_NUMBER() OVER (PARTITION BY ...)`, so it's a single global ranking. ✅
+    - Wins counted as `COUNT(*)::int rooms_won` (number of resolved groups the user won payout_amount > 0), distinct from `totalStake` (sum of stake in the window). ✅
+  - **SPEC VERIFICATION flip**: Group play is now visible to admins and operators. The `/api/admin/groups/leaderboard` endpoint is the canonical surface for the top-50 group-bet winners over the last 7 days; the `LeaderboardTab` UI sub-component renders it inline with the existing operator workflow. The 7-day scope, `is_frozen=false`, and `LIMIT 50` clauses prevent historic data leaks. The `groupLeaderboardEnabled` admin setting is the kill-switch.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 3)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

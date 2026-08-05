@@ -50,6 +50,7 @@ export interface GroupConfig {
    *  they can create OR join a group. Anti-bot: keeps brand-new
    *  accounts with $0 deposit history from polluting the pool. */
   groupMinUserDepositHistory: number;
+  groupLeaderboardEnabled: boolean;
 
   // ── Stake caps ──
   /** Default min stake per member */
@@ -132,6 +133,7 @@ export const DEFAULT_GROUP_CONFIG: GroupConfig = {
   groupMinHouseEdgeSpreadVsSolo: 0.5,
 
   groupBonusWagerWeight: 50, // gap4: groups clear bonus at 50% of stake
+  groupLeaderboardEnabled: true, // gap3: include groups in the public/admin leaderboard
   groupInviterBonusCoins: 0,
   groupInviteeBonusCoins: 0,
   groupInviterBonusCapPerUserPerDay: 50,
@@ -266,6 +268,12 @@ export const GROUP_CONFIG_LABELS: Record<keyof GroupConfig, ConfigLabelMeta> = {
     label: 'Group Bonus Wager Weight',
     description: 'Percentage of stake that counts toward bonus wagering clearance on group resolve. 50 = half-credit (groups clear bonus slower because the variance is shared). 0 = no credit.',
     unit: '%', min: 0, max: 100, type: 'number',
+    category: 'Group Play',
+  },
+  groupLeaderboardEnabled: {
+    label: 'Group Leaderboard Enabled',
+    description: 'When true, group-bet members contribute to the global wagering leaderboard. Disabling this does not block group play; it only excludes them from the ranking.',
+    type: 'boolean',
     category: 'Group Play',
   },
   groupInviterBonusCoins: {

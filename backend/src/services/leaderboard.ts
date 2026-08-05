@@ -5,6 +5,8 @@
 import { query, withTransaction } from '../config/database';
 import { getConfig } from './admin-config';
 import { creditPayout } from './bonus';
+import { getGroupConfigKey } from './admin-group-config';
+import { withTransaction as _withTx } from '../config/database';
 
 export interface LeaderboardEntry {
   rank: number;
@@ -12,6 +14,8 @@ export interface LeaderboardEntry {
   username: string;
   totalWagered: number;
   totalBets: number;
+  groupBets: number;
+  soloBets: number;
   prize: number;
 }
 
@@ -20,19 +24,51 @@ export async function getLeaderboard(period: 'daily' | 'weekly' = 'daily'): Prom
   if (!config.leaderboardEnabled) return [];
 
   const interval = period === 'weekly' ? '7 days' : '1 day';
+
+  // Gap 3: also include group_bet_member stakes when groupLeaderboardEnabled.
+  // We UNION ALL the solo bets with group stakes so any user who played
+  // either mode contributes to their wagering volume. The exact stake
+  // amount is preserved; rows are tagged via the 'source' column for
+  // downstream analytics.
+  const groupEnabled = await getGroupConfigKey('groupLeaderboardEnabled').catch(() => true);
+  const groupClause = groupEnabled
+    ? `UNION ALL
+       SELECT
+         m.user_id,
+         m.stake::numeric(18,8) AS amount,
+         g.resolved_at AS at,
+         'group' AS source
+       FROM group_bet_member m
+       JOIN group_bet g ON g.id = m.group_id
+       WHERE g.status = 'resolved'
+         AND g.resolved_at >= NOW() - INTERVAL '${interval}'
+         AND g.is_frozen = false`
+    : '';
+
   const result = await query(
     `
+    WITH all_wagers AS (
+      SELECT
+        b.user_id,
+        b.amount AS amount,
+        b.created_at AS at,
+        'solo' AS source
+      FROM bets b
+      WHERE b.status = 'resolved'
+        AND b.created_at >= NOW() - INTERVAL '${interval}'
+        ${groupClause}
+    )
     SELECT
       u.id AS user_id,
       u.username,
-      COALESCE(SUM(b.amount), 0) AS total_wagered,
-      COUNT(b.id) AS total_bets
+      COALESCE(SUM(w.amount), 0) AS total_wagered,
+      COUNT(*) AS total_bets,
+      COUNT(*) FILTER (WHERE w.source = 'group')::int AS group_bets,
+      COUNT(*) FILTER (WHERE w.source = 'solo')::int AS solo_bets
     FROM users u
-    LEFT JOIN bets b ON b.user_id = u.id
-      AND b.status = 'resolved'
-      AND b.created_at > NOW() - INTERVAL '${interval}'
+    JOIN all_wagers w ON w.user_id = u.id
     GROUP BY u.id, u.username
-    HAVING COALESCE(SUM(b.amount), 0) > 0
+    HAVING COALESCE(SUM(w.amount), 0) > 0
     ORDER BY total_wagered DESC
     LIMIT 50
     `,
@@ -48,6 +84,8 @@ export async function getLeaderboard(period: 'daily' | 'weekly' = 'daily'): Prom
       username: r.username,
       totalWagered: parseFloat(r.total_wagered),
       totalBets: parseInt(r.total_bets),
+      groupBets: r.group_bets != null ? parseInt(r.group_bets) : 0,
+      soloBets: r.solo_bets != null ? parseInt(r.solo_bets) : 0,
       prize: prizeConfig ? prizeConfig.prize : 0,
     };
   });

@@ -40,6 +40,15 @@ interface GroupSummary {
   member_count: number;
 }
 
+interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  username: string;
+  winnings: number;
+  roomsWon: number;
+  totalStake: number;
+}
+
 interface GroupDetail extends GroupSummary {
   per_member_stake?: string;
   creator_stake?: string;
@@ -106,6 +115,80 @@ function fmtMoney(s: string | number | null | undefined): string {
   return `$${n.toFixed(2)}`;
 }
 
+// ─── Leaderboard sub-component (Gap 3) ─────────────────────
+// Top-50 users by group-bet winnings over the last 7 days. The
+// backend endpoint enforces the 7-day window + min-fraud-score so we
+// can't accidentally render historic rows.
+function LeaderboardTab(props: {
+  loading: boolean;
+  err: string;
+  enabled: boolean;
+  entries: LeaderboardEntry[];
+  onRefresh: () => void;
+}) {
+  const { loading, err, enabled, entries, onRefresh } = props;
+  return (
+    <div className="glass-card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div>
+          <h3 className="text-sm font-mono uppercase tracking-widest text-text-primary">
+            🏆 Top-50 Winners · last 7 days
+          </h3>
+          <p className="text-[11px] text-text-muted font-mono mt-0.5">
+            Aggregated from <code>group_bet_member.payout_amount</code> for resolved, non-frozen groups.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface/60 border border-border text-text-secondary hover:text-text-primary disabled:opacity-40"
+        >
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+        </button>
+      </div>
+
+      {!enabled && (
+        <div className="px-4 py-3 text-xs font-mono text-amber-400 bg-amber-500/5 border-b border-amber-500/30">
+          ⚠️ Group leaderboard is disabled in admin-config ({'groupLeaderboardEnabled'}=false). Admin can re-enable it from the Game Config panel.
+        </div>
+      )}
+      {err && (
+        <div className="px-4 py-3 text-xs font-mono text-brand-red bg-brand-red/5 border-b border-brand-red/30">
+          {err}
+        </div>
+      )}
+
+      <table className="w-full text-sm">
+        <thead className="bg-surface/60 text-text-muted text-[10px] uppercase tracking-widest font-mono">
+          <tr>
+            <th className="px-3 py-2 text-right">Rank</th>
+            <th className="px-3 py-2 text-left">User</th>
+            <th className="px-3 py-2 text-right">Winnings</th>
+            <th className="px-3 py-2 text-right">Rooms won</th>
+            <th className="px-3 py-2 text-right">Stake total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading && entries.length === 0 ? (
+            <tr><td colSpan={5} className="px-4 py-8 text-center text-text-muted text-xs">Loading…</td></tr>
+          ) : entries.length === 0 ? (
+            <tr><td colSpan={5} className="px-4 py-8 text-center text-text-muted text-xs">No winners in the last 7 days yet.</td></tr>
+          ) : entries.map((row) => (
+            <tr key={row.userId} className="border-t border-border hover:bg-surface/40">
+              <td className="px-3 py-2 text-right font-mono text-text-primary">#{row.rank}</td>
+              <td className="px-3 py-2 text-left font-mono text-text-primary">{row.username || row.userId.slice(0, 8)}</td>
+              <td className="px-3 py-2 text-right font-mono text-brand-green">${row.winnings.toFixed(2)}</td>
+              <td className="px-3 py-2 text-right font-mono text-text-secondary">{row.roomsWon}</td>
+              <td className="px-3 py-2 text-right font-mono text-text-muted">${row.totalStake.toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function GroupAdminPanel() {
   const store = useGameStore();
   const toast = useToast();
@@ -130,6 +213,15 @@ export default function GroupAdminPanel() {
   const [markModal, setMarkModal] = useState<{ open: boolean; groupId: string; signalType: string; severity: string; reason: string }>(
     { open: false, groupId: '', signalType: 'group_unusual_pattern', severity: 'high', reason: '' },
   );
+
+  // Sub-tab: 'list' | 'leaderboard'
+  const [activeTab, setActiveTab] = useState<'list' | 'leaderboard'>('list');
+
+  // Leaderboard state
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState<boolean>(false);
+  const [leaderboardErr, setLeaderboardErr] = useState<string>('');
+  const [leaderboardEnabled, setLeaderboardEnabled] = useState<boolean>(true);
 
   const authHeaders = useMemo(() => ({
     'Authorization': `Bearer ${token}`,
@@ -186,6 +278,27 @@ export default function GroupAdminPanel() {
   }, [authHeaders, backendBase]);
 
   // ── POST handlers ───────────────────────────────────────────
+  // Gap 3: Fetch the leaderboard (Top-50 by winnings over 7 days)
+  const fetchLeaderboard = useCallback(async () => {
+    setLeaderboardLoading(true);
+    setLeaderboardErr('');
+    try {
+      const r = await fetch(`${backendBase}/admin/groups/leaderboard`, { headers: authHeaders });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      setLeaderboard(Array.isArray(j.data) ? j.data : []);
+      setLeaderboardEnabled(!!j.leaderboardEnabled);
+    } catch (e: any) {
+      setLeaderboardErr(e?.message || 'failed to load leaderboard');
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, [authHeaders, backendBase]);
+
+  useEffect(() => {
+    if (activeTab === 'leaderboard') fetchLeaderboard();
+  }, [activeTab, fetchLeaderboard]);
+
   const doPost = useCallback(async (groupId: string, path: 'force-cancel' | 'freeze' | 'mark-fraud' | 'refund' | 'shadow' | `kick/${string}`, body: Record<string, any> = {}) => {
     try {
       const r = await fetch(`${backendBase}/admin/groups/${groupId}/${path}`, {
@@ -231,6 +344,31 @@ export default function GroupAdminPanel() {
       </div>
 
       {/* Filters */}
+      <div className="glass-card p-2 flex gap-2 mb-3">
+        <button
+          onClick={() => setActiveTab('list')}
+          className={`px-3 py-1 rounded-lg text-sm font-mono ${
+            activeTab === 'list'
+              ? 'bg-brand-green/20 text-brand-green border border-brand-green/40'
+              : 'bg-surface/60 text-text-muted border border-border'
+          }`}
+        >
+          📋 Group List
+        </button>
+        <button
+          onClick={() => setActiveTab('leaderboard')}
+          className={`px-3 py-1 rounded-lg text-sm font-mono ${
+            activeTab === 'leaderboard'
+              ? 'bg-brand-green/20 text-brand-green border border-brand-green/40'
+              : 'bg-surface/60 text-text-muted border border-border'
+          }`}
+        >
+          🏆 Leaderboard (7d)
+        </button>
+      </div>
+
+      {activeTab === 'list' && (
+      <>
       <div className="glass-card p-3 flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
           <label className="text-[10px] uppercase tracking-widest text-text-muted font-mono">Status</label>
@@ -641,6 +779,18 @@ export default function GroupAdminPanel() {
             <ChevronLeft size={12} /> Close detail
           </button>
         </div>
+      )}
+      </>
+      )}
+
+      {activeTab === 'leaderboard' && (
+        <LeaderboardTab
+          loading={leaderboardLoading}
+          err={leaderboardErr}
+          enabled={leaderboardEnabled}
+          entries={leaderboard}
+          onRefresh={fetchLeaderboard}
+        />
       )}
     </div>
   );
