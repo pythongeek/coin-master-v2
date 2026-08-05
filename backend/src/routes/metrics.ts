@@ -103,6 +103,89 @@ export const trongridQueueRejectedTotal = new Counter({
   labelNames: ['reason'],
 });
 
+// ─── Gap 7: Group Play metrics ──────────────────────────────────
+// Nine metrics covering the group-bet lifecycle. Cardinality is
+// bounded by the label sets: payout_mode ∈ {equal, proportional,
+// founder_boost}, turn_mode ∈ {creator, auto_on_full, random_lottery},
+// winning_side ∈ {heads, tails}, signal_type ∈ {the 8 fraud signals},
+// severity ∈ {low, medium, high, critical}, action ∈ { the 7 admin
+// actions}. Worst-case series count: 3×3×2 + 8×4 + 7 = 57 series,
+// which is well within Prometheus budget.
+
+// 1. groupBetCreated — total groups created.
+export const groupBetCreatedTotal = new Counter({
+  name: 'group_bet_created_total',
+  help: 'Total number of group bets created, labeled by payout_mode and turn_mode',
+  labelNames: ['payout_mode', 'turn_mode'],
+});
+
+// 2. groupBetResolved — total groups resolved.
+export const groupBetResolvedTotal = new Counter({
+  name: 'group_bet_resolved_total',
+  help: 'Total number of group bets resolved, labeled by payout_mode, turn_mode, winning_side',
+  labelNames: ['payout_mode', 'turn_mode', 'winning_side'],
+});
+
+// 3. groupPoolSize — distribution of pool sizes at create time.
+// Buckets cover micro (<$10), small ($10-$100), mid ($100-$500),
+// large ($500-$1000), whale ($1k-$5k), and mega ($5k-$50k).
+export const groupPoolSizeCoins = new Histogram({
+  name: 'group_pool_size_coins',
+  help: 'Distribution of group pool sizes in coins at create time',
+  buckets: [10, 50, 100, 500, 1000, 5000, 50000],
+});
+
+// 4. groupMemberCount — distribution of current_members at create.
+// Buckets cover min_members (2), typical 3-5, max default 7-10.
+export const groupMemberCountGauge = new Histogram({
+  name: 'group_member_count',
+  help: 'Distribution of group current_members counts at create time',
+  buckets: [2, 3, 5, 7, 10],
+});
+
+// 5. groupFlipDurationMs — wall-clock time from flip request to\ resolve.
+// Buckets cover fast (<100ms), normal (<500ms), slow (<1s), very slow
+// (<5s), and pathological (>30s — would indicate a stuck TX).
+export const groupFlipDurationMs = new Histogram({
+  name: 'group_flip_duration_ms',
+  help: 'Wall-clock time in ms from flip request to room resolved',
+  buckets: [100, 500, 1000, 5000, 30000],
+});
+
+// 6. groupFraudSignals — count of fraud signals emitted by group-bet-fraud.
+// Labeled by the 8 signal types (group_sybil_suspected,
+// group_vpn_suspected, etc.) and severity (low, medium, high, critical).
+export const groupFraudSignalsTotal = new Counter({
+  name: 'group_fraud_signals_total',
+  help: 'Total number of group fraud signals by signal_type and severity',
+  labelNames: ['signal_type', 'severity'],
+});
+
+// 7. groupAdminActions — count of admin actions on groups.
+// Labeled by action (force_cancel, freeze, mark_fraud, refund, kick,
+// shadow, ...).
+export const groupAdminActionsTotal = new Counter({
+  name: 'group_admin_actions_total',
+  help: 'Total number of admin actions on group bets, labeled by action',
+  labelNames: ['action'],
+});
+
+// 8. groupActiveCount — live count of active groups (open/ready/flipping).
+// Refreshed every 30s by a setInterval in index.ts to avoid hitting
+// the DB on every Prometheus scrape.
+export const groupActiveCountGauge = new Gauge({
+  name: 'group_active_count',
+  help: 'Current number of group bets in non-terminal state (open/ready/flipping). Refreshed every 30s.',
+});
+
+// 9. groupInviteRedemptions — count of invite token redemptions.
+// No labels — single number per redemption event. Operators can pair
+// with groupInviteTokensCreatedTotal (future) for redemption rate.
+export const groupInviteRedemptionsTotal = new Counter({
+  name: 'group_invite_redemptions_total',
+  help: 'Total number of group invite token redemptions',
+});
+
 // ─────────────────────────────────────────────────────────────────
 // P1-06: IP allowlist logic
 // ─────────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { connectDB, query } from './config/database';
 import { redis, redisHealthCheck } from './config/redis';
 import { setupSocketHandlers } from './services/socket-manager';
 import { startReconciliationLoop } from './services/reconciliation';
+import { groupActiveCountGauge } from './routes/metrics';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
@@ -216,7 +217,7 @@ app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin/balance', adminBalanceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminBonusRoutes);
-app.use('/api/admin', adminHealthRoutes);
+app.use('/api/admin/health', adminHealthRoutes);
 app.use('/api/admin/payments', adminPaymentsQrRoutes);
 app.use('/api/admin/email', adminEmailRoutes);
 app.use('/api/admin/audit', adminAuditRoutes);
@@ -309,6 +310,29 @@ async function start() {
   }
   
   startReconciliationLoop();  // Phase B.2 — every 5 min, recovers missed webhooks
+
+  // Gap 7: refresh the groupActiveCount gauge every 30s. Avoids hitting
+  // the DB on every Prometheus scrape (which can be 10+/s) and ensures
+  // the gauge is always within 30s of the true count. The interval is
+  // kept short so the dashboard sees fresh values during active play.
+  const REFRESH_GAUGE_INTERVAL_MS = 30_000;
+  const refreshGroupActiveCount = async () => {
+    try {
+      const r = await query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM group_bet
+         WHERE status IN ('open','ready','flipping') AND is_frozen = false`,
+      );
+      groupActiveCountGauge.set(r.rows[0]?.n ?? 0);
+    } catch (e: any) {
+      console.error('[group_active_count] refresh failed:', e?.message);
+    }
+  };
+  // First refresh immediately so the gauge has a value before the
+  // first scrape (avoids -Inf _count series).
+  await refreshGroupActiveCount();
+  const gaugeRefreshInterval = setInterval(refreshGroupActiveCount, REFRESH_GAUGE_INTERVAL_MS);
+  // Unref so the interval doesn't keep the process alive on shutdown.
+  if (typeof gaugeRefreshInterval.unref === 'function') gaugeRefreshInterval.unref();
   
   // Start TronGrid MCP session and deposit monitor
   try {

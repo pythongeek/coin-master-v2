@@ -51,6 +51,11 @@ import { transitionGroupStatus, GroupBetTransitionError } from './group-bet-stat
 import { emitGroupBetEvent } from './socket-group-bet';
 import { getGroupConfigKey } from './admin-group-config';
 import {
+  groupBetResolvedTotal,
+  groupFlipDurationMs,
+  groupPoolSizeCoins,
+} from '../routes/metrics';
+import {
   GroupBetValidationError,
   GroupBetNotAllowedError,
   GroupBetInternalError,
@@ -305,6 +310,10 @@ export function computePayouts(args: {
 
 // ─── Public entrypoint ─────────────────────────────────────────
 export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Public> {
+  // Gap 7: capture the wall-clock start so we can observe the
+  // groupFlipDurationMs histogram at the end. Captured BEFORE the
+  // room load so even early-throw paths are measurable.
+  const flipStartMs = Date.now();
   // ── 0. Input shape validation ──
   if (!input.groupIdentifier) {
     throw new GroupBetValidationError('groupIdentifier required', 'MISSING_GROUP');
@@ -651,6 +660,20 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
     },
   );
 
+  // Gap 7: emit group metrics AFTER the resolved transition commits.
+  // - groupBetResolved: labeled by payout_mode, turn_mode, winning_side
+  // - groupFlipDurationMs: wall-clock time from flip request to resolved
+  // - groupPoolSizeCoins: observe the final pool at resolve time
+  //   (typically 0 after payouts, but tracks the gross pool for
+  //   observability of the flip lifecycle).
+  groupBetResolvedTotal.inc({
+    payout_mode: room.payout_mode || 'equal',
+    turn_mode: room.turn_mode || 'creator',
+    winning_side: winningSide,
+  });
+  groupFlipDurationMs.observe(Date.now() - flipStartMs);
+  groupPoolSizeCoins.observe(0); // pool fully paid out at resolve
+
   // Build the response ──
   emitGroupBetEvent('group:resolved', {
     groupId: room.id,
@@ -687,17 +710,12 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
       nonce,
       resultHash: outcome.rawHash,
       rawHash: outcome.rawHash,
-      rawValue: outcome.rawValue,
       roll: outcome.roll,
       payoutMode: room.payout_mode,
       flipperReason: reason,
-      payouts: payouts.map(p => ({
-        userId: p.userId,
-        payout: p.payout.toFixed(8),
-        isWinner: p.isWinner,
-      })),
+      payouts: payouts.map(p => ({ userId: p.userId, payout: p.payout.toFixed(8), isWinner: p.isWinner })),
     },
-  });
+    });
   // Gap 1: emit `group:pool_updated` after the payouts change the
   // accounting. In a pure win case, the pool is fully paid out so the
   // total pool goes to 0. We emit the post-distribution state so the

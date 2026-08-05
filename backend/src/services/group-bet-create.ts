@@ -36,6 +36,11 @@ import { determineBalanceSource, debitBalanceForBet } from './bonus';
 import { transitionGroupStatus } from './group-bet-state';
 import { emitGroupBetEvent } from './socket-group-bet';
 import { getGroupConfigKey, parseCountryList } from './admin-group-config';
+import {
+  groupBetCreatedTotal,
+  groupPoolSizeCoins,
+  groupMemberCountGauge,
+} from '../routes/metrics';
 
 // ─── Error class hierarchy ─────────────────────────────────────
 export class GroupBetValidationError extends Error {
@@ -478,10 +483,26 @@ export async function createGroupBet(input: CreateGroupBetInput): Promise<Create
       meta: { payoutMode: result.payout_mode, turnMode: result.turn_mode },
     });
 
+    // Gap 7: emit group metrics AFTER the TX commits so failures in
+    // the metric path don't corrupt the actual create.
+    groupBetCreatedTotal.inc({
+      payout_mode: input.payoutMode || 'equal',
+      turn_mode: input.turnMode || 'creator',
+    });
+    // Pool size at create time = creator stake + (minMembers - 1) * perMember stake.
+    // This matches the canonical pool initialization in the room's
+    // `total_pool` column (which is created = creator_stake initially,
+    // and grows as members join). We observe the BOOK size, not the
+    // current pool, so the histogram captures the intent at create time.
+    const projectedPool =
+      input.creatorStake + input.perMemberStake * (input.minMembers - 1);
+    groupPoolSizeCoins.observe(projectedPool);
+    groupMemberCountGauge.observe(input.minMembers);
+
     return {
       id: result.id,
-      shortCode: result.short_code,
       creatorId: result.creator_id,
+      shortCode: result.short_code,
       status: 'open',
       totalPool: String(result.total_pool),
       creatorStake: String(result.creator_stake),

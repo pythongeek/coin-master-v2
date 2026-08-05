@@ -39,6 +39,7 @@ import {
   recordAdminForce,
   listGroupFraudSignals,
 } from '../services/group-bet-fraud';
+import { groupAdminActionsTotal } from './metrics';
 
 const router = Router();
 
@@ -304,6 +305,7 @@ router.post(
         },
         ipAddress: req.ip,
       });
+      groupAdminActionsTotal.inc({ action: 'force_cancel' });
       return res.status(200).json({
         success: true,
         data: {
@@ -361,6 +363,7 @@ router.post(
         ipAddress: req.ip,
       });
 
+      groupAdminActionsTotal.inc({ action: 'freeze' });
       return res.status(200).json({
         success: true,
         data: { groupId: id, is_frozen: newState, reason },
@@ -430,6 +433,7 @@ router.post(
         ipAddress: req.ip,
       });
 
+      groupAdminActionsTotal.inc({ action: 'mark_fraud' });
       return res.status(200).json({
         success: true,
         data: { groupId: id, signalType, severity, reason, frozen: true },
@@ -549,6 +553,7 @@ router.post(
         ipAddress: req.ip,
       });
 
+      groupAdminActionsTotal.inc({ action: 'refund' });
       return res.status(200).json({
         success: true,
         data: {
@@ -671,6 +676,7 @@ router.post(
         ipAddress: req.ip,
       });
 
+      groupAdminActionsTotal.inc({ action: 'kick' });
       return res.status(200).json({
         success: true,
         data: {
@@ -734,6 +740,7 @@ router.post(
         ipAddress: req.ip,
       });
 
+      groupAdminActionsTotal.inc({ action: 'shadow' });
       return res.status(200).json({
         success: true,
         data: {

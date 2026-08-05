@@ -23,6 +23,7 @@ import QRCode from 'qrcode';
 import { query, withTransaction } from '../config/database';
 import { getGroupConfigKey } from './admin-group-config';
 import { emitGroupBetEvent } from './socket-group-bet';
+import { groupInviteRedemptionsTotal } from '../routes/metrics';
 
 export interface InviteChannel {
   channel: 'whatsapp' | 'telegram' | 'twitter' | 'email' | 'copy' | 'qr' | 'link';
@@ -490,6 +491,11 @@ export async function redeemInvite(opts: RedeemOptions): Promise<RedeemOutcome> 
     };
   })
     .then(async (commitResult) => {
+      // Gap 7: increment groupInviteRedemptionsTotal after the bonus+audit
+      // TX commits. The .then() only fires on success (the TX errors
+      // skip this path with the throw). Fire BEFORE the join attempt
+      // so failed-join still counts as a successful redemption.
+      groupInviteRedemptionsTotal.inc();
       // After the TX commits, perform the join (Day-2 service handles its own TX)
       const stakeDefault = await getGroupConfigKey('groupDefaultContributionMin').catch(() => 1);
       const perMemberStake = typeof stakeDefault === 'number' ? stakeDefault : parseFloat(String(stakeDefault)) || 1;

@@ -35,6 +35,7 @@
  */
 
 import { query } from '../config/database';
+import { groupFraudSignalsTotal } from '../routes/metrics';
 
 // ─── Signal taxonomy (matches Phase 1 §4 plan) ─────────────────
 export type GroupFraudSignalType =
@@ -105,7 +106,17 @@ try {
       JSON.stringify(signal.metadata),
     ],
   );
-  return (r.rows.length ?? 0) > 0;
+  const inserted = (r.rows.length ?? 0) > 0;
+  // Gap 7: increment groupFraudSignalsTotal counter, labeled by signal_type
+  // and severity. Fired only on INSERT success (deduped signals don't
+  // double-count).
+  if (inserted) {
+    groupFraudSignalsTotal.inc({
+      signal_type: signal.signalType,
+      severity: signal.severity,
+    });
+  }
+  return inserted;
 } catch (err: any) {
   // Never let a fraud-signal-write failure crash the calling flow.
   // Surface to stderr for the operator; flip=false means "caller
