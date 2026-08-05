@@ -314,6 +314,12 @@ export const adminSettingsSchema = z.object({
   bonusVipMonthlyAmount: z.coerce.number().min(0).max(10000).optional(),
   bonusFreeSpinCount: z.coerce.number().min(0).max(100).optional(),
   bonusFreeSpinValue: z.coerce.number().min(0).max(1000).optional(),
+
+  // ── Scatter / Lightning / Seed rotation / Group-spread (P2 mini-games) ─
+  scatterMaxMultiplier: z.coerce.number().min(1).max(100).optional(),
+  lightningMinMultiplier: z.coerce.number().min(1).max(50).optional(),
+  seedRotationEnabled: z.boolean().optional(),
+  groupMinHouseEdgeSpreadVsSolo: z.coerce.number().min(0).max(5).optional(),
 });
 
 // ══════════════════════════════════════════════════════════════

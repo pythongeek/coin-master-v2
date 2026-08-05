@@ -101,6 +101,26 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /api/admin/withdrawals/stats ──────────────────────────
+router.get('/stats', async (_req: Request, res: Response) => {
+  try {
+    const r = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'pending')                       AS pending,
+         COUNT(*) FILTER (WHERE status = 'confirmed')                      AS confirmed,
+         COUNT(*) FILTER (WHERE status = 'failed')                         AS failed,
+         COALESCE(SUM(amount) FILTER (WHERE status = 'confirmed'), 0)      AS total_confirmed,
+         COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0)        AS total_pending,
+         COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW()))   AS today_total
+       FROM transactions WHERE type = 'withdrawal'`,
+    );
+    res.json({ success: true, stats: r.rows[0] });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
 // GET /api/admin/withdrawals/:id - full detail + risk signals
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -246,26 +266,6 @@ router.post('/:id/reject', async (req: Request, res: Response) => {
       status: 'failed',
       refundedCoins: result.refundedCoins,
     });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ success: false, error: message });
-  }
-});
-
-// ── GET /api/admin/withdrawals/stats ──────────────────────────
-router.get('/stats', async (_req: Request, res: Response) => {
-  try {
-    const r = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE status = 'pending')                       AS pending,
-         COUNT(*) FILTER (WHERE status = 'confirmed')                      AS confirmed,
-         COUNT(*) FILTER (WHERE status = 'failed')                         AS failed,
-         COALESCE(SUM(amount) FILTER (WHERE status = 'confirmed'), 0)      AS total_confirmed,
-         COALESCE(SUM(amount) FILTER (WHERE status = 'pending'), 0)        AS total_pending,
-         COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW()))   AS today_total
-       FROM transactions WHERE type = 'withdrawal'`,
-    );
-    res.json({ success: true, stats: r.rows[0] });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });

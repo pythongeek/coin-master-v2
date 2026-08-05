@@ -33,7 +33,7 @@ export default async function AdminPage() {
             You must be signed in as an admin to view this panel.
           </p>
           <Link
-            href="/admin/login"
+            href={`${process.env.NEXT_PUBLIC_ADMIN_PATH || ''}/admin/login`}
             className="inline-block btn-brand py-2 px-5 rounded-lg font-mono text-sm"
           >
             Sign in to admin
