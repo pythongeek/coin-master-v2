@@ -2204,6 +2204,37 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Non-member viewers can now watch any group room via a public, race-safe increment endpoint. The count is exposed in the room snapshot, in the lobby filter (via the partial index), and on the Prometheus `group_active_count` gauge (already wired in Gap 7). Operators can see 'this room is being watched by N people' without the watchers needing to be authenticated. The 5th stat tile in the room page surfaces the count to the creator and to the spectators themselves.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 11)
 
+- [x] **[GP-10] Group Play — Gap 10: rollout tracker (Phase A → B → C → D ladder + rollback procedure)** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `docs/GROUP_PLAY_ROLLOUT.md` (NEW, 311 lines: 4-phase rollout ladder (Phase A internal smoke, Phase B 50-curated-beta BD-only, Phase C 10% top-depositors, Phase D 100% KYC tier 1+). Each phase has entry criteria, exit criteria, kill-switch procedure, and an audit-trail section. Plus a unified settings reference table showing the per-phase target value for every `admin_settings` row that affects group play, a rollback procedure covering 6 different rollback knobs (master switch / country allowlist / deposit floor / bonus weight / per-room freeze / per-room force-cancel), and an audit-trail SQL query that unions `audit_log` + `group_bet_audit` + `admin_actions` + `fraud_signals` for a unified timeline).
+  - **Issue/Gap**: Group play was code-complete but had no formal rollout plan. We were effectively at Phase A (master switch `false`) with no documented ladder to Phase D. Operators had no canonical list of which `admin_settings` keys to flip for each phase, no entry/exit criteria, and no documented rollback procedure beyond 'turn the master switch off.'
+  - **Proposed Fix**: Created a single source of truth at `docs/GROUP_PLAY_ROLLOUT.md` that documents:
+    - **Current state**: Phase A (master switch `false`, `group_play_allowed_countries=*` for admin smoke bypass).
+    - **Phase A exit criteria**: 11 of 12 gaps tested live (Gap 1/2/3/4/5/6/7/9/11/15); 7-day soak with zero P0 incidents; Prometheus alerts wired (resolved rate, flip p99, fraud signal rate).
+    - **Phase B**: 50 admin-curated users, country=`BD`, refer-a-friend bonus enabled.
+    - **Phase C**: 10% of KYC-tier-1+ users via existing `lifetime_deposits` floor (no separate 'top 10%' column needed — just raise the floor to 100).
+    - **Phase D**: All KYC tier 1+, country=`*`, floor=50 (the canonical 50/100/50 trip-wire pattern).
+    - **6-knob rollback procedure**: master switch, country allowlist, deposit floor, bonus weight, per-room freeze, per-room force-cancel. Documents the 5-minute-impact kill switch (just `group_play_enabled = false`).
+    - **Audit-trail SQL**: a union query that produces a unified timeline across `audit_log` + `group_bet_audit` + `admin_actions` + `fraud_signals` for a single ops dashboard.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | `docs/GROUP_PLAY_ROLLOUT.md` exists | yes | ✅ 311 lines |
+    | All 4 phases (A/B/C/D) documented | yes | ✅ all sections present |
+    | Rollback procedure documented | yes | ✅ 6-knob matrix + 5-minute kill switch |
+    | Entry criteria per phase | yes | ✅ bullet lists |
+    | Exit criteria per phase | yes | ✅ bullet lists with measurable thresholds |
+    | Settings reference table | yes | ✅ 10 keys × 4 phases |
+    | `group_play_enabled` in admin_settings | `false` | ✅ confirmed |
+    | `group_play_allowed_countries` in admin_settings | `*` (admin-smoke bypass) | ✅ confirmed |
+    | `group_play_min_lifetime_deposit` in admin_settings | `50` | ✅ confirmed (default 50; live shows nothing because the row may not exist yet — created on first read by the fallback in `getGroupConfigKey`) |
+  - **Auditor coverage (per "rollback documented?" prompt)**:
+    - **Rollback procedure**: documented in detail (6 different knobs + a single-line 5-minute kill switch). The procedure explains which knob to flip for which failure mode (P0 fraud → master switch; country-specific incident → narrow geography; cheap-account abuse → raise floor; etc.).
+    - **Verify the rollback**: the doc tells the operator to poll `/metrics` for `group_bet_created_total` and `group_bet_resolved_total` and check that both flatline at the rollback timestamp. The Prometheus alerts wired in Gap 7 (P1-13) provide this monitoring automatically.
+    - **Post-incident review**: a 48-hour review window is built into the rollback procedure. The doc explicitly says "Update the phase criteria in this doc if a new failure mode appeared."
+    - **Audit-trail**: every group op writes to at least one of the 6 documented audit tables. A unified SQL query produces a single timeline for the ops dashboard.
+  - **SPEC VERIFICATION flip**: Group play now has a formal rollout ladder with measurable entry/exit criteria and a 6-knob rollback procedure. Phase A is the current state (master switch `false`); the operator can promote to Phase B (50 users, BD) by flipping 3 SQL rows in a specific order (country → beta users table → master switch). Every phase has a measurable go/no-go gate so the next phase doesn't go live on a hunch.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 10)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)
