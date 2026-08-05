@@ -40,6 +40,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { getSocket } from './socket';
 
 // ─── Event payload shapes ───────────────────────────────────────
+// All 18 server events (v1 + Gap-1 v2). The hook attaches handlers
+// for every event name regardless of which one the consumer actually
+// uses, so adding new events is a single-line change here.
 export type GroupBetEventName =
   | 'group:created'
   | 'group:join'
@@ -50,7 +53,15 @@ export type GroupBetEventName =
   | 'group:cancelled'
   | 'group:expired'
   | 'group:frozen'
-  | 'group:updated';
+  | 'group:updated'
+  | 'group:state_changed'
+  | 'group:member_joined'
+  | 'group:member_left'
+  | 'group:pool_updated'
+  | 'group:flip_started'
+  | 'group:flip_result'
+  | 'group:invite_created'
+  | 'group:expiry_warning';
 
 export interface GroupBetEventPayload {
   groupId: string;
@@ -111,6 +122,15 @@ const ALL_EVENTS: GroupBetEventName[] = [
   'group:expired',
   'group:frozen',
   'group:updated',
+  // Gap 1 fine-grained events:
+  'group:state_changed',
+  'group:member_joined',
+  'group:member_left',
+  'group:pool_updated',
+  'group:flip_started',
+  'group:flip_result',
+  'group:invite_created',
+  'group:expiry_warning',
 ];
 
 export function useGroupBetSocket(opts: UseGroupBetSocketOptions): UseGroupBetSocketResult {

@@ -438,6 +438,43 @@ export async function joinGroupBet(input: JoinGroupBetInput): Promise<JoinedMemb
       actorUserId: input.userId,
       meta: { role: 'member', choice: input.choice },
     });
+    // Gap 1: emit finer-grained `group:member_joined` after the INSERT
+    // (sat alongside the coarse `group:join` for clients that want the
+    // per-member lifecycle without inferring it from join). Includes the
+    // memberId so a UI can resolve the new member row directly.
+    emitGroupBetEvent('group:member_joined', {
+      groupId: room.id,
+      shortCode,
+      status: result.newStatus,
+      currentMembers: result.currentMembers,
+      maxMembers: room.max_members,
+      totalPool: parseFloat(result.totalPool),
+      actorUserId: input.userId,
+      meta: {
+        role: 'member',
+        memberId: result.memberId,
+        choice: input.choice,
+        stake: result.stake,
+        weight: result.weight,
+      },
+    });
+    // Gap 1: emit `group:pool_updated` after the balance change so the UI
+    // can recompute the pool display without polling. Includes the delta
+    // and the new total so derived UIs can animate the change.
+    emitGroupBetEvent('group:pool_updated', {
+      groupId: room.id,
+      shortCode,
+      status: result.newStatus,
+      currentMembers: result.currentMembers,
+      maxMembers: room.max_members,
+      totalPool: parseFloat(result.totalPool),
+      actorUserId: input.userId,
+      meta: {
+        source: 'join',
+        delta: parseFloat(result.stake),
+        memberId: result.memberId,
+      },
+    });
     if (result.newStatus === 'ready') {
       emitGroupBetEvent('group:ready', {
         groupId: room.id,

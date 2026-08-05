@@ -18,10 +18,11 @@
  *  need to set up coin-config in order to run).
  */
 
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 import { query, withTransaction } from '../config/database';
 import { getGroupConfigKey } from './admin-group-config';
+import { emitGroupBetEvent } from './socket-group-bet';
 
 export interface InviteChannel {
   channel: 'whatsapp' | 'telegram' | 'twitter' | 'email' | 'copy' | 'qr' | 'link';
@@ -115,6 +116,32 @@ export async function createInvite(
       trigger: 'create_invite',
     })],
   );
+
+  // Gap 1: emit `group:invite_created` after the INSERT. Includes
+  // the invite token (sans the secret tail) so the UI can show a
+  // embedded share modal without re-fetching. The audit row (above)
+  // already records the full token prefix.
+  let shortCode: string | null = null;
+  try {
+    const sc = await query<{ short_code: string }>(
+      `SELECT short_code FROM group_bet WHERE id = $1`,
+      [options.groupId],
+    );
+    shortCode = sc.rows[0]?.short_code ?? null;
+  } catch { /* best-effort */ }
+  emitGroupBetEvent('group:invite_created', {
+    groupId: options.groupId,
+    shortCode: shortCode ?? undefined,
+    actorUserId: options.inviterId,
+    meta: {
+      inviteId: row.id,
+      tokenPrefix: row.token.slice(0, 8) + '***',
+      maxRedemptions: maxRed,
+      expiresAt: row.expires_at,
+      channel: options.channel ?? 'link',
+      campaign: options.campaign ?? null,
+    },
+  });
 
   return {
     id: row.id,

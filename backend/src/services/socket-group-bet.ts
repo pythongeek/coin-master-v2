@@ -50,6 +50,18 @@ export function getGroupBetIo(): SocketIOServer | null {
 }
 
 // ─── Event taxonomy (server → room) ────────────────────────────
+// Coarse-grained lifecycle events (v1, still emitted for backward compat):
+//   group:created, group:join, group:leave, group:ready, group:flip_start,
+//   group:resolved, group:cancelled, group:expired, group:frozen, group:updated
+// Fine-grained events added in Gap 1 (v2):
+//   group:state_changed  — every transitionGroupStatus() commit
+//   group:member_joined  — emitted after a member-row INSERT in join
+//   group:member_left    — emitted after a member-row DELETE in leave
+//   group:pool_updated   — emitted after every balance change (join/leave/flip)
+//   group:flip_started   — emitted when the flip count-down begins
+//   group:flip_result    — emitted after result hash + distribution are computed
+//   group:invite_created  — emitted after a new invite-link INSERT
+//   group:expiry_warning — emitted for groups expiring within 5 minutes (cron sweep)
 export type GroupBetServerEvent =
   | 'group:created'
   | 'group:join'
@@ -60,7 +72,15 @@ export type GroupBetServerEvent =
   | 'group:cancelled'
   | 'group:expired'
   | 'group:frozen'
-  | 'group:updated';
+  | 'group:updated'
+  | 'group:state_changed'
+  | 'group:member_joined'
+  | 'group:member_left'
+  | 'group:pool_updated'
+  | 'group:flip_started'
+  | 'group:flip_result'
+  | 'group:invite_created'
+  | 'group:expiry_warning';
 
 export interface GroupBetEventPayload {
   groupId: string;
@@ -88,6 +108,24 @@ export function emitGroupBetEvent(
   }
   const room = `group_${payload.groupId}`;
   _io.to(room).emit(eventName, { ...payload, ts: new Date().toISOString() });
+  return true;
+}
+
+// ─── Shorthand helper for the new Gap-1 events ────────────────
+// Convenience wrapper that accepts the room name directly (matches the
+// spec's `emitGroup(room, event, payload)` signature) so services can
+// emit without repeating the room-string template.
+//
+// `room` may be either the full room name (`group_<id>`) or just the
+// groupId (Gap-1 convention: the helper prefixes `group_` if missing).
+export function emitGroup(
+  roomOrGroupId: string,
+  event: GroupBetServerEvent,
+  payload: GroupBetEventPayload,
+): boolean {
+  if (!_io) return false;
+  const room = roomOrGroupId.startsWith('group_') ? roomOrGroupId : `group_${roomOrGroupId}`;
+  _io.to(room).emit(event, { ...payload, ts: new Date().toISOString() });
   return true;
 }
 

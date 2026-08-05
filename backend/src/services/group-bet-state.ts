@@ -40,6 +40,7 @@
  */
 
 import { query, withTransaction } from '../config/database';
+import { emitGroupBetEvent } from './socket-group-bet';
 
 // ─── Type contracts ────────────────────────────────────────────
 export type GroupBetStatus =
@@ -327,6 +328,27 @@ export async function transitionGroupStatus(
       newStatus: toStatus,
       row: updated,
     };
+  }).then((result) => {
+    // Gap 1: emit `group:state_changed` AFTER the TX commits so listeners
+    // never see a phantom state. The payload mirrors the audit row so
+    // spectators can derive the full lifecycle without a separate poll.
+    emitGroupBetEvent('group:state_changed', {
+      groupId: ctx.groupId,
+      status: toStatus,
+      previousStatus: result.previousStatus,
+      newStatus: toStatus,
+      actorUserId: ctx.actorId ?? undefined,
+      currentMembers: result.row.current_members,
+      maxMembers: result.row.max_members,
+      totalPool: parseFloat(String(result.row.total_pool)),
+      winningSide: (result.row.winning_side as 'heads' | 'tails' | null) ?? undefined,
+      meta: {
+        action,
+        auditSeverity,
+        payload: ctx.payload,
+      },
+    });
+    return result;
   });
 }
 

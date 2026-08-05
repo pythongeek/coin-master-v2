@@ -398,6 +398,27 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
   const clientSeed = input.clientSeed || generateClientSeed();
   const seeds: SeedPair = { serverSeed, serverSeedHash, clientSeed, nonce };
 
+  // Gap 1: emit `group:flip_started` BEFORE the flip computation so the
+  // UI can render the count-down animation. The server_seed_hash is
+  // committed here (it's already in the transition payload above), so
+  // the client can verify it later.
+  emitGroupBetEvent('group:flip_started', {
+    groupId: room.id,
+    shortCode: room.short_code,
+    status: 'flipping',
+    currentMembers: room.current_members,
+    maxMembers: room.max_members,
+    totalPool: parseFloat(String(room.total_pool)),
+    actorUserId: flipperUserId,
+    meta: {
+      reason,
+      serverSeedHash,
+      clientSeed,
+      nonce,
+      seedId,
+    },
+  });
+
   // 4a. ready → flipping + commit server_seed_hash
   const flippingResult = await transitionGroupStatus(
     {
@@ -644,6 +665,55 @@ export async function flipGroup(input: FlipGroupInput): Promise<FlipOutcome_Publ
       roll: outcome.roll,
       payoutMode: room.payout_mode,
       payouts: payouts.map(p => ({ userId: p.userId, payout: p.payout.toFixed(8), isWinner: p.isWinner })),
+    },
+  });
+  // Gap 1: emit `group:flip_result` AFTER the result hash + distribution
+  // are computed. Matches the spec's description: "after result hash +
+  // distribution". Includes the per-member payouts so the UI can
+  // render the winner list without re-fetching.
+  emitGroupBetEvent('group:flip_result', {
+    groupId: room.id,
+    shortCode: room.short_code,
+    status: 'resolved',
+    currentMembers: room.current_members,
+    maxMembers: room.max_members,
+    totalPool,
+    winningSide,
+    actorUserId: flipperUserId,
+    meta: {
+      serverSeedHash,
+      serverSeedReveal: serverSeed,
+      clientSeed,
+      nonce,
+      resultHash: outcome.rawHash,
+      rawHash: outcome.rawHash,
+      rawValue: outcome.rawValue,
+      roll: outcome.roll,
+      payoutMode: room.payout_mode,
+      flipperReason: reason,
+      payouts: payouts.map(p => ({
+        userId: p.userId,
+        payout: p.payout.toFixed(8),
+        isWinner: p.isWinner,
+      })),
+    },
+  });
+  // Gap 1: emit `group:pool_updated` after the payouts change the
+  // accounting. In a pure win case, the pool is fully paid out so the
+  // total pool goes to 0. We emit the post-distribution state so the
+  // UI can clear the pool display.
+  emitGroupBetEvent('group:pool_updated', {
+    groupId: room.id,
+    shortCode: room.short_code,
+    status: 'resolved',
+    currentMembers: room.current_members,
+    maxMembers: room.max_members,
+    totalPool: 0, // pool fully paid out
+    actorUserId: flipperUserId,
+    meta: {
+      source: 'flip_resolve',
+      delta: -totalPool,
+      winningSide,
     },
   });
 

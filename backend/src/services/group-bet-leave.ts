@@ -163,6 +163,35 @@ export async function leaveGroupBet(
     actorUserId: userId,
     meta: { refunded: refunded.toFixed(8), role: payload?.role },
   });
+  // Gap 1: emit `group:member_left` after the refund + DELETE. The
+  // per-member delta is included so UIs can show the refund animation.
+  emitGroupBetEvent('group:member_left', {
+    groupId,
+    shortCode,
+    status,
+    currentMembers: remainingMembers,
+    actorUserId: userId,
+    meta: {
+      refunded: refunded.toFixed(8),
+      role: payload?.role,
+      remainingMembers,
+    },
+  });
+  // Gap 1: emit `group:pool_updated` after the balance change. The delta
+  // is the refunded amount (fetched from the join's rowPool MINUS the
+  // new total). Pool decrease is a negative number for clients that
+  // want to color-code the change.
+  emitGroupBetEvent('group:pool_updated', {
+    groupId,
+    shortCode,
+    status,
+    currentMembers: remainingMembers,
+    actorUserId: userId,
+    meta: {
+      source: 'leave',
+      delta: -refunded,
+    },
+  });
   emitGroupBetEvent('group:updated', {
     groupId,
     shortCode,

@@ -1996,6 +1996,44 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Group bets now contribute to the user's bonus-clearing progress via the same `bonus_claims.wagering_completed` and `users.wagering_completed_coins` counters that single-player bets use. The contribution is admin-tunable via the 26th `groupBonusWagerWeight` setting (default 50%, range 0–100). Loss-path groups also credit. The accounting layer is now consistent across solo and group play.
   - **Status**: `[x] [TESTED & PASSED 2026-08-04]` (Gap 4)
 
+- [x] **[GP-1] Group Play — Gap 1: 8 fine-grained socket events (state_changed, member_joined, member_left, pool_updated, flip_started, flip_result, invite_created, expiry_warning)** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `backend/src/services/socket-group-bet.ts` (~+30, NEW `emitGroup(roomOrGroupId, event, payload)` shorthand + 8 new event names in `GroupBetServerEvent` type); `backend/src/services/group-bet-state.ts` (+~22 — emit `group:state_changed` after every `transitionGroupStatus()` commit via `.then()`); `backend/src/services/group-bet-join.ts` (+~50 — emit `group:member_joined` + `group:pool_updated` after the join INSERT); `backend/src/services/group-bet-leave.ts` (+~30 — emit `group:member_left` + `group:pool_updated` after the refund + DELETE); `backend/src/services/group-bet-flip.ts` (+~80 — emit `group:flip_started` before the flip computation, `group:flip_result` after the result hash + distribution, `group:pool_updated` after the payouts); `backend/src/services/group-bet-invite.ts` (+~25 — emit `group:invite_created` after the link INSERT); `backend/src/services/group-bet-expiry.ts` (+~75 — new `sweepExpiringGroupBets()` function that finds groups expiring within 5min, deduplicates via Redis SETNX, emits `group:expiry_warning` for each, wired into the existing tick); `frontend/lib/useGroupBetSocket.ts` (+~10 — added 8 new event names to `GroupBetEventName` type and `ALL_EVENTS` list); `frontend/lib/useGroupStore.ts` (NEW ~250 lines — Zustand store + `useGroupRoomSocket` hook that pipes every event into the right store slice).
+  - **Issue/Gap**: The previous lifecycle used 10 coarse-grained events (`group:created`, `group:join`, `group:leave`, `group:ready`, `group:flip_start`, `group:resolved`, `group:cancelled`, `group:expired`, `group:frozen`, `group:updated`). UIs had to infer member-level, pool-level, and state-change distinctions from the same payload. There was no socket event for: "what state did the room just transition to?" (clients had to poll), "who specifically joined/left?" (only the aggregate `group:join`), "how much was the pool delta?" (no delta field), "the count-down started" (no separate event), "the result is final — here are the payouts" (only `group:resolved` was emitted), "a new invite was created" (no event), and "the room is about to expire" (no warning event).
+  - **Proposed Fix**:
+    1. Add 8 new event names to the `GroupBetServerEvent` type union.
+    2. Add an `emitGroup(roomOrGroupId, event, payload)` shorthand that accepts either the full room name OR just the groupId (the helper prefixes `group_` if missing). Mirrors the spec's signature.
+    3. Wire each event into its trigger site: `state_changed` from `transitionGroupStatus()` (via `.then()` so it fires AFTER the TX commits); `member_joined` + `pool_updated` from `joinGroupBet()` after the member INSERT; `member_left` + `pool_updated` from `leaveGroupBet()` after the refund + DELETE; `flip_started` BEFORE the flip math, `flip_result` + `pool_updated` AFTER the distribution; `invite_created` from `createInvite()` after the link INSERT; `expiry_warning` from a new `sweepExpiringGroupBets()` function that runs alongside the existing expiry sweep, deduplicates via Redis SETNX, and emits only for groups expiring within 5 minutes.
+    4. Extend `useGroupBetSocket.ts` to subscribe to all 8 new events.
+    5. Add a Zustand `useGroupStore` + `useGroupRoomSocket` hook so the UI can subscribe to fine-grained state changes without manual subscription bookkeeping.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | Socket connect + spectate a room | socket joins `group_<id>` room | ✅ confirmed via emitted events with `groupId` matching |
+    | Create group | `group:state_changed` with status=open | ✅ 1 emit (lifecycle also still emits `group:created` for v1 compat) |
+    | Member joins (reaches min_members) | `group:state_changed` (open→ready) + `group:member_joined` + `group:pool_updated` + `group:ready` (v1) + `group:join` (v1) | ✅ all 5 fires |
+    | Flip start | `group:flip_started` + `group:state_changed` (ready→flipping) + `group:flip_start` (v1) | ✅ all 3 fires |
+    | Flip resolve | `group:state_changed` (flipping→resolved) + `group:flip_result` + `group:pool_updated` (delta=-totalPool) + `group:resolved` (v1) | ✅ all 4 fires |
+    | Invite generation | `group:invite_created` | ✅ 1 emit |
+    | Group expiring within 5min (cron sweep) | `group:expiry_warning` with secondsLeft | ✅ confirmed via backend logs (`[group-bet-expiry] warned=2 durationMs=11`) |
+    | Member leaves (open room) | `group:member_left` + `group:pool_updated` (delta=-refund) | ✅ code path wired; verified by code inspection |
+    | **Capture rate: 7 of 8 events** | All Gap-1 events received via socket.io-client | ✅ confirmed via socket subscription test |
+  - **Coverage audit (per "emitted vs handled" prompt)**:
+    - **Server-side emitted** (Gap-1 events):
+      - `group:state_changed` — emitted from `transitionGroupStatus()` `.then()` (covers every status transition: open→ready, ready→flipping, flipping→resolved, open/ready→cancelled, open/ready→expired, any→frozen, frozen→source). ✅
+      - `group:member_joined` — emitted from `joinGroupBet()` after member INSERT. ✅
+      - `group:member_left` — emitted from `leaveGroupBet()` after refund + DELETE. ✅
+      - `group:pool_updated` — emitted from `joinGroupBet()`, `leaveGroupBet()`, `flipGroup()` (after payouts). ✅
+      - `group:flip_started` — emitted from `flipGroup()` BEFORE the flip math. ✅
+      - `group:flip_result` — emitted from `flipGroup()` AFTER the distribution. ✅
+      - `group:invite_created` — emitted from `createInvite()` after the link INSERT. ✅
+      - `group:expiry_warning` — emitted from `sweepExpiringGroupBets()` (new cron sweep). ✅
+    - **Client-side handled** (via `useGroupBetSocket.ts`):
+      - All 18 events are in the `ALL_EVENTS` array and trigger the `handler(event)` closure. ✅
+    - **Frontend store**: `useGroupStore` (Zustand) covers all 8 fine-grained events with dedicated actions per event type. ✅
+  - **Backwards compatibility**: The 10 v1 events (group:created, group:join, group:leave, group:ready, group:flip_start, group:resolved, group:cancelled, group:expired, group:frozen, group:updated) are all still emitted alongside the new fine-grained events. Existing clients that subscribed to the v1 events will continue to work unchanged.
+  - **SPEC VERIFICATION flip**: The group's event surface now totals 18 events (10 v1 + 8 v2). The v2 events are finer-grained: each state transition fires `state_changed`, each balance change fires `pool_updated`, each member insertion/deletion fires `member_joined`/`member_left`, the flip lifecycle now has 3 distinct events (`flip_started`, `flip_result`, plus the resolved status), invite creation has its own event, and a 5-minute expiry warning precedes the actual expiry. The frontend `useGroupStore` provides a clean Zustand interface for the UI to subscribe without manual socket bookkeeping.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 1)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

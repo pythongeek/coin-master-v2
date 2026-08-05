@@ -55,6 +55,8 @@ import { emitGroupBetEvent } from './socket-group-bet';
 const HARD_MAX_PER_TICK = 50;       // bounded concurrency per sweep
 const REDIS_SWEEP_LOCK_KEY = 'group_bet:expiry:sweep';
 const REDIS_SWEEP_LOCK_TTL_SEC = 120;
+const EXPIRY_WARNING_WINDOW_MIN = 5; // emit group:expiry_warning N minutes before expiry
+const REDIS_WARNING_LOCK_KEY = 'group_bet:expiry_warning:sweep';
 
 // ─── Worker state ───────────────────────────────────────────────
 let sweepInterval: NodeJS.Timeout | null = null;
@@ -277,6 +279,79 @@ export async function sweepExpiredGroupBets(opts: {
   };
 }
 
+// ─── Public: one warning-sweep tick (Gap 1) ────────────────────
+// Finds groups in `open` or `ready` that are expiring within the
+// next 5 minutes, and emits a `group:expiry_warning` event for each
+// so the UI can render a "this room will expire soon" banner. The
+// function is idempotent — a distributed lock + a per-group
+// `expires_at` key ensures each room only fires once per window. We
+// skip the warning for already-expired rooms (those are handled by
+// the regular expiry sweep above).
+export async function sweepExpiringGroupBets(opts: {
+  windowMinutes?: number;
+  lockTtlSec?: number;
+} = {}): Promise<{
+  warned: number;
+  durationMs: number;
+}> {
+  const windowMin = opts.windowMinutes ?? EXPIRY_WARNING_WINDOW_MIN;
+  const lockTtlSec = opts.lockTtlSec ?? 60;
+
+  // Distributed lock to prevent two pods from double-warning.
+  const lockVal = `${process.pid}-${Date.now()}`;
+  const acquired = await redis.set(REDIS_WARNING_LOCK_KEY, lockVal, 'EX', lockTtlSec, 'NX');
+  if (!acquired) return { warned: 0, durationMs: 0 };
+
+  const start = Date.now();
+  let warned = 0;
+
+  try {
+    // Find rooms expiring within the window (but not yet expired).
+    // We don't have a "warned-at" column, so we use a Redis SET to
+    // dedupe per-`expires_at` keyed room.
+    const candidates = await query<any>(
+      `SELECT id, short_code, status, current_members, max_members,
+              total_pool::text AS total_pool, expires_at,
+              EXTRACT(EPOCH FROM (expires_at - NOW()))::int AS seconds_left
+         FROM group_bet
+        WHERE status IN ('open','ready')
+          AND is_frozen = false
+          AND expires_at > NOW()
+          AND expires_at <= NOW() + ($1 || ' minutes')::interval
+        ORDER BY expires_at ASC
+        LIMIT 100`,
+      [windowMin],
+    );
+
+    for (const r of candidates.rows) {
+      const dedupKey = `group_bet:expiry_warning:${r.id}:${r.expires_at}`;
+      // Redis SET NX with TTL = the seconds-left + 60s buffer. If the
+      // key already exists, skip — this room was already warned.
+      const ttl = Math.max(60, parseInt(String(r.seconds_left), 10) + 60);
+      const set = await redis.set(dedupKey, '1', 'EX', ttl, 'NX');
+      if (!set) continue;
+      warned++;
+      emitGroupBetEvent('group:expiry_warning', {
+        groupId: r.id,
+        shortCode: r.short_code,
+        status: r.status,
+        currentMembers: r.current_members,
+        maxMembers: r.max_members,
+        totalPool: parseFloat(r.total_pool),
+        meta: {
+          secondsLeft: parseInt(String(r.seconds_left), 10),
+          windowMinutes: windowMin,
+          expiresAt: r.expires_at,
+        },
+      });
+    }
+  } finally {
+    await redis.del(REDIS_WARNING_LOCK_KEY).catch(() => {});
+  }
+
+  return { warned, durationMs: Date.now() - start };
+}
+
 // ─── Public: scheduled worker ──────────────────────────────────
 export function startGroupBetExpiryWorker(intervalMs: number = 60_000): void {
   if (sweepInterval) {
@@ -288,6 +363,17 @@ export function startGroupBetExpiryWorker(intervalMs: number = 60_000): void {
     if (sweepRunning) return;  // skip if previous tick still running
     sweepRunning = true;
     try {
+      // Gap 1: warning sweep (runs alongside the expiry sweep).
+      // Lightweight (single SELECT, no row locks) so it's safe to
+      // call every tick.
+      try {
+        const w = await sweepExpiringGroupBets();
+        if (w.warned > 0) {
+          console.log(`[group-bet-expiry] warned=${w.warned} durationMs=${w.durationMs}`);
+        }
+      } catch (we: any) {
+        console.error('[group-bet-expiry] warning sweep failed:', we?.message || we);
+      }
       const result = await sweepExpiredGroupBets();
       if (result.processed > 0 || result.errors.length > 0) {
         console.log(
