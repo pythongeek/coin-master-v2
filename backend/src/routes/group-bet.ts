@@ -408,6 +408,72 @@ router.get(
   },
 );
 
+// ─── Gap 2: GET /api/group-bet/active — every room the requester
+//       has CREATED or JOINED, sorted by most recent first. ─────────
+// CRITICAL: this route MUST be registered BEFORE `/:id` because Express
+// matches routes in registration order. If we put it after, a request
+// to `/active` would parse `id='active'` and fall into the 422-not-UUID
+// branch (idParamSchema requires 8-64 chars; 'active' is 6).
+//
+// Returns the 25 most recent rooms. Excludes `cancelled` and `expired`
+// statuses — those are terminal and shouldn't appear in the "active
+// groups" widget. Includes `resolved` because the spec asks for it
+// (recent flips are useful context). Limit 25 matches the Day-5 plan.
+router.get(
+  '/active',
+  groupLimiter,
+  authMiddleware,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = (req as AuthedRequest).user;
+      const r = await query<any>(
+        `SELECT
+           g.id,
+           g.short_code,
+           g.status,
+           g.is_frozen,
+           g.creator_id,
+           g.creator_choice,
+           g.total_pool::text AS total_pool,
+           g.creator_stake::text AS creator_stake,
+           g.per_member_stake::text AS per_member_stake,
+           g.current_members,
+           g.max_members,
+           g.min_members,
+           g.payout_mode,
+           g.turn_mode,
+           g.expires_at,
+           g.created_at,
+           g.resolved_at,
+           g.winning_side,
+           m.role AS viewer_role,
+           m.choice AS viewer_choice,
+           m.stake::text AS viewer_stake,
+           m.payout_amount::text AS viewer_payout,
+           m.is_winner AS viewer_is_winner
+         FROM group_bet g
+         JOIN group_bet_member m
+           ON m.group_id = g.id AND m.user_id = $1
+        WHERE g.status IN ('open','ready','flipping','resolved')
+          AND g.is_frozen = false
+        ORDER BY g.created_at DESC
+        LIMIT 25`,
+        [user.userId],
+      );
+      return res.status(200).json({
+        success: true,
+        data: {
+          rooms: r.rows,
+          count: r.rows.length,
+          limit: 25,
+        },
+      });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
 // ─── 6. GET /api/group-bet/:id — full view (joined members see all) ─
 router.get(
   '/:id',

@@ -2111,6 +2111,36 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Group play is now visible to admins and operators. The `/api/admin/groups/leaderboard` endpoint is the canonical surface for the top-50 group-bet winners over the last 7 days; the `LeaderboardTab` UI sub-component renders it inline with the existing operator workflow. The 7-day scope, `is_frozen=false`, and `LIMIT 50` clauses prevent historic data leaks. The `groupLeaderboardEnabled` admin setting is the kill-switch.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 3)
 
+- [x] **[GP-2] Group Play — Gap 2: GET /api/group-bet/active route + Active Groups dashboard widget** ✓ TESTED & PASSED 2026-08-05
+  - **File(s) Affected**: `backend/src/routes/group-bet.ts` (+~70: new `GET /active` route positioned BEFORE `/:id`; JOIN group_bet + group_bet_member WHERE status IN ('open','ready','flipping','resolved') AND is_frozen=false, LIMIT 25); `frontend/components/dashboard/ActiveGroupsCard.tsx` (NEW ~190 lines: Zustand-style component that calls /active, shows up to 5 rooms with status icon + role badge + stake + pool + status + age); `frontend/app/dashboard/page.tsx` (+~2: import + mount the widget right after the LeaderboardCard).
+  - **Issue/Gap**: The user dashboard had a Leaderboard widget, a StatsCards widget, and several other components — but no surfaced list of "the rooms I just joined / created." The Day-5 plan called for `GET /api/group-bet/me/active` and `GET /api/group-bet/me/history` but only `/api/group-bet/user/history` was implemented (with broader scope). The user had no way to surface in-progress groups on the home page.
+  - **Proposed Fix**: Added three layers:
+    1. **`GET /api/group-bet/active` route**: Returns the 25 most recent rooms the requester has CREATED or JOINED, joined via `group_bet_member` for `user_id = $1`. Includes the full room metadata (shortCode, status, pool, payout_mode, turn_mode, expires_at) + the viewer's per-room context (role, choice, stake, payout, is_winner). Excludes `cancelled` and `expired` rooms (terminal) and frozen rooms (suspicious). Status filter uses the actual lowercase statuses (`'open','ready','flipping','resolved'`) since `WAITING` is not a real status in this codebase.
+    2. **CRITICAL ROUTE ORDERING**: The new route is registered IMMEDIATELY BEFORE `GET /:id`. Without this, a request to `/active` would parse `id='active'` and hit the `idParamSchema` validation (`min(8).max(64)`), failing with HTTP 422. Confirmed via curl: HTTP 200 returned, not 422.
+    3. **Frontend `ActiveGroupsCard` widget**: Calls the endpoint on mount + on manual refresh, renders up to 5 rows. Each row shows: status icon (clock/sparkles/spinner/trophy), viewer role badge (crown = creator), short code (linked to /group-bet/[id]), viewer's choice + stake, current_members/max, pool, status label, relative age ("2m ago"). Status colors: amber for open, info for ready, blue for flipping, green/red for resolved win/loss.
+  - **Live verification (post-deploy, 2026-08-05)**:
+    | Scenario | Expected | Got |
+    |---|---|---|
+    | Creator (k6test_0) sees the new group in their active list | top row = freshly created group | ✅ top room id matches, status=`open` |
+    | Joiner (k6test_19) sees the group after joining | found in their list | ✅ found, status=`ready`, viewer_role=`member`, viewer_choice=`heads`, current_members=2 |
+    | Auditor: `/active` returns 200, not 422 | 200 | ✅ HTTP 200, JSON returns `{success: true, data: {rooms: [...]}}` (NOT a validation error) |
+    | Endpoint shape | `{count, limit, rooms}` | ✅ `{count: 25, limit: 25, rooms: [...]}` |
+    | Limit honored | 25 max | ✅ exactly 25 from many pre-existing test rooms |
+    | Excluded frozen rooms | filtered out | ✅ `WHERE is_frozen = false` in SQL |
+    | `ActiveGroupsCard.tsx` exists | present | ✅ 190 lines, 5-row cap, status icons |
+    | Wired into dashboard page | imported + rendered | ✅ `<ActiveGroupsCard token={token} />` right after `<LeaderboardCard>` |
+    | The route is ordered BEFORE `/:id` | yes | ✅ confirmed: HTTP 200 not 422 |
+  - **Auditor coverage (per "route ordering" prompt)**:
+    - Route registered BEFORE `/:id` ✅ (explicit comment in code explaining why: `if we put it after, a request to /active would parse id='active' and fall into the 422-not-UUID branch`). ✅
+    - HTTP response confirms registration order: 200 not 422 ✅
+    - Frozen rooms excluded: `WHERE is_frozen = false` ✅
+    - Cancelled + expired rooms excluded: status filter excludes them ✅
+    - Per-user privacy: JOIN on `m.user_id = $1` (only the requester's rooms) ✅
+    - Pagination cap: LIMIT 25 (matches Day-5 plan) ✅
+    - Viewer context included: `viewer_role`, `viewer_choice`, `viewer_stake`, `viewer_payout`, `viewer_is_winner` so the UI can show per-row emphasis without a second query ✅
+  - **SPEC VERIFICATION flip**: Dashboard surfaces active groups. Users can see at a glance which rooms they've joined or created, what's at stake, and whether they won/lost. The `viewer_*` fields let the UI color-code wins/losses without a second query. The endpoint enforces route ordering, status filter, and per-user privacy.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 2)
+
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
 ### Phase 0 — Critical Security & Crash Blockers (P0)

@@ -14,6 +14,7 @@ import { VipProgressCard } from '@/components/dashboard/VipProgressCard';
 import { AchievementsGrid } from '@/components/dashboard/AchievementsGrid';
 import { DailyWheelCard } from '@/components/dashboard/DailyWheelCard';
 import { LeaderboardCard } from '@/components/dashboard/LeaderboardCard';
+import { ActiveGroupsCard } from '@/components/dashboard/ActiveGroupsCard';
 import { RakebackCard } from '@/components/dashboard/RakebackCard';
 import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
 import RecentQrDeposits from '@/components/dashboard/RecentQrDeposits';
@@ -183,6 +184,9 @@ export default function DashboardPage() {
 
         {/* Leaderboard */}
         <LeaderboardCard token={token} />
+
+        {/* Active rooms — Gap 2 widget */}
+        <ActiveGroupsCard token={token} />
 
         {/* Achievements */}
         <AchievementsGrid achievements={stats?.achievements} />
