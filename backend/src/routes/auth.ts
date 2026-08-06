@@ -315,7 +315,14 @@ router.post(
       }
     }
 
-    const token = createToken({ userId, username, isAdmin: false, role: 'user' });
+    const token = createToken({
+      userId,
+      username,
+      isAdmin: false,
+      role: 'user',
+      // kyc_country isn't collected at signup yet (the registration
+      // form doesn't ask for it). Country hydrates on the next /login.
+    });
 
     const bonusAmount = welcomeClaim?.amountCoins ?? 10;
     res.status(201).json({
@@ -392,6 +399,7 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       username: user.username,
       isAdmin: user.is_admin,
       role: user.role,
+      country: user.kyc_country || '',
     });
 
     res.json({

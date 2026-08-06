@@ -16,6 +16,10 @@ export interface AuthPayload {
   username: string;
   isAdmin: boolean;
   role?: string;
+  /** ISO 3166-1 alpha-2 country code, used by the client lobby to detect
+      geo-blocked users without an extra round-trip. Optional because
+      older logins may not have it. */
+  country?: string;
   /** Alias for userId, provided for v2-pro module compatibility. */
   id?: string;
 }

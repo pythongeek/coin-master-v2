@@ -117,8 +117,26 @@ export default function GroupBetLobbyPage() {
   //   - restrictedCountry → if user.country is set AND not in the
   //     allowlist; we render the "🌍 Restricted country" banner
   //     and disable the Join buttons on every card.
+  //
+  // We read country from BOTH the Zustand store AND the cf_token JWT
+  // payload as a fallback. The Zustand persist middleware has a race
+  // during initial hydration — even if cf_game_store has the user, the
+  // page may render one tick before hydration completes. The JWT
+  // contains the same country (signed at /login) so reading from the
+  // JWT is reliable as a bootstrap.
   const storeUser = useGameStore((s: any) => s.user);
-  const userCountry: string = (storeUser?.country || '').toUpperCase().trim();
+  const [tokenCountry, setTokenCountry] = useState<string>('');
+  useEffect(() => {
+    try {
+      const t = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : null;
+      if (!t) return;
+      const payload = JSON.parse(atob(t.split('.')[1]));
+      setTokenCountry((payload?.country || '').toUpperCase().trim());
+    } catch { /* ignore */ }
+  }, []);
+  const userCountry: string = (
+    (storeUser?.country || '').toUpperCase().trim() || tokenCountry
+  ).trim();
   const [allowedCountries, setAllowedCountries] = useState<string[]>(['*']);
   const [hasToken, setHasToken] = useState<boolean>(false);
 

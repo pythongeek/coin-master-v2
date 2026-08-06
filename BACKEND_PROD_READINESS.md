@@ -2343,6 +2343,13 @@ $ curl -H "Authorization: Bearer <admin_jwt>" \
   - **SPEC VERIFICATION flip**: Users from allowed countries see the lobby populated; users from blocked countries see a clear, friendly banner explaining why the lobby is empty and a per-card "Restricted" indicator; server still enforces the gate on the create/join API; admin's free pass through the gate via `*` allowlist works; the visual design is consistent with the existing dark-theme amber-tinted warnings.
   - **Note (Side-effect, Gap 13 followup)**: an older `setup-seed.js` run wrote a stale bcrypt hash that broke the shared password for the `k6test_*` pool. Restored by re-hashing through bcryptjs and `UPDATE users SET password_hash=...`. This was a side-effect of Gap 13 test authorship, not Gap 17 itself.
   - **Status**: `[x] [TESTED & PASSED 2026-08-05]` (Gap 17)
+- [x] **[GP-17-LIVE] Gap 17 visual confirmed in browser (2026-08-06)**
+  - Two regressions found + fixed during a full visual browser session:
+    1. **`backend/src/middleware/auth.ts`** — `AuthPayload` gained `country?: string`; both `createToken()` call sites in `backend/src/routes/auth.ts` now sign `country: user.kyc_country` (login) or omit it (register, since no user row exists yet). Without this, the JWT never carried country, the Zustand `onRehydrateStorage` callback built a country-less user, and the Restricted banner never fired on first paint.
+    2. **`frontend/app/group-bet/lobby/page.tsx`** — added a `useEffect` that decodes `cf_token` and seeds `tokenCountry` state. The lobby's `userCountry` now reads `storeUser.country || tokenCountry`, eliminating the Zustand-hydration race that was masking the banner.
+  - Live visual confirmation (after rebuild + reload): the room `KQYFD7` card renders a per-card `🌍 RESTRICTED` pill, the top-of-grid banner reads `🌍 Restricted country (BD)` with the explanatory message `Your region is not in the operator-configured allowlist (KP). Rooms are hidden and Joining is disabled.`, and the Join control on the card is `disabled`. Admin settings: `group_play_allowed_countries='KP'` during the test, reverted to `'*'` after.
+  - **Files in this commit (live-session fixes)**: `backend/src/middleware/auth.ts`, `backend/src/routes/auth.ts`, `frontend/app/group-bet/lobby/page.tsx`, `BACKEND_PROD_READINESS.md`.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-06]` (live visual confirmation of Gap 17 — country banner + per-card pill verified rendered)
 
 ## 5. Phase-by-Phase Stepwise Execution Tracker
 
