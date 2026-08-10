@@ -88,6 +88,38 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
     return { success: false, error: 'HOT_WALLET_PRIVATE_KEY_ENCRYPTED is not configured' };
   }
 
+  // S1-W6-KMS: Production hot-wallet key custody guard.
+  //
+  // The default mode is 'env' — HOT_WALLET_PRIVATE_KEY_ENCRYPTED is
+  // AES-256-GCM with a single ENCRYPTION_KEY env var. If the .env
+  // leaks, the attacker can decrypt the hot-wallet key and drain the
+  // wallet. KMS_PROVIDER moves the decryption to AWS KMS / Fireblocks
+  // / Vault, where the plaintext key never exists in process memory
+  // and access is gated by IAM.
+  //
+  // This guard is the GATING gate for production with real funds.
+  // Without it, the deployment is acceptable for pre-beta testing
+  // with zero real money ONLY.
+  if (env.NODE_ENV === 'production') {
+    if (env.KMS_PROVIDER === 'env' && env.ALLOW_INSECURE_HOT_WALLET !== 'true') {
+      throw new Error(
+        'FATAL: Production deployment requires KMS_PROVIDER to be set to ' +
+        'aws-kms | fireblocks | hashicorp-vault. ' +
+        'Set ALLOW_INSECURE_HOT_WALLET=true ONLY for pre-beta testing with ' +
+        'zero real funds. See docs/KMS_MIGRATION.md for migration paths.',
+      );
+    }
+    if (env.ALLOW_INSECURE_HOT_WALLET === 'true' && env.KMS_PROVIDER === 'env') {
+      // Log loudly so this doesn't go unnoticed in production logs.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[SECURITY WARNING] Hot wallet using single-key AES-GCM in production. ' +
+        'ALLOW_INSECURE_HOT_WALLET=true is set. Migrate to KMS before handling real funds. ' +
+        'See docs/KMS_MIGRATION.md.',
+      );
+    }
+  }
+
   let privateKeyBuf: Buffer | null = null;
   try {
     privateKeyBuf = decryptSecretToBuffer(env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED);

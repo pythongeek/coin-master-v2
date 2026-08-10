@@ -38,6 +38,14 @@ const envSchema = z.object({
   DEPOSIT_DERIVATION_SEED_ENCRYPTED: z.string().min(1).optional(),
   HOT_WALLET_DAILY_WITHDRAWAL_LIMIT: z.coerce.number().positive().default(100000),
   HOT_WALLET_MIN_BALANCE_USDT: z.coerce.number().positive().default(1000),
+
+  // S1-W6-KMS: hot-wallet key custody mode. Defaults to 'env' (AES-GCM
+  // with a single env-var key). Production deployments should set
+  // this to 'aws-kms' or 'fireblocks' and provide the corresponding
+  // credentials. ALLOW_INSECURE_HOT_WALLET=true bypasses the
+  // production guard for pre-beta testing with zero real funds.
+  KMS_PROVIDER: z.enum(['env', 'aws-kms', 'fireblocks', 'hashicorp-vault']).default('env'),
+  ALLOW_INSECURE_HOT_WALLET: z.enum(['true', 'false']).default('false'),
   DEPOSIT_ADDRESS_DERIVATION: z.enum(['static', 'per_user']).default('static'),
 
   // P1-13 — TronGrid endpoint failover. Operators can override

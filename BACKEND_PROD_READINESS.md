@@ -1517,13 +1517,19 @@ Re-audit (2026-08-07) found 5 critical bugs in the withdrawal flow that would ca
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 - [x] **[S1-W11] Payout Reconciliation Cron → Silent Stuck Withdrawals** ✓ TESTED & PASSED 2026-08-10
-  - **File(s) Affected**: `backend/src/services/payout-reconciliation.ts` (NEW); `backend/src/index.ts` (cron startup); `backend/src/test/s1-w11-reconciliation.test.ts` (NEW); `backend/src/test/run-all.ts`
-  - **Issue/Gap**: BullMQ job eaten (Redis blip, worker crash, queue reset) leaves `status='confirmed' AND tx_hash IS NULL` rows in limbo forever. The user's balance is locked and no admin is paged.
-  - **Proposed Fix**: New `payout-reconciliation.ts` cron runs every 5 min via `setInterval`. Two scans:
-       1. `status='confirmed' AND tx_hash IS NULL AND created_at < 30 min ago` → flip to `payout_stuck` (S1-W3) + admin email.
-       2. `status='pending' AND created_at < 48 hours` → log + alert (no auto-refund; that is S1-W16, separate task).
-  - **Implementation Notes**: Manual trigger exported as `runPayoutReconciliation()`. `startPayoutReconciliationCron()` is idempotent. Errors per-row don't fail the batch. Limited to 100 rows per run.
-  - **Verification**: Unit 11/11 pass. 5 scenarios: stuck-confirmed → payout_stuck, stuck-pending → alert (no flip), recent row → no touch, row with tx_hash → no touch, cron lifecycle idempotency.
+  - **File(s) Affected**: `backend/src/services/payout-reconciliation.ts` (NEW); `backend/src/index.ts`; `backend/src/test/s1-w11-reconciliation.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: BullMQ job eaten leaves confirmed-without-tx_hash rows in limbo.
+  - **Proposed Fix**: 5-min cron. 30+ min stuck confirmed → payout_stuck + email. 48+ hour pending → alert.
+  - **Verification**: Unit 11/11 pass.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
+- [x] **[S1-W6-KMS] Hot Wallet Key Custody Compliance Gate** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/src/config/env.ts` (KMS_PROVIDER, ALLOW_INSECURE_HOT_WALLET); `backend/src/services/withdrawal-payout.ts` (production guard); `docs/KMS_MIGRATION.md` (NEW); `backend/src/test/s1-w6-kms-guard.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: Hot-wallet key is a single env var. If `.env` leaks, attacker drains the wallet in one round trip. No production gate.
+  - **Proposed Fix**: New `KMS_PROVIDER` env var (default `'env'`, options: `'aws-kms' | 'fireblocks' | 'hashicorp-vault'`). New `ALLOW_INSECURE_HOT_WALLET` bypass flag (default `'false'`). Production guard: if `NODE_ENV=production && KMS_PROVIDER=env && ALLOW_INSECURE_HOT_WALLET!=true` → throw FATAL. Bypass flag logs a loud console.warn on every payout. `docs/KMS_MIGRATION.md` documents the AWS KMS / Fireblocks / Vault migration paths.
+  - **Implementation Notes**: The guard is a runtime check, triggered on the first payout attempt. For pre-deploy safety, set the env in the CI/CD pipeline BEFORE the container starts.
+  - **Operator action required**: Set `ALLOW_INSECURE_HOT_WALLET=true` in production .env for the duration of pre-beta testing with zero real funds. Remove it before handling real user deposits.
+  - **Verification**: Unit 13/13 pass. 7 scenarios: env defaults, FATAL on bad config, warn on bypass, silent on aws-kms/fireblocks/hashicorp-vault, dev bypass.
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 ---

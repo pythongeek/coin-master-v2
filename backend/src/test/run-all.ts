@@ -54,6 +54,7 @@ const testFiles = [
   's1-h13-request-tx.test.ts',
   's1-w10-hot-wallet-min.test.ts',
   's1-w11-reconciliation.test.ts',
+  's1-w6-kms-guard.test.ts',
   'concurrency.test.ts',
 ];
 
