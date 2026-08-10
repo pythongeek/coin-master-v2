@@ -1496,12 +1496,19 @@ Re-audit (2026-08-07) found 5 critical bugs in the withdrawal flow that would ca
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 - [x] **[S1-W3] Confirmation Timeout → User Funds Lost; BullMQ Double-Broadcast** ✓ TESTED & PASSED 2026-08-10
-  - **File(s) Affected**: `backend/migrations/057_add_payout_stuck_status.sql` (NEW); `backend/src/services/withdrawal-payout.ts`; `backend/src/routes/admin-withdrawals.ts` (POST /:id/resolve-stuck endpoint); `backend/src/test/s1-w3-payout-stuck.test.ts` (NEW); `backend/src/test/run-all.ts`
-  - **Issue/Gap**: `services/withdrawal-payout.ts:178` THREW when the 30×10s confirmation polling exhausted without 19 confirmations. Throw triggered BullMQ retry → DOUBLE BROADCAST on-chain. DB row left as 'failed' (or worse, mid-update). User's funds were on-chain but the DB didn't know.
-  - **Proposed Fix**: Replace the throw with a transition to new `'payout_stuck'` state. Persist `tx_hash` as soon as broadcast succeeds (critical invariant). Do NOT restore `locked_balance` (money is on-chain). Queue admin email. Return `success: false, stuck: true` so BullMQ doesn't retry. New `'payout_stuck'` row in `transactions.status` CHECK constraint via migration 057.
-  - **Resolution endpoint**: `POST /api/admin/withdrawals/:id/resolve-stuck` with `action: 'confirm' | 'refund'`. Both gated by `requireAdmin2FA` (S1-C5). 'confirm' → status='completed', locked_balance -= amount. 'refund' → status='rejected', balance += amount, locked_balance -= amount (mirrors S1-C1 closed invariant).
-  - **Implementation Notes**: The catch block now uses `status = CASE WHEN status = 'payout_stuck' THEN status ELSE 'failed' END` so a BullMQ re-run on a stuck row doesn't downgrade it.
-  - **Verification**: Unit 20/20 pass. 5 scenarios: timeout → payout_stuck, resolve-confirm, resolve-refund, no-op on non-stuck, replay-safety.
+  - **File(s) Affected**: `backend/migrations/057_add_payout_stuck_status.sql` (NEW); `backend/src/services/withdrawal-payout.ts`; `backend/src/routes/admin-withdrawals.ts`; `backend/src/test/s1-w3-payout-stuck.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: `services/withdrawal-payout.ts:178` THREW on confirmation timeout → BullMQ retry → DOUBLE BROADCAST.
+  - **Proposed Fix**: New 'payout_stuck' state. Persist tx_hash early. Don't restore locked_balance. Queue admin email. Resolve-stuck endpoint with action='confirm' | 'refund'.
+  - **Verification**: Unit 20/20 pass.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
+- [x] **[S1-H13] requestWithdrawal Rowcount Gap → Phantom Debit on Drift** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/src/services/withdrawal-queue.ts`; `backend/src/test/s1-h13-request-tx.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: The wallet UPDATE in `requestWithdrawal` did not check `rowCount`. Under race conditions or wallet drift, the UPDATE could silently affect 0 rows while the transaction INSERT proceeded, leaving the user with a 'pending' withdrawal record but no actual debit.
+  - **Proposed Fix**: Add explicit `rowCount` check on the wallet UPDATE. The UPDATE also gained `AND balance >= $1` so a positive balance is enforced at the SQL level. Throw on `rowCount === 0`; the caller's BEGIN/COMMIT/ROLLBACK (already in place) rolls back the transaction INSERT.
+  - **Existing transaction**: The outer BEGIN/COMMIT/ROLLBACK pattern was already correct — the bug was the missing rowCount guard, not the missing transaction. The S1-H13 fix strengthens the wallet UPDATE specifically.
+  - **Documented limitation**: BullMQ enqueue happens AFTER COMMIT. If Redis is down, the wallet is debited and the tx row exists but no BullMQ job. The S1-W11 reconciliation cron (next-up) is the safety net for this.
+  - **Verification**: Unit 14/14 pass. 3 scenarios: happy path, rowCount=0 → throw + ROLLBACK, INSERT rowCount=0 → throw + no tx row.
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 ---
