@@ -43,7 +43,10 @@ router.get('/', async (req: Request, res: Response) => {
     const status = (req.query.status as string) ?? 'pending';
     const minRisk = (req.query.minRisk as string) ?? null; // 'low'|'medium'|'high'|'critical'
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
+    // S1-W3 / S1-C1: payout_stuck + rejected added so the operator can filter on the
+    // S1-W11 cron output and on S1-C1 rejects via the UI. Backend schema allows
+    // these per migrations 056 + 057.
+    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled', 'payout_stuck', 'rejected'];
     if (!validStatuses.includes(status) && status !== 'all') {
       return res.status(400).json({ success: false, error: 'invalid status' });
     }
