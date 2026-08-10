@@ -43,6 +43,7 @@ import { useToast } from '@/components/providers/ToastProvider';
 import EquivalentAmounts from '@/components/wallet/EquivalentAmounts';
 import { getFxRates, type FxRatesResponse } from '@/lib/api/wallet';
 import { getApiBase } from '@/lib/api/base';
+import { sanitizeError } from '@/lib/api/errors';
 
 const API = getApiBase();
 
@@ -202,7 +203,7 @@ export default function AdminWithdrawalQueue() {
       if (data.success) {
         setItems(data.withdrawals || []);
       } else {
-        setError(data.error || 'Failed to load withdrawals');
+        setError(sanitizeError(data.error) || 'Failed to load withdrawals');
       }
     } catch {
       setError('Cannot connect to backend');
@@ -235,7 +236,7 @@ export default function AdminWithdrawalQueue() {
       } else if (data.requires_2fa && isRetry) {
         addToast('TOTP rejected — try a fresh code', 'error');
       } else {
-        setError(data.error || 'Approve failed');
+        setError(sanitizeError(data.error) || 'Approve failed');
       }
     } catch {
       setError('Network error');
@@ -267,7 +268,7 @@ export default function AdminWithdrawalQueue() {
       } else if (data.requires_2fa && isRetry) {
         addToast('TOTP rejected — try a fresh code', 'error');
       } else {
-        setError(data.error || 'Reject failed');
+        setError(sanitizeError(data.error) || 'Reject failed');
       }
     } catch {
       setError('Network error');
@@ -308,7 +309,7 @@ export default function AdminWithdrawalQueue() {
       } else if (data.requires_2fa && isRetry) {
         addToast('TOTP rejected — try a fresh code', 'error');
       } else {
-        setError(data.error || 'Resolve failed');
+        setError(sanitizeError(data.error) || 'Resolve failed');
       }
     } catch {
       setError('Network error');
