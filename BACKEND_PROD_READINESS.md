@@ -1504,11 +1504,17 @@ Re-audit (2026-08-07) found 5 critical bugs in the withdrawal flow that would ca
 
 - [x] **[S1-H13] requestWithdrawal Rowcount Gap → Phantom Debit on Drift** ✓ TESTED & PASSED 2026-08-10
   - **File(s) Affected**: `backend/src/services/withdrawal-queue.ts`; `backend/src/test/s1-h13-request-tx.test.ts` (NEW); `backend/src/test/run-all.ts`
-  - **Issue/Gap**: The wallet UPDATE in `requestWithdrawal` did not check `rowCount`. Under race conditions or wallet drift, the UPDATE could silently affect 0 rows while the transaction INSERT proceeded, leaving the user with a 'pending' withdrawal record but no actual debit.
-  - **Proposed Fix**: Add explicit `rowCount` check on the wallet UPDATE. The UPDATE also gained `AND balance >= $1` so a positive balance is enforced at the SQL level. Throw on `rowCount === 0`; the caller's BEGIN/COMMIT/ROLLBACK (already in place) rolls back the transaction INSERT.
-  - **Existing transaction**: The outer BEGIN/COMMIT/ROLLBACK pattern was already correct — the bug was the missing rowCount guard, not the missing transaction. The S1-H13 fix strengthens the wallet UPDATE specifically.
-  - **Documented limitation**: BullMQ enqueue happens AFTER COMMIT. If Redis is down, the wallet is debited and the tx row exists but no BullMQ job. The S1-W11 reconciliation cron (next-up) is the safety net for this.
-  - **Verification**: Unit 14/14 pass. 3 scenarios: happy path, rowCount=0 → throw + ROLLBACK, INSERT rowCount=0 → throw + no tx row.
+  - **Issue/Gap**: rowCount not checked on wallet UPDATE.
+  - **Proposed Fix**: Add explicit rowCount check + `AND balance >= $1` SQL guard.
+  - **Verification**: Unit 14/14 pass.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
+- [x] **[S1-W10] Hot Wallet Min Balance Guard → Reserve Drain** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/src/services/withdrawal-payout.ts`; `backend/src/test/s1-w10-hot-wallet-min.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: The existing check `hotBalance < amount` was binary. A withdrawal that would dip the hot wallet below an operational reserve (default 1000 USDT for TronGrid energy fees) was rejected entirely. The fix: keep a MIN_BALANCE reserve; halt as 'payout_stuck' if the broadcast would dip below it.
+  - **Proposed Fix**: Read `HOT_WALLET_MIN_BALANCE_USDT` (env, default 1000). If `hotBalance < amount + minBalance`, halt: status='payout_stuck', no broadcast, queue admin email, no BullMQ retry. The admin uses the S1-W3 resolve-stuck endpoint to retry once the hot wallet is refilled.
+  - **Critical invariant**: The halt happens BEFORE the broadcast. Funds are NOT on-chain. The locked_balance stays incremented (the user has reserved funds). Admin must either: (a) refill hot wallet and resolve-stuck action='confirm', or (b) resolve-stuck action='refund' to release back to user balance.
+  - **Verification**: Unit 11/11 pass. 5 scenarios: no halt when reserve sufficient, halt when below reserve, edge case where amount fits but reserve dips, original throw when amount itself exceeds balance, env default check.
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 ---

@@ -134,11 +134,71 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       // Ensure MCP session is ready
       await tronMcpService.start();
 
-      // 1. Hot wallet balance and daily limit checks to prevent drain
+      // 1. Hot wallet balance and daily limit checks to prevent drain.
+      //
+      // S1-W10: The audit found that the existing check
+      // (hotBalance < amount) was binary — it would throw on ANY
+      // shortfall, even if the shortfall was just below the safety
+      // reserve. The fix: keep a MIN_BALANCE reserve on the hot
+      // wallet (default 1000 USDT), so a withdrawal that would
+      // dip the hot wallet below the reserve is HALTED, not rejected.
+      //
+      // The halt uses the same 'payout_stuck' status as S1-W3
+      // (broadcast never happened → admin must resolve, no
+      // locked_balance mutation).
       const hotWalletAddress = hotWalletAddressFromKey(privateKeyBuf);
       const hotBalance = await tronMcpService.getUsdtBalance(hotWalletAddress);
-      if (new Decimal(hotBalance).lessThan(amount)) {
+      const hotBalanceDec = new Decimal(hotBalance);
+      const minBalance = new Decimal(env.HOT_WALLET_MIN_BALANCE_USDT);
+      const requiredBalance = minBalance.plus(amount);
+      if (hotBalanceDec.lessThan(amount)) {
         throw new Error(`Hot wallet USDT balance insufficient: ${hotBalance} available, ${amount} requested`);
+      }
+      if (hotBalanceDec.lessThan(requiredBalance)) {
+        // Halt: would dip below the safety reserve. Mark payout_stuck
+        // (not failed) and queue admin alert. Funds have NOT been
+        // broadcast yet.
+        await client.query(
+          `UPDATE transactions
+              SET status = 'payout_stuck',
+                  metadata = metadata || jsonb_build_object(
+                    'payout_stuck_at', NOW()::text,
+                    'payout_stuck_reason', 'hot_wallet_min_balance',
+                    'payout_stuck_hot_balance', $1::text,
+                    'payout_stuck_required_balance', $2::text,
+                    'payout_stuck_min_balance', $3::text,
+                    'payout_stuck_amount', $4::text
+                  )
+            WHERE id = $5`,
+          [hotBalance, requiredBalance.toString(), minBalance.toString(), amount.toString(), txId],
+        );
+        await client.query('COMMIT');
+
+        try {
+          await queueAdminEmail({
+            event_type: 'withdrawal.hot_wallet_min_balance',
+            user_id: tx?.user_id || null,
+            context: {
+              withdrawal_id: txId,
+              hot_balance: hotBalance,
+              required_balance: requiredBalance.toString(),
+              min_balance: minBalance.toString(),
+              requested_amount: amount,
+              resolve_endpoint: `/api/admin/withdrawals/${txId}/resolve-stuck`,
+            },
+          });
+        } catch (emailErr) {
+          logger.error('hot_wallet_min_balance: failed to queue admin email', { txId, error: String(emailErr) });
+        }
+
+        logger.error('Hot wallet balance below MIN_BALANCE reserve — withdrawal halted', {
+          txId,
+          hotBalance,
+          requiredBalance: requiredBalance.toString(),
+          minBalance: minBalance.toString(),
+        });
+
+        return { success: false, stuck: true, error: 'Hot wallet below MIN_BALANCE reserve' };
       }
 
       const dailyLimit = parseFloat(String(env.HOT_WALLET_DAILY_WITHDRAWAL_LIMIT));

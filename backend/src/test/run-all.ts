@@ -52,6 +52,7 @@ const testFiles = [
   's1-c5-admin-2fa.test.ts',
   's1-w3-payout-stuck.test.ts',
   's1-h13-request-tx.test.ts',
+  's1-w10-hot-wallet-min.test.ts',
   'concurrency.test.ts',
 ];
 
