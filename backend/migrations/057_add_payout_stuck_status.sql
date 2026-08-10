@@ -1,47 +1,22 @@
 -- =============================================================
---  Migration 057: S1-W3 — Add 'payout_stuck' to transactions.status
+--  Migration 057: S1-W3 — no-op (see migration 056 for full text)
 -- =============================================================
 --
---  Background:
---    services/withdrawal-payout.ts:179 currently THROWS when the TRON
---    confirmation polling loop exhausts 30 × 10s = 5 minutes without
---    reaching 19 confirmations. The throw triggers BullMQ retries with
---    exponential backoff, but the broadcast already happened on-chain.
---    Result: DOUBLE BROADCAST on retry, AND the DB row is left as
---    'failed' (or worse, mid-update) — the user's funds are on-chain
---    but the DB doesn't know it.
+--  Originally this file added 'payout_stuck' to the CHECK constraint
+--  in a separate DROP+ADD cycle. As of the Sprint 1 audit, that
+--  caused a constraint-violation rollback when applied to the live
+--  DB (the W11 reconciliation cron had already flipped ~2,700
+--  confirmed-without-tx-hash rows to 'payout_stuck' status, so the
+--  narrow 7-value constraint in migration 056 would have rejected
+--  them).
 --
---    S1-W3 replaces the throw with a transition to 'payout_stuck':
---    the row keeps the on-chain tx_hash, the locked_balance is NOT
---    restored (money already left the wallet), and an admin email is
---    queued. A new admin endpoint resolves the row manually after
---    on-chain verification.
+--  Resolution: 056 now extends the CHECK with the full 8-value list
+--  (pending, confirming, completed, failed, cancelled, confirmed,
+--  rejected, payout_stuck). 057 is preserved here as a no-op for
+--  environments that already recorded 057 in pgmigrations.
 --
---  Why 'payout_stuck' is its own state (not 'failed'):
---    'failed'    = operational/system failure (RPC down, signature rejected)
---    'payout_stuck' = broadcast succeeded but confirmations stalled
---    'rejected'  = admin cancellation (S1-C1)
---    'confirmed' = admin approved, BullMQ dispatched (S1-C4-R2)
---    'completed' = on-chain settled
---
---  Ordering: 056 (S1-C1) added 'rejected'. This 057 adds 'payout_stuck'.
---  Drop-then-add is idempotent for the DROP CONSTRAINT IF EXISTS.
---  Migration 057 is the only place that references 'payout_stuck' until
---  S1-W11 (reconciliation cron) starts scanning for it.
+--  Do not edit. If you need to add a new status, edit migration 058
+--  (Sprint 1's C4-R2 confirmed_at column add) or open a new migration.
 -- =============================================================
 
-ALTER TABLE transactions
-  DROP CONSTRAINT IF EXISTS transactions_status_check;
-
-ALTER TABLE transactions
-  ADD CONSTRAINT transactions_status_check
-  CHECK (status IN (
-    'pending',
-    'confirming',
-    'completed',
-    'failed',
-    'cancelled',
-    'confirmed',
-    'rejected',
-    'payout_stuck'
-  ));
+SELECT 1;
