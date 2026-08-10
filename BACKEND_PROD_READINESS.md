@@ -1470,13 +1470,51 @@ Items discovered by comparing the 6 audited files against each other:
 
 ---
 
+## Sprint 1 — Critical Withdrawal Re-Audit (2026-08-10)
+
+Re-audit after 2026-08-07 found 5 critical bugs in the withdrawal flow that
+would cause user fund loss or unauthorized withdrawals in production. Sprint 1
+delivers the 8-bug critical track (C1, C4-R2, C5, W3, H13, W10, W11, W6-KMS)
+before any real user deposits are accepted.
+
+- [x] **[S1-C1] rejectWithdrawal Refunds Wrong Column → Permanent User Fund Loss** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/src/services/bonus.ts` (lines 954-1043, rewritten); `backend/migrations/056_add_rejected_status.sql` (NEW); `backend/src/test/s1-c1-reject-refund.test.ts` (NEW); `backend/src/test/run-all.ts`; `backend/src/test/helpers/test-mocks.ts`
+  - **Issue/Gap**: `rejectWithdrawal()` credited `users.withdrawable_balance_coins` (a separate, unrelated balance used by `getWithdrawableCoins()`) instead of restoring the wallet that was debited at submit time (`withdrawal-queue.ts:203`: `wallets.balance -= amount, wallets.locked_balance += amount`). Every admin rejection caused permanent fund loss. Also used `status='failed'` instead of the semantically distinct `'rejected'`, and the existing CHECK constraint didn't allow `'rejected'` anyway.
+  - **Proposed Fix**:
+    1. Wrap `rejectWithdrawal` in `withTransaction`.
+    2. `SELECT user_id, wallet_id, amount, status FROM transactions WHERE id = $1 AND type = 'withdrawal' FOR UPDATE` — serializes concurrent admin reject calls.
+    3. `UPDATE wallets SET balance = balance + $1, locked_balance = locked_balance - $1, updated_at = NOW() WHERE id = $2 AND user_id = $3` — restores the wallet that was debited.
+    4. `UPDATE transactions SET status = 'rejected', completed_at = NOW(), metadata = metadata || jsonb_build_object('rejected_by', $2::text, 'rejection_reason', $3::text, 'rejected_at', NOW()::text) WHERE id = $1`.
+    5. Migration 056 extends `transactions.status` CHECK to include `'rejected'`.
+  - **Implementation Notes (2026-08-10)**:
+    - **Closed invariant**: `submit: balance -= amount, locked_balance += amount` / `reject: balance += amount, locked_balance -= amount` / `approve+paid: locked_balance -= amount only`.
+    - **Renaming semantic**: `'failed'` is reserved for operational/on-chain failures (TRON confirmation timeout, RPC error). `'rejected'` = admin/manual cancellation. This is the round-1 of a 2-state split; `'payout_stuck'` will be added by migration 057 (W3).
+    - **Why the audit_log `category='withdrawal'` works**: migration 028 widened `audit_log.category` CHECK to include `'withdrawal'`. Pre-existing.
+    - **Test infra side-fix**: `MockRedisClass` in `backend/src/test/helpers/test-mocks.ts` was missing `connect()`. This caused `config/redis.ts:58` (`redis.connect()`) to crash on import. Added `async connect() { return Promise.resolve(); }` — minimum-surface addition, no impact on existing tests that don't call `connect()`.
+    - **Cosmetic follow-up (NOT blocking C1)**: the route handler at `routes/admin-withdrawals.ts:240` returns `status: 'failed'` in the response body. DB is correct (`'rejected'`); only the response string is stale. Tracked as follow-up.
+  - **Verification / Test Method**:
+    - `npx ts-node --require ./src/test/setup.ts ./src/test/s1-c1-reject-refund.test.ts` → 28/28 assertions pass across 5 scenarios (happy path, already-rejected, sequential retry, confirmed, missing).
+    - `npx tsc -p backend/tsconfig.build.json --noEmit` → exit 0.
+    - Live DB E2E: created pending withdrawal for k6test_0 (wallet 875→825, locked 0→50). POST /api/admin/withdrawals/:id/reject → wallet 825→875, locked 50→0, tx.status pending→rejected, audit_log +1 entry. Migration 056 constraint verified via `pg_get_constraintdef`.
+    - **NOT verified via WebUI admin panel** — operator has not provided admin password. The API call exercises the same backend code path the UI button hits. Operator must click through `/admin/login` → Withdrawals → Reject to verify visually.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
+---
+
 ## Final Verdict
 
 **Current grade**: B+
 **Grade after Phase 0**: A-
 **Grade after Phase 1**: A
 **Grade after Phase 2**: A
+**Grade after Sprint 1 (in progress)**: TBD — 1/8 critical bugs fixed
 
-The backend is well-architected (Express + Socket.IO layered correctly, provably-fair engine sound, auth correct, audit trail comprehensive). The 6 P0 items are concentrated bugs that have outsized impact — all are fixable in 6-8 hours of focused work. The P1 and P2 items are hardening, not bugs.
+Re-audit (2026-08-07, embedded in `PROD_AUDIT_2026-08-07.md`) revised the prior
+"Grade after Phase 2: A" assessment downward. The Phase 0/1/2 work addressed
+many surfaces but did NOT exercise the withdrawal flow's atomic refund path,
+which silently corrupted balances on every admin rejection. Sprint 1 is now
+the gating work for any production rollout with real user funds.
 
-**Stop and wait for command before beginning Phase 0 implementation.**
+**8-bug critical track**: C1 ✓ / C4-R2 / C5 / W3 / H13 / W10 / W11 / W6-KMS.
+No real user deposits should be accepted until at least C1, C4-R2, C5, and W6
+land and are tested.

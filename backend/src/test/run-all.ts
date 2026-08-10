@@ -48,6 +48,7 @@ const testFiles = [
   'cohort-analysis.test.ts',
   'game-fraud-controls.test.ts',
   'concurrency.test.ts',
+  's1-c1-reject-refund.test.ts',
 ];
 
 console.log(`🚀 Running ${testFiles.length} backend tests...`);
