@@ -956,44 +956,86 @@ export async function rejectWithdrawal(
   adminUserId: string,
   reason: string,
 ): Promise<{ ok: boolean; refundedCoins: number }> {
-  const tx = await query(
-    `SELECT user_id, amount, status FROM transactions
-     WHERE id = $1 AND type = 'withdrawal'`,
-    [withdrawalId],
-  );
-  if (!tx.rows.length) return { ok: false, refundedCoins: 0 };
-  if (tx.rows[0].status !== 'pending') return { ok: false, refundedCoins: 0 };
+  // S1-C1 fix: refund must restore the wallet that was originally
+  // debited (withdrawal-queue.ts:203). The prior code credited
+  // users.withdrawable_balance_coins — a separate, unrelated balance
+  // used by getWithdrawableCoins() — which left the user's actual
+  // wallet balance permanently short on every admin rejection.
+  //
+  // Closed invariant:
+  //   submit:    wallets.balance -= amount, wallets.locked_balance += amount
+  //   reject:    wallets.balance += amount, wallets.locked_balance -= amount
+  //   approve+paid: locked_balance -= amount (no balance change)
+  //
+  // The FOR UPDATE on the transactions row serializes concurrent
+  // admin reject calls. C4-R2 will additionally wrap approveWithdrawal
+  // in the same pattern; this function is already safe.
+  return await withTransaction(async (tx) => {
+    const txRes = await tx(
+      `SELECT user_id, wallet_id, amount, status FROM transactions
+        WHERE id = $1 AND type = 'withdrawal'
+        FOR UPDATE`,
+      [withdrawalId],
+    );
+    if (!txRes.rows.length) return { ok: false, refundedCoins: 0 };
+    if (txRes.rows[0].status !== 'pending') return { ok: false, refundedCoins: 0 };
 
-  const amount = parseFloat(tx.rows[0].amount);
-  const userId = tx.rows[0].user_id;
+    const amount = parseFloat(txRes.rows[0].amount);
+    const userId = txRes.rows[0].user_id;
+    const walletId = txRes.rows[0].wallet_id;
 
-  await withTransaction(async (tx) => {
+    // 1. Restore the wallet that was debited at submission time.
+    //    Note: locked_balance decrement is guarded by >= 0 in db
+    //    via the implicit numeric CHECK; if it would go negative
+    //    we abort the whole transaction.
+    const walletUpdate = await tx(
+      `UPDATE wallets
+          SET balance = balance + $1,
+              locked_balance = locked_balance - $1,
+              updated_at = NOW()
+        WHERE id = $2 AND user_id = $3`,
+      [amount, walletId, userId],
+    );
+    if (!walletUpdate.rowCount) {
+      throw new Error(
+        `rejectWithdrawal: wallet ${walletId} not found for user ${userId}`,
+      );
+    }
+
+    // 2. Mark the transaction 'rejected' (NOT 'failed' — failed is
+    //    reserved for operational failures per migration 056).
     await tx(
       `UPDATE transactions
-         SET status = 'failed', confirmed_at = NOW(),
-             metadata = metadata || jsonb_build_object('rejected_by', $2::text, 'rejection_reason', $3::text)
-       WHERE id = $1`,
+          SET status = 'rejected',
+              completed_at = NOW(),
+              metadata = metadata || jsonb_build_object(
+                'rejected_by', $2::text,
+                'rejection_reason', $3::text,
+                'rejected_at', NOW()::text
+              )
+        WHERE id = $1`,
       [withdrawalId, adminUserId, reason],
     );
-    // Refund the debited amount back to withdrawable
-    await tx(
-      `UPDATE users
-         SET withdrawable_balance_coins = withdrawable_balance_coins + $2
-       WHERE id = $1`,
-      [userId, amount],
-    );
+
+    // 3. Audit log — action remains 'withdrawal.rejected' for query
+    //    compatibility; the new status is now distinguishable from
+    //    operational failures.
     await tx(
       `INSERT INTO audit_log (category, action, severity, user_id, details)
        VALUES ('withdrawal', 'withdrawal.rejected', 'warn', $1, $2)`,
       [
         userId,
         JSON.stringify({
-          tx_id: withdrawalId, amount, rejected_by: adminUserId, reason,
+          tx_id: withdrawalId,
+          amount,
+          rejected_by: adminUserId,
+          reason,
         }),
       ],
     );
+
+    return { ok: true, refundedCoins: amount };
   });
-  return { ok: true, refundedCoins: amount };
 }
 
 // ── 11. Total withdrawable for user ───────────────────────────
