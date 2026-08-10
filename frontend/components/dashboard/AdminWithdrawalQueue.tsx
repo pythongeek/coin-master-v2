@@ -217,7 +217,7 @@ export default function AdminWithdrawalQueue() {
     getFxRates().then(setFxRates).catch(() => { /* keep stale */ });
   }, [status, minRisk, fetchItems, fetchStats]);
 
-  const approve = async (id: string, isRetry = false) => {
+  const approve = useCallback(async (id: string, isRetry = false) => {
     setActionId(id);
     try {
       const res = await fetch(`${API}/admin/withdrawals/${id}/approve`, {
@@ -243,9 +243,9 @@ export default function AdminWithdrawalQueue() {
     } finally {
       setActionId(null);
     }
-  };
+  }, [token, totpToken, persistTotp, handle2faRequired, items, sanitizeError]);
 
-  const reject = async (id: string, reason: string, isRetry = false) => {
+  const reject = useCallback(async (id: string, reason: string, isRetry = false) => {
     if (!reason.trim()) return;
     setActionId(id);
     try {
@@ -275,11 +275,11 @@ export default function AdminWithdrawalQueue() {
     } finally {
       setActionId(null);
     }
-  };
+  }, [token, totpToken, persistTotp, handle2faRequired, items, sanitizeError]);
 
   // S1-W3: Resolve-stuck. action='confirm' admin-verifies on-chain; 'refund'
   // restores the wallet. Mirrors the closed invariant from services/bonus.ts.
-  const resolveStuck = async (
+  const resolveStuck = useCallback(async (
     id: string,
     action: 'confirm' | 'refund',
     tx_hash: string,
@@ -316,7 +316,7 @@ export default function AdminWithdrawalQueue() {
     } finally {
       setResolvingId(null);
     }
-  };
+  }, [token, totpToken, persistTotp, handle2faRequired, items, sanitizeError]);
 
   const statusClass = (s: string) => {
     if (s === 'pending') return 'bg-amber-500/15 text-amber-400';
