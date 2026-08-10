@@ -47,6 +47,8 @@ const testFiles = [
   'daily-fraud-report.test.ts',
   'cohort-analysis.test.ts',
   'game-fraud-controls.test.ts',
+  's1-c1-reject-refund.test.ts',
+  's1-c4-r2-approve-race.test.ts',
   'concurrency.test.ts',
 ];
 

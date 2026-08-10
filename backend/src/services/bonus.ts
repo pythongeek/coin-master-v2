@@ -910,44 +910,92 @@ export async function approveWithdrawal(
   withdrawalId: string,
   adminUserId: string,
 ): Promise<{ ok: boolean }> {
-  const tx = await query(
-    `SELECT user_id, amount, status, metadata, currency FROM transactions
-     WHERE id = $1 AND type = 'withdrawal'`,
-    [withdrawalId],
-  );
-  if (!tx.rows.length) return { ok: false };
-  if (tx.rows[0].status !== 'pending') return { ok: false };
+  // S1-C4-R2 fix: wrap the status check + update + audit log in a single
+  // transaction with FOR UPDATE on the transaction row. Two concurrent
+  // admin approve calls previously both passed the status check
+  // (no FOR UPDATE) and both executed the UPDATE — the second one
+  // dispatched a duplicate BullMQ payout job.
+  //
+  // The payout dispatch is INTENTIONALLY outside the transaction:
+  // BullMQ jobs are durable queue records, not DB rows, and we want
+  // them to commit even if the audit log insert fails. The DB
+  // transaction commits only the status flip + audit log.
+  //
+  // Status semantics:
+  //   'pending'   = awaiting admin
+  //   'confirmed' = admin approved, dispatched to BullMQ payout queue
+  //   'completed' = on-chain payout settled (set by withdrawal-payout worker)
+  //   'rejected'  = admin rejected (S1-C1, distinct from 'failed')
+  //   'failed'    = operational/on-chain failure (TRON timeout, RPC error)
+  //   'payout_stuck' = S1-W3, manual sweep required
+  const result = await withTransaction(async (tx) => {
+    const txRes = await tx(
+      `SELECT user_id, amount, status, metadata, currency FROM transactions
+        WHERE id = $1 AND type = 'withdrawal'
+        FOR UPDATE`,
+      [withdrawalId],
+    );
+    if (!txRes.rows.length) return { ok: false };
+    if (txRes.rows[0].status !== 'pending') return { ok: false };
 
-  const metadata = typeof tx.rows[0].metadata === 'string' ? JSON.parse(tx.rows[0].metadata) : (tx.rows[0].metadata || {});
-  const chain = metadata.chain || metadata.payout_chain || 'unknown';
-  const token = metadata.currency || tx.rows[0].currency || 'USDT';
+    const userId = txRes.rows[0].user_id;
+    const amount = parseFloat(txRes.rows[0].amount);
+    const metadata = typeof txRes.rows[0].metadata === 'string'
+      ? JSON.parse(txRes.rows[0].metadata)
+      : (txRes.rows[0].metadata || {});
+    const chain = metadata.chain || metadata.payout_chain || 'unknown';
+    const token = metadata.currency || txRes.rows[0].currency || 'USDT';
 
-  await query(
-    `UPDATE transactions
-       SET status = 'confirmed', confirmed_at = NOW()
-     WHERE id = $1`,
-    [withdrawalId],
-  );
+    await tx(
+      `UPDATE transactions
+          SET status = 'confirmed',
+              confirmed_at = NOW(),
+              metadata = metadata || jsonb_build_object(
+                'approved_by', $2::text,
+                'approved_at', NOW()::text
+              )
+        WHERE id = $1`,
+      [withdrawalId, adminUserId],
+    );
 
-  // For TRON/USDT withdrawals, enqueue a real on-chain payout job.
-  if (chain === 'tron' || token === 'USDT' || token === 'TRX') {
-    const { withdrawalPayoutQueue } = await import('./withdrawal-payout.worker');
-    await withdrawalPayoutQueue.add('payout-tron', { txId: withdrawalId }, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 60000 },
-    });
+    await tx(
+      `INSERT INTO audit_log (category, action, severity, user_id, details)
+       VALUES ('withdrawal', 'withdrawal.approved', 'info', $1, $2)`,
+      [
+        userId,
+        JSON.stringify({
+          tx_id: withdrawalId,
+          amount,
+          approved_by: adminUserId,
+          chain,
+          token,
+        }),
+      ],
+    );
+
+    return { ok: true, chain, token };
+  });
+
+  if (!result.ok) return { ok: false };
+
+  // Payout dispatch OUTSIDE the DB transaction (per S1-C4-R2 spec).
+  // BullMQ jobs are durable queue records, not DB rows. If dispatch
+  // fails, the transaction is already committed and the row stays
+  // 'confirmed' — the S1-W11 reconciliation cron will pick it up.
+  if (result.chain === 'tron' || result.token === 'USDT' || result.token === 'TRX') {
+    try {
+      const { withdrawalPayoutQueue } = await import('./withdrawal-payout.worker');
+      await withdrawalPayoutQueue.add('payout-tron', { txId: withdrawalId }, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 60000 },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // eslint-disable-next-line no-console
+      console.error('approveWithdrawal: payout dispatch failed (will be reconciled):', msg);
+    }
   }
-  await query(
-    `INSERT INTO audit_log (category, action, severity, user_id, details)
-     VALUES ('withdrawal', 'withdrawal.approved', 'info', $1, $2)`,
-    [
-      tx.rows[0].user_id,
-      JSON.stringify({
-        tx_id: withdrawalId, amount: parseFloat(tx.rows[0].amount),
-        approved_by: adminUserId,
-      }),
-    ],
-  );
+
   return { ok: true };
 }
 
@@ -956,44 +1004,79 @@ export async function rejectWithdrawal(
   adminUserId: string,
   reason: string,
 ): Promise<{ ok: boolean; refundedCoins: number }> {
-  const tx = await query(
-    `SELECT user_id, amount, status FROM transactions
-     WHERE id = $1 AND type = 'withdrawal'`,
-    [withdrawalId],
-  );
-  if (!tx.rows.length) return { ok: false, refundedCoins: 0 };
-  if (tx.rows[0].status !== 'pending') return { ok: false, refundedCoins: 0 };
+  // S1-C1 fix: refund must restore the wallet that was originally
+  // debited (withdrawal-queue.ts:203). The prior code credited
+  // users.withdrawable_balance_coins — a separate, unrelated balance
+  // used by getWithdrawableCoins() — which left the user's actual
+  // wallet balance permanently short on every admin rejection.
+  //
+  // Closed invariant:
+  //   submit:    wallets.balance -= amount, wallets.locked_balance += amount
+  //   reject:    wallets.balance += amount, wallets.locked_balance -= amount
+  //   approve+paid: locked_balance -= amount (no balance change)
+  //
+  // S1-C4-R2: SELECT … FOR UPDATE serializes concurrent admin reject
+  // calls; the same pattern is in approveWithdrawal.
+  return await withTransaction(async (tx) => {
+    const txRes = await tx(
+      `SELECT user_id, wallet_id, amount, status FROM transactions
+        WHERE id = $1 AND type = 'withdrawal'
+        FOR UPDATE`,
+      [withdrawalId],
+    );
+    if (!txRes.rows.length) return { ok: false, refundedCoins: 0 };
+    if (txRes.rows[0].status !== 'pending') return { ok: false, refundedCoins: 0 };
 
-  const amount = parseFloat(tx.rows[0].amount);
-  const userId = tx.rows[0].user_id;
+    const amount = parseFloat(txRes.rows[0].amount);
+    const userId = txRes.rows[0].user_id;
+    const walletId = txRes.rows[0].wallet_id;
 
-  await withTransaction(async (tx) => {
+    // 1. Restore the wallet that was debited at submission time.
+    const walletUpdate = await tx(
+      `UPDATE wallets
+          SET balance = balance + $1,
+              locked_balance = locked_balance - $1,
+              updated_at = NOW()
+        WHERE id = $2 AND user_id = $3`,
+      [amount, walletId, userId],
+    );
+    if (!walletUpdate.rowCount) {
+      throw new Error(
+        `rejectWithdrawal: wallet ${walletId} not found for user ${userId}`,
+      );
+    }
+
+    // 2. Mark the transaction 'rejected' (NOT 'failed').
     await tx(
       `UPDATE transactions
-         SET status = 'failed', confirmed_at = NOW(),
-             metadata = metadata || jsonb_build_object('rejected_by', $2::text, 'rejection_reason', $3::text)
-       WHERE id = $1`,
+          SET status = 'rejected',
+              completed_at = NOW(),
+              metadata = metadata || jsonb_build_object(
+                'rejected_by', $2::text,
+                'rejection_reason', $3::text,
+                'rejected_at', NOW()::text
+              )
+        WHERE id = $1`,
       [withdrawalId, adminUserId, reason],
     );
-    // Refund the debited amount back to withdrawable
-    await tx(
-      `UPDATE users
-         SET withdrawable_balance_coins = withdrawable_balance_coins + $2
-       WHERE id = $1`,
-      [userId, amount],
-    );
+
+    // 3. Audit log.
     await tx(
       `INSERT INTO audit_log (category, action, severity, user_id, details)
        VALUES ('withdrawal', 'withdrawal.rejected', 'warn', $1, $2)`,
       [
         userId,
         JSON.stringify({
-          tx_id: withdrawalId, amount, rejected_by: adminUserId, reason,
+          tx_id: withdrawalId,
+          amount,
+          rejected_by: adminUserId,
+          reason,
         }),
       ],
     );
+
+    return { ok: true, refundedCoins: amount };
   });
-  return { ok: true, refundedCoins: amount };
 }
 
 // ── 11. Total withdrawable for user ───────────────────────────
