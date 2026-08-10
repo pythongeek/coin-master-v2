@@ -22,6 +22,7 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, adminMiddleware, AuthPayload } from '../middleware/auth';
+import { requireAdmin2FA } from '../middleware/require-admin-2fa';
 import {
   approveWithdrawal, rejectWithdrawal, expireBonuses,
 } from '../services/bonus';
@@ -177,7 +178,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // ── POST /api/admin/withdrawals/:id/approve ────────────────────
-router.post('/:id/approve', async (req: Request, res: Response) => {
+router.post('/:id/approve', requireAdmin2FA, async (req: Request, res: Response) => {
   try {
     const admin = (req as Request & { user: AuthPayload }).user;
     const id = String(req.params.id);
@@ -212,7 +213,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
 
 // ── POST /api/admin/withdrawals/:id/reject ─────────────────────
 // body: { reason: string } — required
-router.post('/:id/reject', async (req: Request, res: Response) => {
+router.post('/:id/reject', requireAdmin2FA, async (req: Request, res: Response) => {
   try {
     const admin = (req as Request & { user: AuthPayload }).user;
     const id = String(req.params.id);
