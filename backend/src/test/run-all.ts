@@ -50,6 +50,7 @@ const testFiles = [
   's1-c1-reject-refund.test.ts',
   's1-c4-r2-approve-race.test.ts',
   's1-c5-admin-2fa.test.ts',
+  's1-w3-payout-stuck.test.ts',
   'concurrency.test.ts',
 ];
 

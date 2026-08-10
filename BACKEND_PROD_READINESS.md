@@ -1489,10 +1489,19 @@ Re-audit (2026-08-07) found 5 critical bugs in the withdrawal flow that would ca
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 - [x] **[S1-C5] Admin Approve/Reject Has No 2FA → Token Theft Drains All Pending Withdrawals** ✓ TESTED & PASSED 2026-08-10
-  - **File(s) Affected**: `backend/src/middleware/require-admin-2fa.ts` (NEW); `backend/src/routes/admin-withdrawals.ts` (POST /:id/approve + /:id/reject now require 2FA); `backend/src/test/s1-c5-admin-2fa.test.ts` (NEW); `backend/src/test/run-all.ts`
-  - **Issue/Gap**: A stolen `super_admin` JWT token could call approve/reject with no second factor. Despite `admin_2fa_required` existing in `admin_settings`, the endpoints never enforced it.
-  - **Proposed Fix**: New middleware `requireAdmin2FA` reads `admin_2fa_required` from DB; if true, validates `X-Admin-2FA-Token` header against the admin's TOTP secret. Honors grace window via `totp_verified_at`. Audit-logs every success/failure.
-  - **Verification**: Unit 23/23 pass. 8 scenarios: bypass when disabled, enrollment check, missing/invalid TOTP, grace window, valid TOTP, audit logging.
+  - **File(s) Affected**: `backend/src/middleware/require-admin-2fa.ts` (NEW); `backend/src/routes/admin-withdrawals.ts`; `backend/src/test/s1-c5-admin-2fa.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: Stolen `super_admin` JWT could call approve/reject with no second factor.
+  - **Proposed Fix**: `requireAdmin2FA` middleware enforces TOTP when `admin_2fa_required=true`.
+  - **Verification**: Unit 23/23 pass.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
+- [x] **[S1-W3] Confirmation Timeout → User Funds Lost; BullMQ Double-Broadcast** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/migrations/057_add_payout_stuck_status.sql` (NEW); `backend/src/services/withdrawal-payout.ts`; `backend/src/routes/admin-withdrawals.ts` (POST /:id/resolve-stuck endpoint); `backend/src/test/s1-w3-payout-stuck.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: `services/withdrawal-payout.ts:178` THREW when the 30×10s confirmation polling exhausted without 19 confirmations. Throw triggered BullMQ retry → DOUBLE BROADCAST on-chain. DB row left as 'failed' (or worse, mid-update). User's funds were on-chain but the DB didn't know.
+  - **Proposed Fix**: Replace the throw with a transition to new `'payout_stuck'` state. Persist `tx_hash` as soon as broadcast succeeds (critical invariant). Do NOT restore `locked_balance` (money is on-chain). Queue admin email. Return `success: false, stuck: true` so BullMQ doesn't retry. New `'payout_stuck'` row in `transactions.status` CHECK constraint via migration 057.
+  - **Resolution endpoint**: `POST /api/admin/withdrawals/:id/resolve-stuck` with `action: 'confirm' | 'refund'`. Both gated by `requireAdmin2FA` (S1-C5). 'confirm' → status='completed', locked_balance -= amount. 'refund' → status='rejected', balance += amount, locked_balance -= amount (mirrors S1-C1 closed invariant).
+  - **Implementation Notes**: The catch block now uses `status = CASE WHEN status = 'payout_stuck' THEN status ELSE 'failed' END` so a BullMQ re-run on a stuck row doesn't downgrade it.
+  - **Verification**: Unit 20/20 pass. 5 scenarios: timeout → payout_stuck, resolve-confirm, resolve-refund, no-op on non-stuck, replay-safety.
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 ---
