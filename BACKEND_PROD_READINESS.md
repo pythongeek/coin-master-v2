@@ -1532,6 +1532,13 @@ Re-audit (2026-08-07) found 5 critical bugs in the withdrawal flow that would ca
   - **Verification**: Unit 13/13 pass. 7 scenarios: env defaults, FATAL on bad config, warn on bypass, silent on aws-kms/fireblocks/hashicorp-vault, dev bypass.
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
+- [x] **[Migration 058] Add `confirmed_at` Column for S1-C4-R2 Live Verifiability** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/migrations/058_add_confirmed_at.sql` (NEW)
+  - **Issue/Gap**: The S1-C4-R2 fix in `services/bonus.ts:952` (approveWithdrawal) sets `confirmed_at = NOW()`. The schema.sql declares this column, but the live DB was migrated before the column was added. Live verification on 2026-08-10: `POST /api/admin/withdrawals/:id/approve` returned HTTP 500 `column "confirmed_at" does not exist`, blocking the entire C4-R2 fix path in production.
+  - **Proposed Fix**: Add `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`. Idempotent migration. Closes the schema drift between schema.sql and the live DB. Required for the C4-R2 approve path to work end-to-end.
+  - **Verification**: Live API + WebUI approval round-trip with `confirmed_at` populated. Unit tests unaffected.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
 ---
 
 ## Final Verdict
