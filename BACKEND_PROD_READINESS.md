@@ -1511,10 +1511,19 @@ Re-audit (2026-08-07) found 5 critical bugs in the withdrawal flow that would ca
 
 - [x] **[S1-W10] Hot Wallet Min Balance Guard → Reserve Drain** ✓ TESTED & PASSED 2026-08-10
   - **File(s) Affected**: `backend/src/services/withdrawal-payout.ts`; `backend/src/test/s1-w10-hot-wallet-min.test.ts` (NEW); `backend/src/test/run-all.ts`
-  - **Issue/Gap**: The existing check `hotBalance < amount` was binary. A withdrawal that would dip the hot wallet below an operational reserve (default 1000 USDT for TronGrid energy fees) was rejected entirely. The fix: keep a MIN_BALANCE reserve; halt as 'payout_stuck' if the broadcast would dip below it.
-  - **Proposed Fix**: Read `HOT_WALLET_MIN_BALANCE_USDT` (env, default 1000). If `hotBalance < amount + minBalance`, halt: status='payout_stuck', no broadcast, queue admin email, no BullMQ retry. The admin uses the S1-W3 resolve-stuck endpoint to retry once the hot wallet is refilled.
-  - **Critical invariant**: The halt happens BEFORE the broadcast. Funds are NOT on-chain. The locked_balance stays incremented (the user has reserved funds). Admin must either: (a) refill hot wallet and resolve-stuck action='confirm', or (b) resolve-stuck action='refund' to release back to user balance.
-  - **Verification**: Unit 11/11 pass. 5 scenarios: no halt when reserve sufficient, halt when below reserve, edge case where amount fits but reserve dips, original throw when amount itself exceeds balance, env default check.
+  - **Issue/Gap**: Binary hotBalance < amount check drained the operational reserve.
+  - **Proposed Fix**: Halt as 'payout_stuck' if `hotBalance < amount + minBalance` (default 1000 USDT reserve).
+  - **Verification**: Unit 11/11 pass.
+  - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
+
+- [x] **[S1-W11] Payout Reconciliation Cron → Silent Stuck Withdrawals** ✓ TESTED & PASSED 2026-08-10
+  - **File(s) Affected**: `backend/src/services/payout-reconciliation.ts` (NEW); `backend/src/index.ts` (cron startup); `backend/src/test/s1-w11-reconciliation.test.ts` (NEW); `backend/src/test/run-all.ts`
+  - **Issue/Gap**: BullMQ job eaten (Redis blip, worker crash, queue reset) leaves `status='confirmed' AND tx_hash IS NULL` rows in limbo forever. The user's balance is locked and no admin is paged.
+  - **Proposed Fix**: New `payout-reconciliation.ts` cron runs every 5 min via `setInterval`. Two scans:
+       1. `status='confirmed' AND tx_hash IS NULL AND created_at < 30 min ago` → flip to `payout_stuck` (S1-W3) + admin email.
+       2. `status='pending' AND created_at < 48 hours` → log + alert (no auto-refund; that is S1-W16, separate task).
+  - **Implementation Notes**: Manual trigger exported as `runPayoutReconciliation()`. `startPayoutReconciliationCron()` is idempotent. Errors per-row don't fail the batch. Limited to 100 rows per run.
+  - **Verification**: Unit 11/11 pass. 5 scenarios: stuck-confirmed → payout_stuck, stuck-pending → alert (no flip), recent row → no touch, row with tx_hash → no touch, cron lifecycle idempotency.
   - **Status**: `[x] [TESTED & PASSED 2026-08-10]`
 
 ---

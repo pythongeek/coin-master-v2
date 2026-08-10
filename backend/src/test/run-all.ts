@@ -53,6 +53,7 @@ const testFiles = [
   's1-w3-payout-stuck.test.ts',
   's1-h13-request-tx.test.ts',
   's1-w10-hot-wallet-min.test.ts',
+  's1-w11-reconciliation.test.ts',
   'concurrency.test.ts',
 ];
 

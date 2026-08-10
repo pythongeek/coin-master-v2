@@ -366,6 +366,17 @@ async function start() {
     console.warn('[boot] weekly cohort analysis worker failed to start:', e);
   }
 
+  // Start S1-W11 payout reconciliation cron. Ticks every 5 minutes
+  // and flips confirmed-without-tx-hash rows to 'payout_stuck' so
+  // the S1-W3 resolve-stuck endpoint can take over. Also alerts on
+  // pending withdrawals older than 48 hours (auto-refund is W16).
+  try {
+    const { startPayoutReconciliationCron } = await import('./services/payout-reconciliation');
+    startPayoutReconciliationCron();
+  } catch (e) {
+    console.warn('[boot] payout reconciliation cron failed to start:', e);
+  }
+
   // Start QR expiration worker (ticks every 60s, expires stale orders)
   // Runs independently of the ledger-monitor loop so expired orders don't
   // pile up when BINANCE_API_SECRET is not configured.
