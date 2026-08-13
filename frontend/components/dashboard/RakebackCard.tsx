@@ -1,3 +1,6 @@
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 "use client";
 
 /**
@@ -17,7 +20,7 @@ interface RakebackStatus {
   minClaim: number;
 }
 
-export function RakebackCard({ token, onClaim }: { token: string; onClaim?: () => void }) {
+export function RakebackCard({ token, onClaim }: { token?: string; onClaim?: () => void }) {
   const { addToast } = useToast();
   const [status, setStatus] = useState<RakebackStatus | null>(null);
   const [loading, setLoading] = useState(true);

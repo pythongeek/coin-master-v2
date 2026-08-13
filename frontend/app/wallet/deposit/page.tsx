@@ -45,7 +45,7 @@ import { getFxRates, type FxRatesResponse } from '@/lib/api/wallet';
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  null
+  return ''
 }
 
 function formatCountdown(secs: number): string {

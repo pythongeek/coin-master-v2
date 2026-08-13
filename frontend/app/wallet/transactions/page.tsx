@@ -28,7 +28,7 @@ import {
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  null
+  return ''
 }
 
 const TYPE_FILTERS = [

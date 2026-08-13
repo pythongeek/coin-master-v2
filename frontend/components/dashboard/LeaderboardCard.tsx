@@ -1,3 +1,6 @@
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 "use client";
 
 /**
@@ -22,7 +25,7 @@ interface LeaderboardData {
   position: { position: number | null; totalWagered: number; prize: number };
 }
 
-export function LeaderboardCard({ token }: { token: string }) {
+export function LeaderboardCard({ token: _token }: { token?: string }) {
   const { t } = useTranslation();
   const [data, setData] = useState<LeaderboardData | null>(null);
   const [period, setPeriod] = useState<"daily" | "weekly">("daily");
@@ -38,7 +41,7 @@ export function LeaderboardCard({ token }: { token: string }) {
         if (d.success) setData(d.data);
       })
       .finally(() => setLoading(false));
-  }, [period, token]);
+  }, [period, _token]);
 
   if (loading) {
     return (

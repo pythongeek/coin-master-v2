@@ -23,7 +23,7 @@ import {
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  null
+  return ''
 }
 
 type Tab = 'settings' | 'overrides' | 'self_exclusions' | 'audit';

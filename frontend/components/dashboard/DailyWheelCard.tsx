@@ -1,3 +1,6 @@
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 "use client";
 
 /**
@@ -20,7 +23,7 @@ interface WheelPrize {
   type: string;
 }
 
-export function DailyWheelCard({ wheel, token, onSpin }: { wheel?: WheelData; token: string; onSpin: () => void }) {
+export function DailyWheelCard({ wheel, token, onSpin }: { wheel?: WheelData; token?: string; onSpin: () => void }) {
   const { t } = useTranslation();
   const [spinning, setSpinning] = useState(false);
   const [lastPrize, setLastPrize] = useState<WheelPrize | null>(null);

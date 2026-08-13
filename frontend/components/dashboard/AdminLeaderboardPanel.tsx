@@ -1,3 +1,6 @@
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 "use client";
 
 /**
@@ -34,7 +37,7 @@ export default function AdminLeaderboardPanel() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setToken(t);
+    setToken("");
   }, []);
 
   const load = async () => {

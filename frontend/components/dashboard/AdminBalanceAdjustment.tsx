@@ -30,7 +30,7 @@ import {
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  return null
+  return ''
 }
 
 type Tab = 'adjust' | 'history';

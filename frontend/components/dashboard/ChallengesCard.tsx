@@ -1,3 +1,6 @@
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 "use client";
 
 /**
@@ -18,7 +21,7 @@ interface ChallengeProgress {
   claimed: boolean;
 }
 
-export function ChallengesCard({ token, onClaim }: { token: string; onClaim?: () => void }) {
+export function ChallengesCard({ token, onClaim }: { token?: string; onClaim?: () => void }) {
   const { addToast } = useToast();
   const [challenges, setChallenges] = useState<ChallengeProgress[]>([]);
   const [loading, setLoading] = useState(true);
