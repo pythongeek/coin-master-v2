@@ -74,7 +74,7 @@ export default function AdminAuditLogViewer() {
       if (t === 'fraud') {
         // Existing fraud_logs endpoint — left as-is (no new filters here, surgical scope).
         const res = await fetch(`/api/admin/fraud-logs?limit=${PAGE_SIZE}&offset=${o}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {},
         });
         const data = await res.json();
         if (data.success) {
@@ -119,7 +119,7 @@ export default function AdminAuditLogViewer() {
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       const res = await fetch(`/api/admin/audit/export?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       if (!res.ok) { setError(`CSV export failed: HTTP ${res.status}`); return; }
       const blob = await res.blob();

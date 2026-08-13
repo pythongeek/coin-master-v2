@@ -88,8 +88,7 @@ const TOOLTIPS: Record<string, string> = {
 export default function AdminEmail() {
   const [subTab, setSubTab] = useState<SubTab>('recipients');
   const { addToast } = useToast();
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const headers = { 'Content-Type': 'application/json',};
 
   return (
     <div className="space-y-4">

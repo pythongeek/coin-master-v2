@@ -4,13 +4,9 @@
  * ═══════════════════════════════════════════════════════════════
  */
 
-export function getTokenFromStorage(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('cf_token');
-}
-
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { apiGet, apiPost } from './api'; // PR-1B: auth flows through httpOnly cookie + /api/auth/me only
 
 // ── ধরনগুলো ────────────────────────────────────────────────────
 export type GameStatus = 'idle' | 'spinning' | 'result';
@@ -97,12 +93,22 @@ export interface ActiveRain {
 interface GameStore {
   // ── অথ ──────────────────────────────────────────────────────
   user: User | null;
+  /** In-memory only — NEVER persisted to localStorage. Socket.IO uses
+   *  this token until the next page refresh re-hydrates via /api/auth/me. */
   token: string | null;
+  /** Mirrors whether /api/auth/me returned 200 — used by UI guards. */
+  isAuthenticated: boolean;
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
   login: (payload: { user: User; token: string }) => void;
+  /** PR-1B — hydrate user from server using httpOnly cookie. Called
+   *  once on app mount and after login. Replaces the old
+   *  localStorage-based rehydrate. */
+  initialize: () => Promise<void>;
   updateBalance: (balance: number) => void;
-  logout: () => void;
+  /** PR-1B — async; calls POST /api/auth/logout to clear the cookie
+   *  server-side, then clears the in-memory store. */
+  logout: () => Promise<void>;
 
   // ── গেম স্টেট ────────────────────────────────────────────────
   gameStatus: GameStatus;
@@ -164,6 +170,7 @@ export const useGameStore = create<GameStore>()(
       // ── অথ ──────────────────────────────────────────────────────
       user: null,
       token: null,
+      isAuthenticated: false,
 
       setUser: (user) => set({ user }),
       setToken: (token) => {
@@ -172,8 +179,31 @@ export const useGameStore = create<GameStore>()(
       },
 
       login: ({ user, token }: { user: User; token: string }) => {
-        set({ user, token });
+        set({ user, token, isAuthenticated: true });
         import('@/lib/socket').then(({ refreshSocketToken }) => refreshSocketToken(token));
+      },
+
+      // PR-1B: hydrate user from /api/auth/me. The httpOnly cookie is
+      // attached automatically by the browser for same-origin requests
+      // (and via the Next.js /api/[...path] proxy). On success we set
+      // user + isAuthenticated; on 401/403/network error we clear both
+      // so the UI shows the logged-out state.
+      initialize: async () => {
+        try {
+          const res = await apiGet('/api/auth/me');
+          if (res.ok) {
+            const payload = await res.json();
+            // Backend /api/auth/me returns both `data` (canonical) and
+            // `user` (legacy shape). Prefer `data`, fall back to `user`.
+            const user = (payload?.data ?? payload?.user ?? null) as User | null;
+            if (user) set({ user, isAuthenticated: true });
+            else set({ user: null, isAuthenticated: false, token: null });
+          } else {
+            set({ user: null, isAuthenticated: false, token: null });
+          }
+        } catch {
+          set({ user: null, isAuthenticated: false, token: null });
+        }
       },
 
       updateBalance: (balance) =>
@@ -181,10 +211,25 @@ export const useGameStore = create<GameStore>()(
           user: state.user ? { ...state.user, balance } : null,
         })),
 
-      logout: () => {
-        set({ user: null, token: null, lastResult: null, activeScatter: null, pendingScatter: null });
+      // PR-1B: async. Tells the server to clear the httpOnly cookie,
+      // then clears the in-memory store. We do NOT touch localStorage
+      // here — there is no auth-related data there anymore.
+      logout: async () => {
+        try {
+          await apiPost('/api/auth/logout');
+        } catch {
+          // Even if the network call fails, still clear the local
+          // store so the UI reflects logged-out.
+        }
+        set({
+          user: null,
+          token: null,
+          isAuthenticated: false,
+          lastResult: null,
+          activeScatter: null,
+          pendingScatter: null,
+        });
         if (typeof window !== 'undefined') {
-          localStorage.removeItem('cf_token');
           import('@/lib/socket').then(({ clearToken }) => clearToken());
         }
       },
@@ -289,73 +334,26 @@ export const useGameStore = create<GameStore>()(
           : (undefined as unknown as Storage)
       ),
       partialize: (state) => ({
+        // PR-1B: `token` is intentionally NOT persisted — the raw JWT
+        // never crosses into localStorage. We still cache `user` so
+        // the UI paints instantly on the next visit; `initialize()`
+        // reconciles with the server on mount and after login.
         user: state.user,
-        token: state.token,
         settings: state.settings,
         locale: state.locale,
       }),
       skipHydration: false,
       version: 2,
-      onRehydrateStorage: () => {
-        // Some login flows (legacy + manual token injection) only write
-        // cf_token. Make sure the Zustand store picks it up, but never
-        // trust client-side isAdmin — the backend validates role on every
-        // request.
-        // This callback returns a patch merged after hydration. The merged
-        // state runs inside the store, so we must avoid calling setState
-        // directly here (circular init error).
-        if (typeof window === 'undefined') return;
-        return (state: GameStore | undefined) => {
-          if (state?.user && state?.token) return;
-          try {
-            const token = localStorage.getItem('cf_token');
-            if (token) {
-              const payload = JSON.parse(atob(token.split('.')[1]));
-              const parsedUser: User = {
-                userId: payload.userId || payload.sub,
-                username: payload.username || 'player',
-                email: payload.email || null,
-                balance: payload.balance || 0,
-                isAdmin: false,
-                walletAddress: payload.walletAddress || null,
-                isFlagged: payload.isFlagged || false,
-              };
-              return { user: parsedUser, token } as Partial<GameStore>;
-            }
-          } catch (e) {
-            console.warn('[store] rehydrate from cf_token failed', e);
-          }
-        };
-      },
-      migrate: (persistedState, version) => {
-        if (version < 1 && typeof window !== 'undefined') {
-          try {
-            const legacyToken = localStorage.getItem('cf_token');
-            if (legacyToken) {
-              // Decode JWT to derive the user instead of trusting a stale
-              // cf_user blob that may have been tampered with.
-              const payload = JSON.parse(atob(legacyToken.split('.')[1]));
-              const state = (persistedState ?? {}) as Partial<GameStore>;
-              return {
-                ...state,
-                token: legacyToken,
-                user: {
-                  userId: payload.userId || payload.sub,
-                  username: payload.username || 'player',
-                  email: payload.email || null,
-                  balance: payload.balance || 0,
-                  // NEVER trust client-side isAdmin; the backend validates role.
-                  isAdmin: false,
-                  walletAddress: payload.walletAddress || null,
-                },
-              } as GameStore;
-            }
-          } catch (e) {
-            console.warn('[store] migration from cf_token failed', e);
-          }
-        }
-        return persistedState as GameStore;
-      },
+      // PR-1B: removed the legacy onRehydrateStorage block that
+      // decoded the JWT from localStorage — there is no token there
+      // to decode. The persist middleware still rehydrates `user`,
+      // `settings`, `locale` automatically.
+      // PR-1B: removed the legacy `migrate` callback that walked
+      // version < 1 states and decoded a token from localStorage.
+      // The first user after this PR ships will have version=2 state
+      // (or no state at all), so no migration is required. If a
+      // future schema change needs migration, write a new `migrate`
+      // callback here.
     }
   )
 );

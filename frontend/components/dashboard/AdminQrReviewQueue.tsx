@@ -15,10 +15,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { CheckCircle2, XCircle, RefreshCw, Clock, AlertCircle, Loader2, ExternalLink, ChevronDown, ChevronUp, Eye } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface ReviewItem {
   id: string;
   merchant_order_id: string;
@@ -69,10 +66,9 @@ export default function AdminQrReviewQueue() {
   const [note, setNote] = useState('');
   const { addToast } = useToast();
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
+
   };
 
   const load = useCallback(async () => {

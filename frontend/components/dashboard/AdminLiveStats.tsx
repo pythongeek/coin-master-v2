@@ -12,10 +12,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Users, Banknote, Landmark, Dices, CloudRain, type LucideIcon } from 'lucide-react';
 
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface LiveStats {
   users:       { total: number; today: number };
   bets:        { total: number; totalVolume: number; today: number; todayVolume: number };
@@ -29,10 +26,9 @@ export default function AdminLiveStats() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
   const fetchStats = useCallback(async () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
     try {
       const res = await fetch(`${API}/admin/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const json = await res.json();
       if (json.success && json.stats) {

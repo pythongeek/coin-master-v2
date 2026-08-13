@@ -52,7 +52,7 @@ export default function PromoWidget() {
     setLoading(true);
     try {
       const [promoRes, campRes] = await Promise.all([
-        fetch(`${API}/wallet/promo/active`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/wallet/promo/active`, { credentials: 'include' }),
         api.get('/api/bonus/campaigns', token),
       ]);
       const promoData = await promoRes.json();
@@ -88,7 +88,7 @@ export default function PromoWidget() {
     try {
       const res = await fetch(`${API}/wallet/promo/claim`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        credentials: 'include',
         body: JSON.stringify({ code }),
       });
       const data = await res.json();

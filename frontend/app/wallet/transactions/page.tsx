@@ -28,7 +28,7 @@ import {
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  return localStorage.getItem('cf_token') || '';
+  null
 }
 
 const TYPE_FILTERS = [

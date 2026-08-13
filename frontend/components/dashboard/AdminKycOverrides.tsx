@@ -23,7 +23,7 @@ import {
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  return localStorage.getItem('cf_token') || '';
+  null
 }
 
 type Tab = 'settings' | 'overrides' | 'self_exclusions' | 'audit';
@@ -194,7 +194,7 @@ function SettingsTab({ config, token, onUpdate, flash }: {
             try {
               const r = await fetch('/api/admin/kyc/thresholds', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                headers: { 'Content-Type': 'application/json'},
                 body: JSON.stringify({ enforcementMode: e.target.value, reason: 'Updated via admin UI' }),
               });
               const data = await r.json();
@@ -259,7 +259,7 @@ function TierCard({ tier, maxPerTx, maxDaily, token, onUpdate, flash }: {
     try {
       const r = await fetch('/api/admin/kyc/thresholds', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({
           tier,
           maxPerTx: parseFloat(perTx),
@@ -332,7 +332,7 @@ function SanctionedCard({ config, token, onUpdate, flash }: {
     try {
       const res = await fetch('/api/admin/kyc/sanctioned-countries', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({ action, country: country.toUpperCase(), reason: reasonText }),
       });
       const data = await res.json();
@@ -412,7 +412,7 @@ function ExpiryCard({ config, token, onUpdate, flash }: {
     try {
       const r = await fetch('/api/admin/kyc/expiry-policy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({
           enabled,
           autoAction,
@@ -498,7 +498,7 @@ function OverridesTab({ overrides, token, onUpdate, flash }: {
     try {
       const r = await fetch('/api/admin/kyc/overrides', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({
           userId,
           grantedDays: parseInt(days),
@@ -518,7 +518,7 @@ function OverridesTab({ overrides, token, onUpdate, flash }: {
     try {
       const res = await fetch(`/api/admin/kyc/overrides/${uid}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({ reason: r }),
       });
       const data = await res.json();
@@ -619,7 +619,7 @@ function SelfExclusionsTab({ exclusions, token, onUpdate, flash }: {
     try {
       const r = await fetch('/api/admin/kyc/self-exclusion/reverse', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({ userId: uid, reason }),
       });
       const data = await r.json();
@@ -643,7 +643,7 @@ function SelfExclusionsTab({ exclusions, token, onUpdate, flash }: {
     try {
       const r = await fetch('/api/admin/kyc/self-exclusion/extend', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        headers: { 'Content-Type': 'application/json'},
         body: JSON.stringify({ userId: uid, additionalDays: days, reason }),
       });
       const data = await r.json();

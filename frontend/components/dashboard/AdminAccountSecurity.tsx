@@ -7,10 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { Key, Shield, Eye, EyeOff, Check, AlertCircle, Loader2 } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 export default function AdminAccountSecurity({ currentUser }: { currentUser?: { username: string; role: string; twoFactorEnabled: boolean } }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -26,11 +23,10 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
   const [twoFaCode, setTwoFaCode] = useState('');
   const [twoFaMsg, setTwoFaMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   const fetch2faStatus = async () => {
     try {
-      const res = await fetch(`${API}/admin/2fa/status`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/admin/2fa/status`, { headers: {} });
       const data = await res.json();
       if (data.success) setTwoFaEnabled(data.enabled);
     } catch { /* ignore */ }
@@ -55,7 +51,7 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
     try {
       const res = await fetch(`${API}/admin/change-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify({ currentPassword, newPassword }),
       });
       const data = await res.json();
@@ -79,7 +75,7 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
     try {
       const res = await fetch(`${API}/auth/2fa/setup`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {
@@ -104,7 +100,7 @@ export default function AdminAccountSecurity({ currentUser }: { currentUser?: { 
     try {
       const res = await fetch(`${API}/auth/2fa/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify({ token: twoFaCode }),
       });
       const data = await res.json();

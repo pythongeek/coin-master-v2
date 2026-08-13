@@ -11,10 +11,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Check, X, Loader2, Shield, ChevronLeft, ChevronRight, Eye, FileText } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface KycSession {
   id: string;
   user_id: string;
@@ -56,7 +53,6 @@ export default function AdminKycReviewPanel() {
   const [detail, setDetail] = useState<KycSession | null>(null);
   const [note, setNote] = useState('');
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -68,7 +64,7 @@ export default function AdminKycReviewPanel() {
       });
       if (statusFilter !== 'all') params.set('status', statusFilter);
       const res = await fetch(`${API}/kyc/admin/list?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {
@@ -90,7 +86,7 @@ export default function AdminKycReviewPanel() {
     try {
       const res = await fetch(`${API}/kyc/admin/review/${sessionId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify({ decision, note }),
       });
       const data = await res.json();

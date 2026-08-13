@@ -7,11 +7,7 @@
 import { useState, useEffect } from 'react';
 import { Wallet, CloudRain, Users, Zap, ShieldCheck, Settings, RotateCcw, Calculator, Check, Loader2, type LucideIcon } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 // ── DEFAULT CONFIG (Backend থেকে না পেলে এটি ব্যবহার হবে) ────────
 const DEFAULTS = {
   houseEdgePercent:       { value: 2.0,    label: 'House Edge', unit: '%',      desc: 'প্ল্যাটফর্মের কমিশন। ২% = ১০০ Betে জয় হলে ১৯৬ পাবে', min: 0.1,  max: 10,    category: 'Betিং', type: 'number' },
@@ -65,11 +61,10 @@ export default function AdminConfigPanel() {
     setSaving(key);
     setConfig(prev => ({ ...prev, [key]: value as any }));
 
-    const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
     try {
       const res = await fetch(`${API}/admin/config`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify({ [key]: value }),
       });
       const data = await res.json();
@@ -91,11 +86,10 @@ export default function AdminConfigPanel() {
 
   // ── ডিফল্টে ফিরিয়ে দাও ────────────────────────────────────────
   const handleReset = async () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
     try {
       const res = await fetch(`${API}/admin/config/reset`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (!data.success) {
@@ -138,10 +132,9 @@ export default function AdminConfigPanel() {
           Object.entries(parsed).filter(([k]) => validKeys.includes(k))
         ) as Record<string, string | number | boolean>;
         setConfig((prev) => ({ ...prev, ...filtered }));
-        const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
         const res = await fetch(`${API}/admin/config`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json',},
           body: JSON.stringify(filtered),
         });
         const data = await res.json();

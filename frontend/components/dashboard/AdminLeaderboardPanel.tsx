@@ -7,11 +7,7 @@
 import { useState, useEffect } from "react";
 import { Trophy, Crown, RefreshCw, Award } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface LeaderboardEntry {
   rank: number;
   userId: string;
@@ -38,7 +34,6 @@ export default function AdminLeaderboardPanel() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const t = localStorage.getItem("cf_token") || "";
     setToken(t);
   }, []);
 
@@ -47,7 +42,7 @@ export default function AdminLeaderboardPanel() {
     setLoading(true);
     try {
       const res = await fetch(`${API}/admin/leaderboard?period=${period}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {
@@ -74,7 +69,7 @@ export default function AdminLeaderboardPanel() {
     try {
       const res = await fetch(`${API}/admin/leaderboard/distribute`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: {"Content-Type": "application/json" },
         body: JSON.stringify({ period }),
       });
       const data = await res.json();

@@ -7,10 +7,7 @@
 import { useState, useCallback } from "react";
 import { Gift, Loader2, Lock } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface WheelData {
   enabled: boolean;
   canSpin: boolean;
@@ -40,7 +37,7 @@ export function DailyWheelCard({ wheel, token, onSpin }: { wheel?: WheelData; to
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+
         },
         body: JSON.stringify({ clientSeed }),
       });

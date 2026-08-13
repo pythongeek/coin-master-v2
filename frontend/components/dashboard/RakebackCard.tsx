@@ -7,11 +7,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Coins, Gift } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface RakebackStatus {
   pending: number;
   claimed: number;
@@ -29,7 +25,7 @@ export function RakebackCard({ token, onClaim }: { token: string; onClaim?: () =
 
   const fetchStatus = useCallback(async () => {
     const res = await fetch(`${API}/dashboard/rakeback`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     });
     const data = await res.json();
     if (data.success) setStatus(data.data);
@@ -45,7 +41,7 @@ export function RakebackCard({ token, onClaim }: { token: string; onClaim?: () =
     try {
       const res = await fetch(`${API}/dashboard/rakeback/claim`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {

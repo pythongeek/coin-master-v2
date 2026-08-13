@@ -21,6 +21,7 @@ import { storeToken, reconnectWithToken } from '@/lib/socket';
 import { getBrowserFingerprint } from '@/utils/fingerprint';
 import { trackEvent, identifyUser } from '@/utils/analytics';
 import { useTranslation } from '@/hooks/useTranslation';
+// PR-1B: cookie is now server-set; client must NOT read or write it.
 import { setTokenCookie } from '@/lib/auth-cookies';
 
 const API = '/api';
@@ -44,7 +45,7 @@ export default function LoginModal({ onClose }: Props) {
   }, []);
 
   // ── Handle successful login ─────────────────────────────────
-  const handleSuccess = (data: { token: string; user: Record<string, unknown> }) => {
+  const handleSuccess = async (data: { token: string; user: Record<string, unknown> }) => {
     const user: User = {
       userId:        data.user.userId as string,
       username:      data.user.username as string,
@@ -55,9 +56,13 @@ export default function LoginModal({ onClose }: Props) {
       email:         data.user.email as string | undefined,
     };
 
+    // PR-1B: cookie is set SERVER-SIDE on the /api/auth/login response
+    // (Set-Cookie: cf_token=...; HttpOnly; ...). The browser now holds
+    // it; JS cannot and must NOT read it. Reconnect the socket with
+    // the in-memory token (still in the JSON response for the
+    // DEFERRED-JSON-TOKEN work; removal blocked on DEFERRED-SOCKET).
     storeToken(data.token);
-    localStorage.setItem('cf_token', data.token);
-    setTokenCookie(data.token);
+    setTokenCookie(data.token); // no-op (kept for legacy import compatibility)
     // Do NOT store cf_user; derive user from JWT on rehydrate to avoid
     // trusting client-side isAdmin. The backend validates role.
 
@@ -66,6 +71,11 @@ export default function LoginModal({ onClose }: Props) {
 
     // Upgrade socket connection with the token so game bets can be sent
     reconnectWithToken(data.token);
+
+    // PR-1B: reconcile the store with the server after a credential
+    // change — handles the case where the login response and /api/auth/me
+    // are slightly out of sync (e.g. updated email, KYC tier change).
+    await useGameStore.getState().initialize();
 
     // Sync analytics
     identifyUser(data.user.userId as string, {

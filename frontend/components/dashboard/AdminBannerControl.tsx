@@ -8,11 +8,7 @@
 import { useState, useEffect } from 'react';
 import { Megaphone, AlertTriangle, Info, Check, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 type BannerType = 'info' | 'warning' | 'maintenance';
 
 interface Banner {
@@ -39,13 +35,12 @@ export default function AdminBannerControl() {
   const [saving, setSaving] = useState(false);
   const { addToast } = useToast();
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   const fetchBanner = async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API}/admin/config/banner`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {
@@ -64,7 +59,7 @@ export default function AdminBannerControl() {
     try {
       const res = await fetch(`${API}/admin/config/banner`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify(banner),
       });
       const data = await res.json();

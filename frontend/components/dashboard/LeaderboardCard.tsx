@@ -7,11 +7,7 @@
 import { useState, useEffect } from "react";
 import { Trophy, Medal } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface LeaderboardEntry {
   rank: number;
   userId: string;
@@ -35,7 +31,7 @@ export function LeaderboardCard({ token }: { token: string }) {
   useEffect(() => {
     setLoading(true);
     fetch(`${API}/dashboard/leaderboard?period=${period}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     })
       .then((r) => r.json())
       .then((d) => {

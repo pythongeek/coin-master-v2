@@ -18,10 +18,7 @@ import { RakebackCard } from '@/components/dashboard/RakebackCard';
 import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
 import RecentQrDeposits from '@/components/dashboard/RecentQrDeposits';
 import { useTranslation } from '@/hooks/useTranslation';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 export default function DashboardPage() {
   const { t } = useTranslation();
   const [stats,   setStats]   = useState<any>(null);
@@ -31,11 +28,9 @@ export default function DashboardPage() {
   const [kycStatus, setKycStatus] = useState<'unverified' | 'pending' | 'verified' | 'rejected'>('unverified');
   const [loading, setLoading] = useState(true);
 
-  const token = typeof window !== 'undefined'
-    ? localStorage.getItem('cf_token') || ''
     : '';
 
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = {};
 
   // Decode the JWT to get the real userId. Falls back to demo only if
   // no token is present (unauthenticated). Never trust localStorage for

@@ -19,10 +19,7 @@ import {
   FileText, Loader2, RefreshCw, Search, X, ChevronDown, ChevronUp, AlertCircle,
   Download, Pause, Play, Save, Eye,
 } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface AuditLog {
   id: string;
   user_id: string | null;
@@ -88,8 +85,7 @@ export default function AdminSystemLogs() {
   // Auto-refresh
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const headers = { 'Content-Type': 'application/json',};
 
   // Build query string from filters
   const queryString = useMemo(() => {

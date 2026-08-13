@@ -15,10 +15,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { CheckCircle2, XCircle, Loader2, AlertCircle, Save, RefreshCw, ExternalLink } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface ChainRow {
   id: string;
   chain_key: string;
@@ -58,10 +55,9 @@ export default function AdminChainConfig() {
   const [edits, setEdits] = useState<Record<string, Partial<ChainRow>>>({});
   const [addressValid, setAddressValid] = useState<Record<string, { ok: boolean; error?: string }>>({});
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
+
   };
 
   const load = useCallback(async () => {

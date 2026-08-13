@@ -7,11 +7,7 @@
 import { useState, useEffect } from "react";
 import { Target, Trophy } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface ChallengeDef {
   id: string;
   label: string;
@@ -34,8 +30,8 @@ export default function AdminChallengesPanel() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // PR-1B: token is now httpOnly cookie. Auth is implicit on fetch.
     if (typeof window === "undefined") return;
-    setToken(localStorage.getItem("cf_token") || "");
   }, []);
 
   const load = async () => {
@@ -43,7 +39,7 @@ export default function AdminChallengesPanel() {
     setLoading(true);
     try {
       const res = await fetch(`${API}/admin/challenges`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       const data = await res.json();
       if (data.success) {

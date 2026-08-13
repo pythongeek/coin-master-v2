@@ -41,9 +41,7 @@ export default function AffiliatePanel() {
     setLoading(true);
     try {
       const res = await fetch(`${API}/wallet/affiliate`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
       const data = await res.json();
       if (data.success) {
@@ -83,10 +81,7 @@ export default function AffiliatePanel() {
     try {
       const res = await fetch(`${API}/wallet/affiliate/claim`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
       });
       const data = await res.json();
       if (data.success) {

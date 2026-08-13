@@ -135,11 +135,10 @@ export default function AdminWithdrawalQueue() {
 
   const { addToast } = useToast();
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   // Build auth headers. Adds X-Admin-2FA-Token if a TOTP is cached for this session.
   const authHeaders = (extra?: Record<string, string>) => {
-    const h: Record<string, string> = { Authorization: `Bearer ${token}` };
+    const h: Record<string, string> = {};
     if (extra) Object.assign(h, extra);
     if (totpToken) h['X-Admin-2FA-Token'] = totpToken;
     return h;
@@ -179,7 +178,7 @@ export default function AdminWithdrawalQueue() {
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch(`${API}/admin/withdrawals/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) setStats(data.stats);
@@ -197,7 +196,7 @@ export default function AdminWithdrawalQueue() {
       params.set('limit', '200');
       if (minRisk) params.set('minRisk', minRisk);
       const res = await fetch(`${API}/admin/withdrawals?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {

@@ -93,10 +93,14 @@ export default function AdminLoginPage() {
     }
   };
 
-  const finalizeLogin = (token: string, user: any) => {
+  const finalizeLogin = async (token: string, user: any) => {
+    // PR-1B: server already set the httpOnly cf_token cookie via
+    // Set-Cookie on POST /api/auth/login. We must NOT write it to
+    // localStorage. storeToken(reconnect) still uses the raw JWT for
+    // the Socket.IO upgrade (DEFERRED-SOCKET will replace this with a
+    // short-lived ticket).
     storeToken(token);
-    localStorage.setItem('cf_token', token);
-    setTokenCookie(token);
+    setTokenCookie(token); // no-op (legacy import compat)
 
     login({
       user: {
@@ -113,12 +117,16 @@ export default function AdminLoginPage() {
 
     reconnectWithToken(token);
 
+    // PR-1B: reconcile the store with /api/auth/me after login so
+    // server-side state (balance, kyc tier) wins over the login
+    // response, which may be stale.
+    await useGameStore.getState().initialize();
+
     identifyUser(user.userId, {
       username: user.username,
       email: user.email,
       walletAddress: user.walletAddress,
     });
-
     trackEvent('admin_login_success');
     const target = typeof window !== 'undefined'
       ? window.location.pathname.replace(/\/?login$/, '')

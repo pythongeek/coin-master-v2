@@ -7,11 +7,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Target, CheckCircle, Lock } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface ChallengeProgress {
   id: string;
   label: string;
@@ -29,7 +25,7 @@ export function ChallengesCard({ token, onClaim }: { token: string; onClaim?: ()
 
   const fetchChallenges = useCallback(async () => {
     const res = await fetch(`${API}/dashboard/challenges`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     });
     const data = await res.json();
     if (data.success) setChallenges(data.data || []);
@@ -43,7 +39,7 @@ export function ChallengesCard({ token, onClaim }: { token: string; onClaim?: ()
   const claim = async (id: string) => {
     const res = await fetch(`${API}/dashboard/challenges/${id}/claim`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     });
     const data = await res.json();
     if (data.success) {

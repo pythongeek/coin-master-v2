@@ -21,10 +21,7 @@
 import { useState, useEffect } from 'react';
 import { KeyRound, RotateCw, CheckCircle2, Lock, X, AlertTriangle } from 'lucide-react';
 
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 export default function SeedRotationPanel() {
   const [rotating, setRotating]       = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -32,7 +29,6 @@ export default function SeedRotationPanel() {
   const [pwError, setPwError]         = useState<string | null>(null);
   const [lastResult, setLastResult]   = useState<{ hash: string; time: string } | null>(null);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   // Reset the password field whenever the modal opens/closes so a stale
   // value doesn't linger between attempts.
@@ -61,7 +57,7 @@ export default function SeedRotationPanel() {
       const res = await fetch(`${API}/admin/seed/rotate`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ password }),

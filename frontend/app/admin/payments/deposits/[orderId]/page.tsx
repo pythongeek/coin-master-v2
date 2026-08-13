@@ -34,10 +34,7 @@ import {
   History,
   FileText,
 } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface OrderDetail {
   merchant_order_id: string;
   user_id: string;
@@ -148,10 +145,9 @@ export default function OrderDetailPage({ params }: { params: Promise<{ orderId:
   const [actionRunning, setActionRunning] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState('');
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
+
   };
 
   const load = useCallback(async () => {

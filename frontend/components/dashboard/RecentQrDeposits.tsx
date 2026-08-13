@@ -50,7 +50,6 @@ export default function RecentQrDeposits() {
     let cancelled = false;
     const load = async () => {
       try {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
         if (!token) { setLoading(false); return; }
         const res = await listMyQrDeposits(token, 5);
         if (!cancelled) setOrders(res.orders || []);

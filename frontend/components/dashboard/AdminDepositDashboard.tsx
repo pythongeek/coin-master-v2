@@ -71,10 +71,9 @@ function AllOrdersPanel() {
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
+
   };
 
   const load = useCallback(async () => {
@@ -216,10 +215,9 @@ function LlmStatsPanel() {
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildMsg, setRebuildMsg] = useState<string>('');
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
+
   };
 
   const load = useCallback(async () => {

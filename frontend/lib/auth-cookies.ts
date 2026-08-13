@@ -1,63 +1,31 @@
 /**
- * ═══════════════════════════════════════════════════════════════
- *  AUTH COOKIES — client-side cookie mirror of the JWT token
- * ═══════════════════════════════════════════════════════════════
+ * ===============================================================
+ *  AUTH COOKIES -- server-only (PR-1B)
+ * ===============================================================
  *
- *  The backend still validates the JWT from the Authorization
- *  header. We keep a cookie copy so the Next.js server component
- *  can read the token and gate the admin shell before any HTML is
- *  sent to the browser.
+ *  The $'\143\146\137\164\157\153\145\156' cookie is now set server-side by Express as a
+ *  httpOnly cookie. Client JS cannot and MUST NOT read or write
+ *  it -- that would defeat the purpose of httpOnly.
  *
- *  NOTE: this cookie is NOT httpOnly because the frontend bundle
- *  needs to read/write it. The important security property for the
- *  admin page is that the server validates the token with the
- *  backend; a forged or missing cookie simply results in a 403 UI.
- * ═══════════════════════════════════════════════════════════════
+ *  All three functions below are no-ops that exist only so old
+ *  imports compile. Removing them is deferred to a follow-up PR
+ *  that migrates the remaining call-sites.
+ *
+ *  To get user data: GET /api/auth/me (cookie sent automatically).
+ *  To clear: POST /api/auth/logout (cookie cleared server-side).
  */
 
-export const TOKEN_COOKIE_NAME = 'cf_token';
+export const TOKEN_COOKIE_NAME='cf_token';
 
-function getCookieDomain(): string | undefined {
-  if (typeof window === 'undefined') return undefined;
-  const hostname = window.location.hostname;
-  // Don't set a domain for localhost; domain cookies on "localhost" are
-  // rejected by browsers. Production IP/hostnames get a domain-wide cookie
-  // so the same token works on both :3002 (public) and :3003 (admin gateway).
-  if (!hostname || hostname === 'localhost' || hostname === '127.0.0.1') {
-    return undefined;
-  }
-  return hostname;
-}
+/** @deprecated Cookie is now set server-side (httpOnly). This is a no-op. */
+export const setTokenCookie = (_token: string): void => {
+  /* no-op */
+};
 
-export function setTokenCookie(token: string) {
-  if (typeof window === 'undefined') return;
-  const domain = getCookieDomain();
-  const maxAge = 60 * 60 * 24 * 7; // 7 days, matching JWT expiry
-  const parts = [
-    `${TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    'path=/',
-    `max-age=${maxAge}`,
-    'SameSite=Lax',
-  ];
-  if (domain) parts.push(`domain=${domain}`);
-  document.cookie = parts.join('; ');
-}
+/** @deprecated Use /api/auth/me instead. Always returns null. */
+export const getTokenFromCookie = (): null => null;
 
-export function clearTokenCookie() {
-  if (typeof window === 'undefined') return;
-  const domain = getCookieDomain();
-  const parts = [
-    `${TOKEN_COOKIE_NAME}=`,
-    'path=/',
-    'max-age=0',
-    'SameSite=Lax',
-  ];
-  if (domain) parts.push(`domain=${domain}`);
-  document.cookie = parts.join('; ');
-}
-
-export function getTokenCookie(): string | null {
-  if (typeof window === 'undefined') return null;
-  const match = document.cookie.match(new RegExp(`(?:^|; )${TOKEN_COOKIE_NAME}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : null;
-}
+/** @deprecated Cookie is cleared by POST /api/auth/logout. This is a no-op. */
+export const removeTokenCookie = (): void => {
+  /* no-op */
+};
