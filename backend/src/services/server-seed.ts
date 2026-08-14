@@ -44,6 +44,14 @@ export async function getActiveSeed(): Promise<ActiveSeed | null> {
 /**
  * Atomically reserve a nonce on the active seed and return the details.
  * The seed secret is NOT returned here; only the committed hash is safe to expose.
+ *
+ * PR Step 3 MEDIUM-1: rotation now awaited (was fire-and-forget). The
+ * old fire-and-forget opened a window where (a) `/api/game/seed` could
+ * still return the OLD seed's hash while new bets landed on the rotated
+ * seed, and (b) the next reserveNonce() could SELECT the OLD seed's row
+ * (still `is_active=true`) before rotation flipped the flag. Awaiting
+ * the rotation serializes: nonce is committed, then the seed is
+ * rotated (or skipped) atomically before the next caller's lockBet.
  */
 export async function reserveNonce(): Promise<{ seedId: string; serverSeedHash: string; nonce: number } | null> {
   const client = await db.connect();
@@ -71,9 +79,10 @@ export async function reserveNonce(): Promise<{ seedId: string; serverSeedHash: 
 
     await client.query('COMMIT');
 
-    // Rotate in the background if threshold reached (do not block the bet)
+    // Awaited (was .catch(...)). Failure throws — the caller (placeBet)
+    // will surface the error to the client. Better than silent drift.
     if (nonce >= threshold) {
-      rotateSeedIfNeeded(seedId).catch(err => console.error('Seed rotation failed:', err));
+      await rotateSeedIfNeeded(seedId);
     }
 
     return { seedId, serverSeedHash, nonce };
