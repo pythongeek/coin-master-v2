@@ -21,6 +21,17 @@ Proxy: frontend/app/api/[...path]/route.ts forwards all headers (Cookie + Set-Co
 - Auth middleware: Bearer first → cookie fallback. Both paths use same jwt.verify().
 - Token still in login JSON response (in-memory for socket compat — see DEFERRED-SOCKET).
 
+### Spin Flow — Step 2 COMPLETE (commit pending)
+- Spin triggered via Socket.IO emit('game:bet') from `BetControls.tsx:130` (with HTTP fallback `POST /api/game/bet` at `routes/game.ts:46`)
+- Auth gate: HTTP route mounts `authMiddleware`; socket `game:bet` handler enforces `if (!user) return socket.emit('game:error', ...)` at `socket-game.ts:46`
+- Balance deduction: **server-side only**, raw-SQL transaction (`game-engine.ts:264` `BEGIN`, `:279` `SELECT ... FOR UPDATE`, `:309` debit) → `COMMIT` at line 609. Equivalent atomicity to `prisma.$transaction`.
+- Minimum balance check: inside the transaction, AFTER row lock acquired (`game-engine.ts:296-310`)
+- Bet record: `INSERT INTO bets (..., 'resolved', ...)` at `game-engine.ts:571-600`, BEFORE the COMMIT at line 609
+- Balance returned: server reads `SELECT balance FROM users` post-COMMIT at line 642, sends as `result.newBalance` in socket `game:result` payload
+- UI balance update: `frontend/lib/useSocketEvents.ts:46` calls `storeRef.current.updateBalance(result.newBalance)` — server-returned, NO client-side arithmetic
+- Double-spin prevention: client-side `canBet` flag (`BetControls.tsx:40, 816`) AND server-side Redis `lockBet` (`game-engine.ts:256`) — belt + braces
+- Provably fair RNG: present (commit-reveal HMAC-SHA256 with server-seed hash pre-bet, raw server-seed revealed post-bet — full deep audit in Step 3)
+
 ## NOT BUILT (mock or stub — do not claim as complete)
 
 - Spin API: STATUS UNKNOWN — audit required in Step 2
@@ -41,6 +52,15 @@ Proxy: frontend/app/api/[...path]/route.ts forwards all headers (Cookie + Set-Co
 | DEFERRED-ROTATE | JWT rotation on role change | no blacklist exists |
 | DEFERRED-COOKIE-PARSER | Replace readCookieValue() with cookie-parser | works now, refactor later |
 
+## TECH DEBT — pre-existing, NOT introduced by Step 1-2
+
+| ID | What | Risk | Fix in |
+|---|---|---|---|
+| DEBT-SCHEMA-BET | `bets` table has no Prisma `model` — all ops are raw SQL | Schema drift undetected by `prisma migrate` | Step 6 |
+| DEBT-SCHEMA-USER | `users` table has no Prisma `model` — raw SQL only | Same; loss of compile-time safety | Step 6 |
+| DEBT-SOCKET-CONF | `socket-lifecycle.ts:36` reads `handshake.auth.token` + `Authorization` header only, never reads the `Cookie` header — all cookie-authenticated browsers currently connect as guests (HTTP `/api/game/bet` is the working fallback) | No realtime game-play over socket until `DEFERRED-SOCKET` lands | DEFERRED-SOCKET |
+| DEBT-SOCKET-STYLE | Some socket error paths silently no-op (`emit('game:bet')` with no cookie = silent reject instead of UI feedback) | Hard to debug | DEFERRED-SOCKET |
+
 ## FILE MAP
 
 | Purpose | Path |
@@ -53,10 +73,15 @@ Proxy: frontend/app/api/[...path]/route.ts forwards all headers (Cookie + Set-Co
 | Edge middleware | frontend/middleware.ts |
 | Admin gate server-side | frontend/app/admin/page.tsx |
 | App auth init | frontend/components/ClientInit.tsx |
-| Spin API | [READ IN STEP 2] |
-| RNG utility | [READ IN STEP 2] |
-| Prisma schema | prisma/schema.prisma |
-| Game store | frontend/lib/store.ts (same file, gameStore slice) |
+| Spin API route | backend/src/routes/game.ts |
+| Game engine (placeBet) | backend/src/services/game-engine.ts |
+| Provably fair util | backend/src/services/provably-fair.ts |
+| Socket lifecycle (auth) | backend/src/services/socket-lifecycle.ts |
+| Socket game handlers | backend/src/services/socket-game.ts |
+| Socket events hook | frontend/lib/useSocketEvents.ts |
+| Server seed service | backend/src/services/server-seed.ts |
+| Spin button component | frontend/components/game/BetControls.tsx |
+| Prisma schema | backend/prisma/schema.prisma (PARTIAL — see DEBT-SCHEMA-BET) |
 
 ## KNOWN BUILD NOTES
 
