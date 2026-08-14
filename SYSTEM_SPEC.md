@@ -53,6 +53,18 @@ Three-layer defense-in-depth — all confirmed in code:
 - **Bonus/withdrawable split:** both columns are DECIMAL (separate columns). `determineBalanceSource` picks ONE source per bet (prefer bonus while wagering is incomplete AND bonus covers amount; else withdrawable), and `debitBalanceForBet` decrements that one source inside the same tx. `users.balance` is the trigger-maintained derived sum (`game-engine.ts:476`).
 - **DB-level negative-balance constraint:** **MISSING**. Application guards exist in `game-engine.ts:296-310`, `bonus.ts:537` (`WHERE ${col} >= $2` predicate on the UPDATE itself), `withdrawal-queue.ts`. Logged as `DEBT-BALANCE-CONSTRAINT` (see TECH DEBT). Migration SQL provided in Step 5 commit message; manual execution required during low-traffic window.
 
+### Env Hygiene — Step 6 CONFIRMED (1 minor finding)
+- **`NEXT_PUBLIC_*` audit:** 8 `NEXT_PUBLIC_*` vars in use — `API_URL`, `SOCKET_URL`, `APP_URL`, `APP_NAME`, `APP_VERSION`, `SENTRY_DSN`, `GA_MEASUREMENT_ID`, `CRISP_WEBSITE_ID`, plus legacy `BACKEND_URL` (`frontend/lib/socket.ts:28`). **All non-secret by design:** public URLs, app name, public-DSN (Sentry rate-limits per project, not per URL), Google Analytics measurement ID, Crisp website ID. ✅ Acceptable.
+- **Hardcoded secrets outside `process.env`:** none found. ✅
+- **`.env.example`** present (15 KB) at repo root, covers both frontend and backend. ✅
+- **`.gitignore`** comprehensively covers `.env`, `.env.local`, `.env.production`, `.env.*.local`, `*.pem`, `*.key`, `backend/src/config/secrets.ts`, `frontend/public/keys/{*.key, *.pem, id_*, cx23-access, cx23-access.pub}`. ✅ Verified with `git check-ignore frontend/.env.production.local` → properly ignored. `frontend/public/keys/cx23-access{,.pub}` → properly ignored.
+- **`console.log` of sensitive material:** `backend/src/services/kyc.ts:210` logs `[KYC Mock Mode] Generating access token for user ${userId}` — leaks user ID in mock-KYC mode (not in prod). Action: log as MEDIUM finding, fix in current step:
+  ```diff
+  - console.log(`[KYC Mock Mode] Generating access token for user ${userId}`);
+  + if (process.env.NODE_ENV !== 'production') console.debug(`[kyc] mock-mode token issued for user ${userId}`);
+  ```
+  No token material itself is logged anywhere in `backend/src/`.
+
 ## NOT BUILT (mock or stub — do not claim as complete)
 
 - Spin API: STATUS UNKNOWN — audit required in Step 2
