@@ -21,7 +21,7 @@ Proxy: frontend/app/api/[...path]/route.ts forwards all headers (Cookie + Set-Co
 - Auth middleware: Bearer first → cookie fallback. Both paths use same jwt.verify().
 - Token still in login JSON response (in-memory for socket compat — see DEFERRED-SOCKET).
 
-### Spin Flow — Step 2 COMPLETE (commit pending)
+### Spin Flow — Step 2 COMPLETE
 - Spin triggered via Socket.IO emit('game:bet') from `BetControls.tsx:130` (with HTTP fallback `POST /api/game/bet` at `routes/game.ts:46`)
 - Auth gate: HTTP route mounts `authMiddleware`; socket `game:bet` handler enforces `if (!user) return socket.emit('game:error', ...)` at `socket-game.ts:46`
 - Balance deduction: **server-side only**, raw-SQL transaction (`game-engine.ts:264` `BEGIN`, `:279` `SELECT ... FOR UPDATE`, `:309` debit) → `COMMIT` at line 609. Equivalent atomicity to `prisma.$transaction`.
@@ -30,7 +30,13 @@ Proxy: frontend/app/api/[...path]/route.ts forwards all headers (Cookie + Set-Co
 - Balance returned: server reads `SELECT balance FROM users` post-COMMIT at line 642, sends as `result.newBalance` in socket `game:result` payload
 - UI balance update: `frontend/lib/useSocketEvents.ts:46` calls `storeRef.current.updateBalance(result.newBalance)` — server-returned, NO client-side arithmetic
 - Double-spin prevention: client-side `canBet` flag (`BetControls.tsx:40, 816`) AND server-side Redis `lockBet` (`game-engine.ts:256`) — belt + braces
-- Provably fair RNG: present (commit-reveal HMAC-SHA256 with server-seed hash pre-bet, raw server-seed revealed post-bet — full deep audit in Step 3)
+
+### Provably-Fair RNG — Step 3 COMPLETE
+- **RNG-1** serverSeed: `crypto.randomBytes(32)` at `provably-fair.ts:84-87`; clientSeed (server fallback): `crypto.randomBytes(16)` at `provably-fair.ts:255`; **client-side** clientSeed: `crypto.getRandomValues(Uint8Array(16))` at `BetControls.tsx:33-37, 151-156, 198-203` — three locations (useState init, handleFlip post-bet regen, executeAutoplayBet). NO `Math.random()` or `Date.now()` for seed material.
+- **RNG-2** `/verify` endpoint now 400s on SHA256(serverSeed) !== serverSeedHash BEFORE running the HMAC computation (`routes/game.ts:124-131`). Forged seed pairs produce a `SEED_HASH_MISMATCH` error.
+- **RNG-3** Nonce atomicity: `reserveNonce()` at `server-seed.ts:48-87` uses `BEGIN; SELECT ... FOR UPDATE; UPDATE active_bets = active_bets + 1; COMMIT`. Two concurrent bets for the same user cannot get the same nonce.
+- **RNG-4** Seed rotation: `rotateSeedIfNeeded` at `server-seed.ts:142-180` marks old seed is_active=false + revealed_at=NOW() BEFORE inserting the new seed. Now **awaited** synchronously in `reserveNonce` (was fire-and-forget — race window closed).
+- **RNG-5** `getBetHistory` now JOINs `game_seeds` so the response carries `server_seed`, `server_seed_hash`, `client_seed`, `nonce` alongside the bet row. Users can offline-verify every bet (`game-engine.ts:738-758`).
 
 ## NOT BUILT (mock or stub — do not claim as complete)
 
