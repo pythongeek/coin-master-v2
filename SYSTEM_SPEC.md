@@ -44,6 +44,15 @@ Three-layer defense-in-depth — all confirmed in code:
 - Layer 2 (Page): `frontend/app/admin/page.tsx` — server-side `cookies()` + `isAdminAuthorized()` → backend `/api/auth/me` + role check against `ADMIN_ROLES` set (`super_admin`, `admin`, `support`, `finance`, `auditor`). Soft-rejection: non-admin sees rejection JSX at /admin URL (200, no admin shell rendered).
 - Layer 3 (API): every `backend/src/routes/admin-*.ts` has `router.use(authMiddleware, adminMiddleware|roleMiddleware)` applied at router level — covers every handler in each file. `admin.ts` further adds per-route `roleMiddleware([...])` per endpoint. Unauthenticated → 401. Authenticated non-admin → 403.
 
+### Balance / Wallet — Step 5 CONFIRMED (no fixes required)
+- **Balance column type:** `users.balance DECIMAL(18, 8)` (`schema.sql:17`), `users.bonus_balance_coins DECIMAL(18, 8)`, `users.withdrawable_balance_coins DECIMAL(18, 8)`, `wallets.balance DECIMAL(36, 18)` (`schema.sql:176`) — **NOT float**. Exact-precision arithmetic in SQL.
+- **Arithmetic safety:** all decrement/credit is SQL-side `column - $N` or `column + $N` (e.g. `backend/src/services/bonus.ts:529-535` `debitBalanceForBet`, `:555-559` `creditPayout`). JS only `parseFloat(...)`s the result. No JS floating-point arithmetic on stored balance.
+- **Deposit atomicity:** `backend/src/services/payment.ts:166` (`payment_orders FOR UPDATE`) and `backend/src/services/admin-adjustment.service.ts:257` — both use `BEGIN/FOR UPDATE/UPDATE/INSERT/COMMIT` with row locks.
+- **Withdrawal safety:** `backend/src/services/withdrawal-queue.ts:36-205` `BEGIN; SELECT balance, locked_balance FROM wallets WHERE id = $1 AND user_id = $2 FOR UPDATE; UPDATE wallets SET locked_balance += $3; INSERT INTO transactions; COMMIT` — check + decrement are inside the same transaction with S1-H13 rowCount guard.
+- **Bet deduction atomicity:** confirmed Step 2 — same raw-SQL transaction envelope wraps balance check + source-decision + debit + bet INSERT + credit. Re-confirmed Step 5.
+- **Bonus/withdrawable split:** both columns are DECIMAL (separate columns). `determineBalanceSource` picks ONE source per bet (prefer bonus while wagering is incomplete AND bonus covers amount; else withdrawable), and `debitBalanceForBet` decrements that one source inside the same tx. `users.balance` is the trigger-maintained derived sum (`game-engine.ts:476`).
+- **DB-level negative-balance constraint:** **MISSING**. Application guards exist in `game-engine.ts:296-310`, `bonus.ts:537` (`WHERE ${col} >= $2` predicate on the UPDATE itself), `withdrawal-queue.ts`. Logged as `DEBT-BALANCE-CONSTRAINT` (see TECH DEBT). Migration SQL provided in Step 5 commit message; manual execution required during low-traffic window.
+
 ## NOT BUILT (mock or stub — do not claim as complete)
 
 - Spin API: STATUS UNKNOWN — audit required in Step 2
@@ -70,6 +79,7 @@ Three-layer defense-in-depth — all confirmed in code:
 |---|---|---|---|
 | DEBT-SCHEMA-BET | `bets` table has no Prisma `model` — all ops are raw SQL | Schema drift undetected by `prisma migrate` | Step 6 |
 | DEBT-SCHEMA-USER | `users` table has no Prisma `model` — raw SQL only | Same; loss of compile-time safety | Step 6 |
+| DEBT-BALANCE-CONSTRAINT | No DB-level `CHECK (balance >= 0)` on `users.balance`, `users.bonus_balance_coins`, `users.withdrawable_balance_coins`, or `wallets.balance` | Application guards (game-engine.ts:296-310, bonus.ts:537 WHERE-clause, withdrawal-queue.ts FOR UPDATE) cover all current code paths; new code paths bypass this safety net | Add migration 022_balance_non_negative.sql during Step 6 manual deploy |
 | DEBT-SOCKET-CONF | `socket-lifecycle.ts:36` reads `handshake.auth.token` + `Authorization` header only, never reads the `Cookie` header — all cookie-authenticated browsers currently connect as guests (HTTP `/api/game/bet` is the working fallback) | No realtime game-play over socket until `DEFERRED-SOCKET` lands | DEFERRED-SOCKET |
 | DEBT-SOCKET-STYLE | Some socket error paths silently no-op (`emit('game:bet')` with no cookie = silent reject instead of UI feedback) | Hard to debug | DEFERRED-SOCKET |
 
