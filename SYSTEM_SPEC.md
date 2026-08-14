@@ -38,6 +38,12 @@ Proxy: frontend/app/api/[...path]/route.ts forwards all headers (Cookie + Set-Co
 - **RNG-4** Seed rotation: `rotateSeedIfNeeded` at `server-seed.ts:142-180` marks old seed is_active=false + revealed_at=NOW() BEFORE inserting the new seed. Now **awaited** synchronously in `reserveNonce` (was fire-and-forget — race window closed).
 - **RNG-5** `getBetHistory` now JOINs `game_seeds` so the response carries `server_seed`, `server_seed_hash`, `client_seed`, `nonce` alongside the bet row. Users can offline-verify every bet (`game-engine.ts:738-758`).
 
+### Admin Gate — Step 4 CONFIRMED (no fixes required)
+Three-layer defense-in-depth — all confirmed in code:
+- Layer 1 (Edge): `frontend/middleware.ts` — secret gateway header + IP allowlist. Non-matching path → rewrite to /404. Does NOT verify JWT (by design — JWT check is per-request on the backend).
+- Layer 2 (Page): `frontend/app/admin/page.tsx` — server-side `cookies()` + `isAdminAuthorized()` → backend `/api/auth/me` + role check against `ADMIN_ROLES` set (`super_admin`, `admin`, `support`, `finance`, `auditor`). Soft-rejection: non-admin sees rejection JSX at /admin URL (200, no admin shell rendered).
+- Layer 3 (API): every `backend/src/routes/admin-*.ts` has `router.use(authMiddleware, adminMiddleware|roleMiddleware)` applied at router level — covers every handler in each file. `admin.ts` further adds per-route `roleMiddleware([...])` per endpoint. Unauthenticated → 401. Authenticated non-admin → 403.
+
 ## NOT BUILT (mock or stub — do not claim as complete)
 
 - Spin API: STATUS UNKNOWN — audit required in Step 2
