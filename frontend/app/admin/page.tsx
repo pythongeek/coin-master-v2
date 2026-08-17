@@ -18,9 +18,21 @@ import AdminClientShell from '@/components/dashboard/AdminClientShell';
 
 export const runtime = 'edge';
 
+// Admin gate URL — must match the nginx secret-path prefix exactly.
+const ADMIN_SECRET_PATH='sysop-...xvAm';
+const ADMIN_LOGIN_URL = `/${ADMIN_SECRET_PATH}/admin/login`;
+
+// Admin cookie name (matches backend admin-auth.ts).
+// The cookie has Path=/ so it is sent when the operator navigates to
+// the admin page URL. NAME-based isolation: user routes never read this.
+const ADMIN_COOKIE_NAME = 'admin_cf_token';
+
 export default async function AdminPage() {
   const cookieStore = await cookies();
-  const token = cookieStore.get('cf_token')?.value;
+  // Read admin_cf_token (NOT cf_token). The admin and user auth
+  // surfaces are completely isolated — a regular user's cf_token
+  // cannot reach this page.
+  const token = cookieStore.get('admin_cf_token')?.value;
   const user = token ? await isAdminAuthorized(token) : null;
 
   if (!user) {
@@ -33,7 +45,7 @@ export default async function AdminPage() {
             You must be signed in as an admin to view this panel.
           </p>
           <Link
-            href="/admin/login"
+            href={ADMIN_LOGIN_URL}
             className="inline-block btn-brand py-2 px-5 rounded-lg font-mono text-sm"
           >
             Sign in to admin

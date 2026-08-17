@@ -4,31 +4,26 @@
  *  ADMIN LOGIN — Dedicated admin gateway login page
  * ═══════════════════════════════════════════════════════════════
  *
- *  Unlike the game login modal, this page is reached only through
- *  the secret admin gateway URL. It logs the user in with the same
- *  cf_token so they can use both the admin panel and the game UI.
+ *  Posts to /api/admin/login (NOT /api/auth/login). The backend sets
+ *  an `admin_cf_token` httpOnly cookie scoped to Path=/api/admin, which
+ *  the admin page (server-side gate) reads for subsequent requests.
+ *  This cookie is NEVER sent to user-facing endpoints like /api/auth/*
+ *  or /api/game/* — admin and user auth are completely isolated.
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Coins, Loader2, Shield, ArrowLeft } from 'lucide-react';
-import { useGameStore } from '@/lib/store';
-import { storeToken, reconnectWithToken } from '@/lib/socket';
-import { setTokenCookie } from '@/lib/auth-cookies';
-import { trackEvent, identifyUser } from '@/utils/analytics';
+import { Loader2, Shield, ArrowLeft } from 'lucide-react';
 
-const API = '/api';
+const API = '/api/admin';
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const { login } = useGameStore();
-  const [form, setForm] = useState({ username: '', password: '', token: '' });
+  const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [require2FA, setRequire2FA] = useState(false);
-  const [tempToken, setTempToken] = useState('');
 
   const handleLogin = async () => {
     setError('');
@@ -36,30 +31,11 @@ export default function AdminLoginPage() {
       setError('Username and password are required.');
       return;
     }
-
     setLoading(true);
     try {
-      // If 2FA step already triggered, verify the TOTP code.
-      if (require2FA && tempToken) {
-        const res = await fetch(`${API}/auth/2fa/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tempToken, token: form.token }),
-        });
-        const data = await res.json();
-
-        if (!data.success) {
-          setError(data.error || 'Invalid 2FA code.');
-          trackEvent('admin_login_failed', { error: data.error || '2FA invalid' });
-          return;
-        }
-
-        finalizeLogin(data.token, data.user);
-        return;
-      }
-
-      const res = await fetch(`${API}/auth/login`, {
+      const res = await fetch(`${API}/login`, {
         method: 'POST',
+        credentials: 'include',  // critical: receive the admin_cf_token cookie
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: form.username, password: form.password }),
       });
@@ -67,71 +43,21 @@ export default function AdminLoginPage() {
 
       if (!data.success) {
         setError(data.error || 'Login failed.');
-        trackEvent('admin_login_failed', { error: data.error || 'API Error' });
         return;
       }
 
-      if (data.require2FA) {
-        setTempToken(data.tempToken);
-        setRequire2FA(true);
-        return;
-      }
-
-      if (!data.user?.isAdmin) {
-        setError('This account is not authorized for admin access.');
-        trackEvent('admin_login_failed', { error: 'not_admin' });
-        return;
-      }
-
-      finalizeLogin(data.token, data.user);
+      // The browser now has the admin_cf_token cookie. Force a hard
+      // navigation so the server-side admin gate reads the cookie
+      // fresh (Next.js router.push alone won't re-trigger SSR).
+      // Strip the trailing /login from the current path so the
+      // operator stays inside the /sysop-.../admin/ secret prefix.
+      const target = window.location.pathname.replace(/\/?login$/, '') || '/admin';
+      window.location.href = target;
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
       setError('Network error. Please try again.');
-      trackEvent('admin_login_failed', { error: errMsg });
     } finally {
       setLoading(false);
     }
-  };
-
-  const finalizeLogin = async (token: string, user: any) => {
-    // PR-1B: server already set the httpOnly cf_token cookie via
-    // Set-Cookie on POST /api/auth/login. We must NOT write it to
-    // localStorage. storeToken(reconnect) still uses the raw JWT for
-    // the Socket.IO upgrade (DEFERRED-SOCKET will replace this with a
-    // short-lived ticket).
-    storeToken(token);
-    setTokenCookie(token); // no-op (legacy import compat)
-
-    login({
-      user: {
-        userId: user.userId,
-        username: user.username,
-        balance: user.balance ?? 0,
-        isAdmin: user.isAdmin,
-        walletAddress: user.walletAddress,
-        isFlagged: user.isFlagged ?? false,
-        email: user.email,
-      },
-      token,
-    });
-
-    reconnectWithToken(token);
-
-    // PR-1B: reconcile the store with /api/auth/me after login so
-    // server-side state (balance, kyc tier) wins over the login
-    // response, which may be stale.
-    await useGameStore.getState().initialize();
-
-    identifyUser(user.userId, {
-      username: user.username,
-      email: user.email,
-      walletAddress: user.walletAddress,
-    });
-    trackEvent('admin_login_success');
-    const target = typeof window !== 'undefined'
-      ? window.location.pathname.replace(/\/?login$/, '')
-      : '/admin';
-    window.location.href = target;
   };
 
   return (
@@ -160,6 +86,7 @@ export default function AdminLoginPage() {
             value={form.username}
             onChange={(e) => setForm(p => ({ ...p, username: e.target.value }))}
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            autoFocus
           />
 
           <input
@@ -171,26 +98,13 @@ export default function AdminLoginPage() {
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
           />
 
-          {require2FA && (
-            <input
-              className="input-cyber w-full"
-              placeholder="2FA code (6 digits)"
-              value={form.token}
-              onChange={(e) => setForm(p => ({ ...p, token: e.target.value }))}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              maxLength={6}
-              inputMode="numeric"
-              autoFocus
-            />
-          )}
-
           <button
             onClick={handleLogin}
             disabled={loading}
             className="btn-brand w-full flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading && <Loader2 size={15} className="animate-spin" />}
-            {loading ? 'Signing in...' : require2FA ? 'Verify 2FA' : 'Sign in to Admin'}
+            {loading ? 'Signing in...' : 'Sign in to Admin'}
           </button>
 
           <Link

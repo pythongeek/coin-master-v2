@@ -7,7 +7,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, roleMiddleware } from '../middleware/auth';
+import { roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { adminLimiter } from '../middleware/rate-limiter';
 import { db } from '../config/database';
 import { redis } from '../config/redis';
@@ -59,7 +60,7 @@ async function checkBlockchain(): Promise<{ status: 'ok' | 'err'; latencyMs: num
   }
 }
 
-router.get('/', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'auditor']), async (_req: Request, res: Response) => {
+router.get('/', adminLimiter, adminAuthMiddleware, roleMiddleware(['super_admin', 'auditor']), async (_req: Request, res: Response) => {
   const start = Date.now();
   const [postgres, redisStatus, blockchain] = await Promise.all([
     checkPostgres(),

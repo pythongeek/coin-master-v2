@@ -13,8 +13,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, AuthPayload } from '../middleware/auth';
-import { roleMiddleware } from '../middleware/auth';
+import { AuthPayload} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
+import { roleMiddleware } from '../middleware/auth'
 import {
   adjustUserBalance,
   getUserBalances,
@@ -30,7 +31,7 @@ interface AuthRequest extends Request {
   user?: AuthPayload;
 }
 
-router.use(authMiddleware, roleMiddleware(['super_admin']));
+router.use(adminAuthMiddleware, roleMiddleware(['super_admin']));
 
 // =============================================================================
 //  GET /api/admin/balance/users/:userId/balances

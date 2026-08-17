@@ -45,6 +45,7 @@ const metricsRoutes = router;
 
 import authRoutes  from './routes/auth';
 import auth2faRoutes from './routes/auth-2fa';
+import { adminAuthRouter } from './routes/admin-auth';
 import gameRoutes  from './routes/game';
 import adminRoutes from './routes/admin';
 import adminBonusRoutes from './routes/admin-bonus';
@@ -210,6 +211,12 @@ if (_envLoadResult.loaded > 0) {
 app.use('/api/admin/withdrawals', adminWithdrawalsRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin/balance', adminBalanceRoutes);
+// Admin auth (/api/admin/login, /api/admin/me, /api/admin/logout) is
+// mounted BEFORE the catch-all adminRoutes so the prefix routes are
+// never shadowed. admin_cf_token cookie (Path=/api/admin) is the only
+// thing these endpoints look at — they are completely isolated from
+// the user-facing /api/auth/* surface.
+app.use('/api/admin', adminAuthRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminBonusRoutes);
 app.use('/api/admin', adminHealthRoutes);

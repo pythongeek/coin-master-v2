@@ -19,12 +19,13 @@
  *     Update the admin_settings rows that drive the cron. All
  *     fields are optional — pass only what you want to change.
  *
- * Auth: authMiddleware + roleMiddleware(['super_admin']) on every
+ * Auth: adminAuthMiddleware + roleMiddleware(['super_admin']) on every
  * endpoint. Matches the canonical /api/admin pattern.
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, roleMiddleware } from '../middleware/auth';
+import { roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { query } from '../config/database';
 import { setAdminSetting } from '../services/admin-settings.service';
 import {
@@ -34,7 +35,7 @@ import {
 } from '../services/daily-fraud-report';
 
 const router = Router();
-router.use(authMiddleware, roleMiddleware(['super_admin']));
+router.use(adminAuthMiddleware, roleMiddleware(['super_admin']));
 
 // ── GET /reports ──────────────────────────────────────────────
 router.get('/reports', async (req: Request, res: Response) => {

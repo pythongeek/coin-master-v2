@@ -30,11 +30,12 @@ import { NextFunction } from 'express';
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, adminMiddleware } from '../middleware/auth';
+import { adminMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { query } from '../config/database';
 
 const router = Router();
-router.use(authMiddleware);
+router.use(adminAuthMiddleware);
 router.use(adminMiddleware);
 
 // =============================================================

@@ -7,7 +7,7 @@
  *  user withdrawal requests.
  *
  *  All routes require admin role (mounted under app.use('/api/admin',
- *  with authMiddleware + adminMiddleware applied).
+ *  with adminAuthMiddleware + adminMiddleware applied).
  *
  *  Mounted in index.ts BEFORE the catch-all admin router (so the more
  *  specific /api/admin/withdrawals path matches before /api/admin).
@@ -21,7 +21,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, adminMiddleware, AuthPayload } from '../middleware/auth';
+import { adminMiddleware, AuthPayload} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { requireAdmin2FA } from '../middleware/require-admin-2fa';
 import {
   approveWithdrawal, rejectWithdrawal, expireBonuses,
@@ -34,7 +35,7 @@ import { coinsToCurrency } from '../services/rate-fetcher';
 const router = Router();
 
 // All routes are admin-only
-router.use(authMiddleware);
+router.use(adminAuthMiddleware);
 router.use(adminMiddleware);
 
 // ── GET /api/admin/withdrawals ─────────────────────────────────

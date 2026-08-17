@@ -3,10 +3,16 @@
  *  ADMIN SERVER — server-side authentication helper
  * ═══════════════════════════════════════════════════════════════
  *
- *  fetchAdminUser() is intended to be called from a Next.js Server
- *  Component. It reads the cf_token cookie, forwards it to the backend
- *  /api/auth/me endpoint, and returns the user only if the backend says
- *  the account has an allowed admin role.
+ *  Reads the admin_cf_token cookie (Path=/api/admin, set by the
+ *  dedicated /api/admin/login endpoint). Forwards it to the backend's
+ *  /api/admin/me endpoint, which validates it server-side and returns
+ *  the admin user. If the backend says the cookie is invalid/expired,
+ *  or the user is no longer admin, we return null and the admin page
+ *  renders its rejection panel.
+ *
+ *  This is intentionally separate from user auth (lib/auth-cookies +
+ *  /api/auth/me). A user with cf_token cannot access the admin panel,
+ *  and an admin with admin_cf_token cannot access the game UI.
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -23,78 +29,63 @@ export interface AdminUser {
 const ADMIN_ROLES = new Set(['super_admin', 'admin', 'support', 'finance', 'auditor']);
 
 function internalApiBaseUrl(): string {
-  // Inside the Docker network the server component reaches the backend
-  // directly. Outside Docker (local dev) it falls back to localhost.
-  return process.env.INTERNAL_API_URL || 'http://localhost:4000';
+  // Edge runtime can only read env vars explicitly exposed via
+  // next.config.js. INTERNAL_API_URL is set on the container but not
+  // declared in next.config.js, so process.env returns undefined here
+  // on the build. The fallback `http://backend:4000` is the Docker
+  // Compose service name and resolves on the coin-master network.
+  // For local dev (operators running on Windows), set INTERNAL_API_URL
+  // to http://localhost:4000 in next.config.js so the build picks it up.
+  return process.env.INTERNAL_API_URL || 'http://backend:4000';
 }
 
-interface AuthMeResponse {
+interface AdminMeResponse {
   success?: boolean;
-  data?: AdminUser;
   user?: Partial<AdminUser> & { isAdmin?: boolean; two_factor_enabled?: boolean };
 }
 
-export async function fetchAdminUser(token: string): Promise<AdminUser | null> {
+/**
+ * Server-side admin gate. Pass the admin_cf_token cookie value
+ * (from `cookies()` in Next.js Server Components). Returns the
+ * admin user if the backend validates the cookie AND the user has
+ * an admin role. Returns null otherwise.
+ */
+export async function isAdminAuthorized(token: string | undefined): Promise<AdminUser | null> {
+  if (!token) return null;
+
   const base = internalApiBaseUrl();
+  const url = `${base}/api/admin/me`;
   try {
-    const res = await fetch(`${base}/api/auth/me`, {
+    const res = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${token}`,
+        Cookie: `admin_cf_token=${token}`,
         'Content-Type': 'application/json',
       },
       cache: 'no-store',
     });
+    if (!res.ok) return null;
 
-    if (!res.ok) {
-      return null;
-    }
+    const json = (await res.json()) as AdminMeResponse;
+    if (!json.success || !json.user) return null;
 
-    const json = (await res.json()) as AuthMeResponse;
-
-    if (!json.success) {
-      return null;
-    }
-
-    const payload = json.data ?? (json.user as AdminUser | undefined);
-    if (!payload) {
-      return null;
-    }
-
-    const role = payload.role || (payload.isAdmin ? 'super_admin' : 'user');
-    if (!ADMIN_ROLES.has(role)) {
-      return null;
-    }
+    const u = json.user;
+    // The /api/admin/me endpoint is gated by adminAuthMiddleware on the
+    // backend, so reaching it at all proves admin role. The response shape
+    // historically included isAdmin=true; some legacy shapes omit it. Accept
+    // either — we trust the endpoint's auth check, not the field.
+    const role = u.role || 'user';
+    if (!ADMIN_ROLES.has(role)) return null;
 
     return {
-      ...payload,
+      userId: u.userId || '',
+      username: u.username || '',
+      email: u.email ?? null,
+      walletAddress: u.walletAddress ?? null,
       role,
-      two_factor_enabled: payload.two_factor_enabled ?? false,
+      isAdmin: true,
+      two_factor_enabled: u.two_factor_enabled ?? false,
     };
   } catch {
     return null;
   }
-}
-
-/**
- * Gate used by the admin page. If the backend says the user is an admin
- * and has 2FA enabled, the server renders the admin shell. Any client-side
- * tampering of localStorage cannot bypass this check.
- */
-export async function isAdminAuthorized(token: string): Promise<AdminUser | null> {
-  const user = await fetchAdminUser(token);
-  if (!user) return null;
-  // 2FA is mandatory for admin accounts only when the admin_2fa_required toggle is on.
-  // The backend enforces this on login; we double-check at the edge so a stolen JWT
-  // from a non-2FA session cannot reach the admin panel while the toggle is on.
-  const settingRes = await fetch(`${internalApiBaseUrl()}/api/admin/settings/admin-2fa-status`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: 'no-store',
-  });
-  let admin2faRequired = false;
-  if (settingRes.ok) {
-    const settingJson = await settingRes.json() as { success?: boolean; required?: boolean };
-    admin2faRequired = settingJson.required === true;
-  }
-  if (admin2faRequired && !user.two_factor_enabled) return null;
-  return user;
 }
