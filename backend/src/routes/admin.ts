@@ -745,7 +745,6 @@ router.post('/rates/revert', adminLimiter, adminAuthMiddleware, roleMiddleware([
 //  ADMIN SETTINGS
 // ══════════════════════════════════════════════════════════════
 import { getAdminSettingBool, setAdminSetting } from '../services/admin-settings.service';
-import { creditCoins, ensureTestingWallet, TESTING_TOKEN } from '../services/testing-balance';
 import {
   checkIpReputation, getIpReputationReport,
   addToBlocklist, removeFromBlocklist, listBlocklist,
@@ -847,85 +846,6 @@ router.get('/settings/admin-2fa-status', adminLimiter, adminAuthMiddleware, role
   try {
     const required = await getAdminSettingBool('admin_2fa_required', false);
     res.json({ success: true, required });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    next(err);
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-//  TESTING BALANCE — quick credit for admin / smoke tests
-// ══════════════════════════════════════════════════════════════
-//
-//  POST /api/admin/testing/credit-coins
-//    body: { userId, amount, reason }
-//  POST /api/admin/testing/ensure-wallet
-//    body: { userId }
-//  GET  /api/admin/testing/wallet/:userId
-//
-//  These are explicitly for testing. They use an "INTERNAL" chain
-//  wallet (no real on-chain address, no deposit monitor) so admins
-//  can give themselves coins to smoke-test the game without needing
-//  real Binance Pay deposits. Production deposits still flow through
-//  wallet-derivation + deposit-monitor + reconciliation.
-
-router.post('/testing/credit-coins', adminLimiter, adminAuthMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const adminId = (req as Request & { user: AuthPayload }).user?.userId;
-    if (!adminId) return res.status(401).json({ success: false, error: 'Unauthorized' });
-    const body = req.body as { userId?: string; amount?: number; reason?: string };
-    if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
-    if (typeof body.amount !== 'number' || !Number.isFinite(body.amount) || body.amount <= 0) {
-      return res.status(400).json({ success: false, error: 'amount must be a positive number' });
-    }
-    if (!body.reason || body.reason.trim().length < 5) {
-      return res.status(400).json({ success: false, error: 'reason must be at least 5 characters' });
-    }
-    const result = await creditCoins(body.userId, body.amount, body.reason.trim(), adminId);
-    res.json({ success: true, result });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message === 'USER_NOT_FOUND') return res.status(404).json({ success: false, error: 'User not found' });
-    next(err);
-  }
-});
-
-router.post('/testing/ensure-wallet', adminLimiter, adminAuthMiddleware, roleMiddleware(['super_admin']), async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const body = req.body as { userId?: string };
-    if (!body.userId) return res.status(400).json({ success: false, error: 'userId required' });
-    const w = await ensureTestingWallet(body.userId);
-    res.json({ success: true, walletId: w.walletId, currency: w.currency });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    next(err);
-  }
-});
-
-router.get('/testing/wallet/:userId', adminLimiter, adminAuthMiddleware, roleMiddleware(['super_admin', 'finance', 'auditor']), async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const userId = String(req.params.userId);
-    const user = await query(
-      `SELECT id, username, balance::float8 AS balance,
-              withdrawable_balance_coins::float8 AS withdrawable,
-              bonus_balance_coins::float8 AS bonus
-         FROM users WHERE id = $1::uuid`,
-      [userId],
-    );
-    if (user.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
-    const w = await ensureTestingWallet(userId);
-    const wallet = await query(
-      `SELECT id, chain, token_symbol, balance::float8 AS balance,
-              locked_balance::float8 AS locked
-         FROM wallets WHERE id = $1::uuid`,
-      [w.walletId],
-    );
-    res.json({
-      success: true,
-      user: user.rows[0],
-      wallet: wallet.rows[0] ?? null,
-      currency: TESTING_TOKEN,
-    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     next(err);
