@@ -125,3 +125,4 @@ SSH_CONNECTION.md
 geoip/*.mmdb
 geoip/*.tar.gz
 geoip/*.zip
+.test-token
