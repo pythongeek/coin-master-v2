@@ -29,10 +29,9 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { query } from '../config/database';
-import { authLimiter as _unused } from '../middleware/rate-limiter'; // re-export reference, not used
 import { validateBody } from '../middleware/validation';
 import { z } from 'zod';
-import { createToken as makeUserToken, JWT_SECRET } from '../middleware/auth';
+import { JWT_SECRET } from '../middleware/auth';
 import { decryptSecret, verifyTotp } from '../utils/totp';
 
 // ─────────────────────────────────────────────────────────────────

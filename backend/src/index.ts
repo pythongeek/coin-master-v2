@@ -213,9 +213,11 @@ app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin/balance', adminBalanceRoutes);
 // Admin auth (/api/admin/login, /api/admin/me, /api/admin/logout) is
 // mounted BEFORE the catch-all adminRoutes so the prefix routes are
-// never shadowed. admin_cf_token cookie (Path=/api/admin) is the only
-// thing these endpoints look at — they are completely isolated from
-// the user-facing /api/auth/* surface.
+// never shadowed. The admin_cf_token cookie is path-scoped at the
+// route handler (Path=/, NOT /api/admin) so the browser sends it when
+// the operator navigates to the admin page URL. NAME-based isolation
+// (admin_cf_token vs cf_token) keeps the cookie from authenticating to
+// user endpoints, which only read the cf_token cookie.
 app.use('/api/admin', adminAuthRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminBonusRoutes);
