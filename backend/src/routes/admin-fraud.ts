@@ -12,13 +12,14 @@
  *                                            (full bonus audit + risk history
  *                                            + devices + cluster membership)
  *
- * Auth: adminLimiter + authMiddleware + super_admin/finance/auditor roles.
+ * Auth: adminLimiter + adminAuthMiddleware + super_admin/finance/auditor roles.
  * Read-only — no mutations here. (Mutations live in admin.ts and
  * admin-bonus.ts already.)
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, roleMiddleware } from '../middleware/auth';
+import { roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { adminLimiter } from '../middleware/rate-limiter';
 
 const router = Router();
@@ -27,7 +28,7 @@ const router = Router();
 router.get(
   '/fraud/live-feed',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -88,7 +89,7 @@ router.get(
 router.get(
   '/fraud/clusters',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -124,7 +125,7 @@ router.get(
 router.get(
   '/fraud/clusters/:id',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -165,7 +166,7 @@ router.get(
 router.get(
   '/fraud/alerts',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -225,7 +226,7 @@ router.get(
 router.get(
   '/fraud/alerts/:id',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -253,7 +254,7 @@ router.get(
 router.get(
   '/fraud/users/:userId/risk-profile',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -344,7 +345,7 @@ router.get(
 router.get(
   '/fraud/clusters/:id/graph',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (req: Request, res: Response) => {
     try {

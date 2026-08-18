@@ -20,7 +20,8 @@ import { Router, Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { z } from 'zod';
-import { authMiddleware, AuthPayload, roleMiddleware } from '../middleware/auth';
+import { AuthPayload, roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { adminLimiter } from '../middleware/rate-limiter';
 import { query, withTransaction } from '../config/database';
 import { handlePaymentWebhook } from '../services/payment';
@@ -45,7 +46,7 @@ function getAdminId(req: Request): string {
 router.get(
   '/qr-orders',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -116,7 +117,7 @@ router.get(
 router.get(
   '/qr-orders/:orderId',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -194,7 +195,7 @@ router.get(
 router.post(
   '/qr-orders/:orderId/release',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance']),
   async (req: Request, res: Response) => {
     try {
@@ -276,7 +277,7 @@ router.post(
 router.post(
   '/qr-orders/:orderId/reject',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance']),
   async (req: Request, res: Response) => {
     try {
@@ -340,7 +341,7 @@ router.post(
 router.post(
   '/qr-orders/:orderId/hold',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance']),
   async (req: Request, res: Response) => {
     try {
@@ -377,7 +378,7 @@ router.post(
 router.get(
   '/review-queue',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (_req: Request, res: Response) => {
     try {
@@ -416,7 +417,7 @@ router.get(
 router.get(
   '/llm-stats',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (_req: Request, res: Response) => {
     try {
@@ -501,7 +502,7 @@ router.get(
 router.get(
   '/qr-orders/:orderId/receipt/:receiptId',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -548,7 +549,7 @@ router.get(
 router.get(
   '/llm-prompt-versions',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (_req: Request, res: Response) => {
     try {
@@ -569,7 +570,7 @@ router.get(
 router.post(
   '/llm-prompt-rebuild',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance']),
   async (_req: Request, res: Response) => {
     try {
@@ -591,7 +592,7 @@ router.post(
 router.get(
   '/chains',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor']),
   async (_req: Request, res: Response) => {
     try {
@@ -612,7 +613,7 @@ router.get(
 router.post(
   '/chains/:chainKey/toggle',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
     try {
@@ -671,7 +672,7 @@ const updateChainConfigSchema = {
 router.post(
   '/chains/:chainKey/config',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
     try {
