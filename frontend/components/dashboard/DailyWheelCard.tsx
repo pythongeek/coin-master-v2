@@ -1,7 +1,7 @@
+"use client";
 // PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
 const API: string = '';
 
-"use client";
 
 /**
  * DailyWheelCard — Provably-fair daily login prize spinner.

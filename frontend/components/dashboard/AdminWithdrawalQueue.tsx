@@ -1,7 +1,7 @@
+'use client';
 // PR-1B: cookie-auth stubs to satisfy callers; safe to remove in Step 5.
 const token: string = '';
 
-'use client';
 /**
  * =============================================================
  *  ADMIN WITHDRAWAL QUEUE - with risk scoring

@@ -1,7 +1,7 @@
+"use client";
 // PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
 const API: string = '';
 
-"use client";
 
 /**
  * ChallengesCard — Daily mission progress and claim widget.

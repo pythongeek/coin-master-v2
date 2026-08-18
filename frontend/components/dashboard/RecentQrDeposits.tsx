@@ -1,7 +1,7 @@
+'use client';
 // PR-1B: cookie-auth stubs to satisfy callers; safe to remove in Step 5.
 const token: string = '';
 
-'use client';
 /**
  * =============================================================
  *  RECENT QR DEPOSITS - shown on dashboard if user has any

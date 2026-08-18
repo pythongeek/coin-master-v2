@@ -1,3 +1,4 @@
+'use client';
 /**
  * ===============================================================
  *  CLIENT INIT — hydrate the auth store from /api/auth/me on mount
@@ -13,7 +14,6 @@
  *  and kicks off exactly one initialize() per browser session.
  */
 
-'use client';
 
 import { useEffect } from 'react';
 import { useGameStore } from '@/lib/store';

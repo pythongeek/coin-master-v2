@@ -1,7 +1,7 @@
+'use client';
 // PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
 const API: string = '';
 
-'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ADMIN LIVE STATS — প্ল্যাটফর্মের সামগ্রিক Live Stats

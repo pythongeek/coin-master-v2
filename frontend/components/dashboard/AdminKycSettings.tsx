@@ -1,7 +1,7 @@
+'use client';
 // PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
 const API: string = '';
 
-'use client';
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ADMIN KYC SETTINGS — Configure MiniMax API key and KYC thresholds
