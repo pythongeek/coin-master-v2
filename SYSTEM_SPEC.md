@@ -44,6 +44,28 @@ Three-layer defense-in-depth — all confirmed in code:
 - Layer 2 (Page): `frontend/app/admin/page.tsx` — server-side `cookies()` + `isAdminAuthorized()` → backend `/api/auth/me` + role check against `ADMIN_ROLES` set (`super_admin`, `admin`, `support`, `finance`, `auditor`). Soft-rejection: non-admin sees rejection JSX at /admin URL (200, no admin shell rendered).
 - Layer 3 (API): every `backend/src/routes/admin-*.ts` has `router.use(authMiddleware, adminMiddleware|roleMiddleware)` applied at router level — covers every handler in each file. `admin.ts` further adds per-route `roleMiddleware([...])` per endpoint. Unauthenticated → 401. Authenticated non-admin → 403.
 
+### Admin Auth Surface (added post-Step-7 — commits `7106aa2`, `4423dd5`, `0c29a9c`, `7da9cc5`, `8275cc3`)
+Separate admin-only auth surface, fully isolated from user auth:
+- Separate cookie: `admin_cf_token` (httpOnly, SameSite=Strict, secure in production). Path=`/` (not `/api/admin`) so the browser sends it when the operator navigates to the admin page URL. **NAME-based isolation** (`admin_cf_token` vs `cf_token`) — user routes never read `admin_cf_token`, admin routes never read `cf_token`. A leaked admin cookie cannot authenticate to user endpoints.
+- TTL: 1 hour (vs user's 7-day `cf_token`). Smaller blast radius on stolen-cookie replay.
+- Rate limit: `adminAuthLimiter` — 3 attempts per 5 min per IP (stricter than user's `authLimiter` 5/min).
+- `POST /api/admin/login` flow:
+  1. bcrypt password check + `is_admin` check
+  2. **TOTP step-up** (if `totp_enabled && totp_secret_encrypted` — NOT legacy `two_factor_enabled`)
+     - Missing TOTP code → `401 { success: false, error: "2FA code required.", requires2FA: true }`
+     - Invalid TOTP code → `401 { success: false, error: "Invalid 2FA code.", requires2FA: true }`
+     - Decryption error → `500 { error: "2FA verification unavailable. Contact an operator." }`
+  3. Set `admin_cf_token` cookie
+- `GET /api/admin/me`: reads `admin_cf_token`, verifies JWT, returns admin user data. 401 on missing/expired token; 403 if user no longer admin.
+- `POST /api/admin/logout`: clears `admin_cf_token` (Max-Age=0). Idempotent.
+- `adminAuthMiddleware` (`backend/src/middleware/admin-auth.ts`): all `admin-*.ts` routes use this — NOT the user `authMiddleware`. Sets `req.user.isAdmin=true, scope='admin'` so downstream `roleMiddleware([...])` checks against the right list.
+- TOTP library: hand-rolled RFC 6238 via `utils/totp.ts` (`verifyTotp(secret, token, window)`). **No `speakeasy`/`otplib` dependency** — codebase uses `crypto.createHmac('sha1')` + `crypto.timingSafeEqual` for constant-time comparison.
+- All `admin-*.ts` route files migrated from `authMiddleware` → `adminAuthMiddleware` (15+ routes in `admin.ts`, plus 9 dedicated route files).
+- `frontend/lib/admin-server.ts` (`isAdminAuthorized`): calls `/api/admin/me` via `http://backend:4000` (internal Docker compose DNS). Removed redundant `u.isAdmin` check (endpoint already gated).
+- `frontend/app/admin/login/page.tsx`: conditional TOTP input field on `requires2FA` response, re-submits with `totp_code`.
+- Users with `totp_enabled = false` proceed without TOTP gate (admin not enrolled). Operator must enroll via `/api/auth/2fa/setup` + `/api/auth/2fa/verify` to enforce TOTP.
+- Audit log: every login (success/fail) + every TOTP failure written to `audit_log` with severity mapped from result.
+
 ### Balance / Wallet — Step 5 CONFIRMED (no fixes required)
 - **Balance column type:** `users.balance DECIMAL(18, 8)` (`schema.sql:17`), `users.bonus_balance_coins DECIMAL(18, 8)`, `users.withdrawable_balance_coins DECIMAL(18, 8)`, `wallets.balance DECIMAL(36, 18)` (`schema.sql:176`) — **NOT float**. Exact-precision arithmetic in SQL.
 - **Arithmetic safety:** all decrement/credit is SQL-side `column - $N` or `column + $N` (e.g. `backend/src/services/bonus.ts:529-535` `debitBalanceForBet`, `:555-559` `creditPayout`). JS only `parseFloat(...)`s the result. No JS floating-point arithmetic on stored balance.
@@ -165,6 +187,11 @@ All Step 1-7 audit items CONFIRMED (no `STATUS UNKNOWN` left). See **VERIFIED CO
 These must complete BEFORE production traffic. None of them are agent actions.
 
 ```
+[x] Frontend image rebuilt with admin auth surface + TOTP step-up + red-team revert
+    (commit 8275cc3, image sha 4e4e78ca55da, container started 2026-08-18 10:57 UTC)
+[x] Backend image rebuilt with admin auth surface + TOTP step-up + red-team revert
+    (commit 8275cc3, image sha 9c3835a0975b, container started 2026-08-18 11:29 UTC)
+
 [ ] Take a backup:
         pg_dump $DATABASE_URL > backup_pre_059_$(date +%Y%m%d-%H%M%S).sql
 
@@ -242,6 +269,36 @@ These must complete BEFORE production traffic. None of them are agent actions.
 - Run rm -rf .next before next build (stale artifacts from pre-PR-1B localStorage era)
 - AdminWithdrawalQueue uses raw fetch (needs X-Admin-2FA-Token header) — intentional, not a bug
 - Some migrated admin components use raw fetch instead of apiGet — consistent behavior, inconsistent style
+
+## KNOWN RISKS
+
+- [RESOLVED 2026-08-18] Frontend + backend hot-patch risk. The 2026-08-17 image
+  was built from an undocumented intermediate working tree state (pre-rebuild).
+  Both frontend (`coin-master-frontend` sha `4e4e78ca55da`, started 10:57 UTC)
+  and backend (`coin-master-backend` sha `9c3835a0975b`, started 11:29 UTC)
+  were rebuilt with `--no-cache` during this session. Compiled JS in both
+  containers now matches committed source for commits `7106aa2`, `4423dd5`,
+  `0c29a9c`, `7da9cc5`, `8275cc3`. Verified by:
+    - TOTP code paths present in `/app/dist/routes/admin-auth.js`
+      (10 hits for `totp_enabled` / `verifyTotp` / `requires2FA`)
+    - Red-team testing routes absent from `/app/dist/routes/admin.js`
+    - Old `!e.isAdmin` guard absent from `/app/.next/server/edge/`
+    - `grep -r "testing/credit-coins\|ensureTestingWallet"` → 0 hits
+    - `.bak` files in container: 0
+- [OPEN] `admin_2fa_required` admin setting is NOT enforced in new admin
+  login flow. Old `auth.ts` rejected login if `admin_2fa_required=true`
+  AND admin hadn't enrolled. New flow lets them through if `totp_enabled=false`.
+  Operator decision needed: add this check or accept the change.
+- [OPEN] `totp_verified_at` is NOT written on successful admin login. The
+  `requireAdmin2FA` middleware (for sensitive actions) will therefore demand
+  fresh TOTP on every protected action — no 5-min grace window. Operator
+  decision needed: write it on login, or accept the strict per-action TOTP.
+- [OPEN] Admin password rotation + 2FA enrollment for the live admin
+  account not yet completed. Admin currently has `totp_enabled=false`.
+  End-to-end TOTP enforcement will not activate until operator enrolls.
+- [OPEN] Working-tree noise: 24 modified files + 7 untracked items in
+  `fix/s1-w6-kms-guard` working tree (not in committed code). Out of scope
+  for this session; see `git status` for full list.
 
 ## SENIOR DEV RULES — enforce every session
 
