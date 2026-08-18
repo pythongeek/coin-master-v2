@@ -30,9 +30,13 @@ export default function BetControls() {
     targetMultiplier, setTargetMultiplier,
   } = useGameStore();
 
-  const [clientSeed, setClientSeed] = useState(() =>
-    Math.random().toString(36).slice(2) + Date.now().toString(36)
-  );
+  // PR RNG-1 (Step 3): crypto-safe clientSeed via WebCrypto — was
+  // Math.random() + Date.now(), which is predictable.
+  const [clientSeed, setClientSeed] = useState(() => {
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+  });
   const [showSeed, setShowSeed] = useState(false);
 
   const isSpinning = gameStatus === 'spinning';
@@ -144,7 +148,10 @@ export default function BetControls() {
     setGameStatus('spinning');
 
     // নতুন ক্লায়েন্ট সিড তৈরি করো পরের গেমের জন্য
-    setClientSeed(Math.random().toString(36).slice(2) + Date.now().toString(36));
+    // PR RNG-1: rotate clientSeed per bet via crypto.getRandomValues.
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    setClientSeed(Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join(''));
   };
 
   // ── অটো-প্লে লজিক ───────────────────────────────────────────
@@ -188,7 +195,10 @@ export default function BetControls() {
     });
 
     setGameStatus('spinning');
-    setClientSeed(Math.random().toString(36).slice(2) + Date.now().toString(36));
+    // PR RNG-1: rotate clientSeed per bet via crypto.getRandomValues.
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    setClientSeed(Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join(''));
   };
 
   const startAutoPlay = () => {

@@ -1,8 +1,12 @@
 'use client';
 /**
- * ═══════════════════════════════════════════════════════════════
- *  USER DASHBOARD PAGE — Complete player dashboard
- * ═══════════════════════════════════════════════════════════════
+ * ===============================================================
+ *  USER DASHBOARD PAGE \u2014 Complete player dashboard
+ * ===============================================================
+ *
+ *  PR-1B: auth rides on the httpOnly cf_token cookie. No need to
+ *  pass userId in the URL or decode the JWT client-side. The
+ *  backend authMiddleware derives user identity from the cookie.
  */
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
@@ -18,9 +22,7 @@ import { RakebackCard } from '@/components/dashboard/RakebackCard';
 import { ChallengesCard } from '@/components/dashboard/ChallengesCard';
 import RecentQrDeposits from '@/components/dashboard/RecentQrDeposits';
 import { useTranslation } from '@/hooks/useTranslation';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
+import { apiGet } from '@/lib/api';
 
 export default function DashboardPage() {
   const { t } = useTranslation();
@@ -31,35 +33,18 @@ export default function DashboardPage() {
   const [kycStatus, setKycStatus] = useState<'unverified' | 'pending' | 'verified' | 'rejected'>('unverified');
   const [loading, setLoading] = useState(true);
 
-  const token = typeof window !== 'undefined'
-    ? localStorage.getItem('cf_token') || ''
-    : '';
-
-  const headers = { Authorization: `Bearer ${token}` };
-
-  // Decode the JWT to get the real userId. Falls back to demo only if
-  // no token is present (unauthenticated). Never trust localStorage for
-  // admin flags — the backend validates every request.
-  function decodeUserId(jwt: string): string {
-    if (!jwt) return 'demo';
-    try {
-      const payload = JSON.parse(atob(jwt.split('.')[1]));
-      return payload.userId || payload.sub || 'demo';
-    } catch {
-      return 'demo';
-    }
-  }
-  const userId = decodeUserId(token);
-
+  // PR-1B: apiGet() attaches the httpOnly cookie via credentials:'include'.
+  // The backend derives userId from the cookie \u2014 no need to pass it
+  // in the URL.
   async function loadAll(page = 1) {
     setLoading(true);
     try {
       const [statsRes, chartRes, histRes, kycRes, wheelRes] = await Promise.all([
-        fetch(`${API}/dashboard/stats/${userId}`,    { headers }),
-        fetch(`${API}/dashboard/chart/${userId}?days=30`, { headers }),
-        fetch(`${API}/dashboard/history/${userId}?page=${page}&limit=15`, { headers }),
-        fetch(`${API}/kyc/status`, { headers }),
-        fetch(`${API}/dashboard/wheel`, { headers }),
+        apiGet('/api/dashboard/stats'),
+        apiGet('/api/dashboard/chart?days=30'),
+        apiGet(`/api/dashboard/history?page=${page}&limit=15`),
+        apiGet('/api/kyc/status'),
+        apiGet('/api/dashboard/wheel'),
       ]);
 
       const [s, c, h, k, w] = await Promise.all([
@@ -67,7 +52,7 @@ export default function DashboardPage() {
         chartRes.json(),
         histRes.json(),
         kycRes.json(),
-        wheelRes.json()
+        wheelRes.json(),
       ]);
 
       if (s.success) {
@@ -84,7 +69,7 @@ export default function DashboardPage() {
         setKycStatus(k.kycStatus);
       }
     } catch {
-      // API not connected — demo mode
+      // API not connected \u2014 demo mode
     }
     setLoading(false);
   }
@@ -172,17 +157,17 @@ export default function DashboardPage() {
         {/* VIP progress */}
         <VipProgressCard vip={stats?.vip} totalWagered={stats?.totalWagered || 0} />
 
-        {/* Daily wheel */}
-        <DailyWheelCard wheel={stats?.wheel} token={token} onSpin={loadStats} />
+        {/* Daily wheel \u2014 PR-1B: removed token prop (cookie auth now) */}
+        <DailyWheelCard wheel={stats?.wheel} onSpin={loadStats} />
 
-        {/* Rakeback */}
-        <RakebackCard token={token} onClaim={loadStats} />
+        {/* Rakeback \u2014 PR-1B: removed token prop */}
+        <RakebackCard onClaim={loadStats} />
 
-        {/* Daily Challenges */}
-        <ChallengesCard token={token} onClaim={loadStats} />
+        {/* Daily Challenges \u2014 PR-1B: removed token prop */}
+        <ChallengesCard onClaim={loadStats} />
 
-        {/* Leaderboard */}
-        <LeaderboardCard token={token} />
+        {/* Leaderboard \u2014 PR-1B: removed token prop */}
+        <LeaderboardCard />
 
         {/* Achievements */}
         <AchievementsGrid achievements={stats?.achievements} />
@@ -190,7 +175,7 @@ export default function DashboardPage() {
         {/* Stats cards */}
         <StatsCards stats={stats} loading={loading} />
 
-        {/* Quick wallet actions - deposit + withdraw entry points */}
+        {/* Quick wallet actions */}
         <div className="grid grid-cols-2 gap-3">
           <Link href="/wallet/deposit" className="glass-card p-4 rounded-xl hover:bg-bg-elevated/30 transition flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-brand-green/20 flex items-center justify-center flex-shrink-0">

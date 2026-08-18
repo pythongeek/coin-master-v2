@@ -45,6 +45,7 @@ const metricsRoutes = router;
 
 import authRoutes  from './routes/auth';
 import auth2faRoutes from './routes/auth-2fa';
+import { adminAuthRouter } from './routes/admin-auth';
 import gameRoutes  from './routes/game';
 import adminRoutes from './routes/admin';
 import adminBonusRoutes from './routes/admin-bonus';
@@ -210,6 +211,14 @@ if (_envLoadResult.loaded > 0) {
 app.use('/api/admin/withdrawals', adminWithdrawalsRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin/balance', adminBalanceRoutes);
+// Admin auth (/api/admin/login, /api/admin/me, /api/admin/logout) is
+// mounted BEFORE the catch-all adminRoutes so the prefix routes are
+// never shadowed. The admin_cf_token cookie is path-scoped at the
+// route handler (Path=/, NOT /api/admin) so the browser sends it when
+// the operator navigates to the admin page URL. NAME-based isolation
+// (admin_cf_token vs cf_token) keeps the cookie from authenticating to
+// user endpoints, which only read the cf_token cookie.
+app.use('/api/admin', adminAuthRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminBonusRoutes);
 app.use('/api/admin', adminHealthRoutes);
@@ -364,6 +373,17 @@ async function start() {
     startWeeklyCohortWorker(60 * 60 * 1000);
   } catch (e) {
     console.warn('[boot] weekly cohort analysis worker failed to start:', e);
+  }
+
+  // Start S1-W11 payout reconciliation cron. Ticks every 5 minutes
+  // and flips confirmed-without-tx-hash rows to 'payout_stuck' so
+  // the S1-W3 resolve-stuck endpoint can take over. Also alerts on
+  // pending withdrawals older than 48 hours (auto-refund is W16).
+  try {
+    const { startPayoutReconciliationCron } = await import('./services/payout-reconciliation');
+    startPayoutReconciliationCron();
+  } catch (e) {
+    console.warn('[boot] payout reconciliation cron failed to start:', e);
   }
 
   // Start QR expiration worker (ticks every 60s, expires stale orders)

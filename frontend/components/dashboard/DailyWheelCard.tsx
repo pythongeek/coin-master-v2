@@ -1,4 +1,7 @@
 "use client";
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 
 /**
  * DailyWheelCard — Provably-fair daily login prize spinner.
@@ -7,10 +10,7 @@
 import { useState, useCallback } from "react";
 import { Gift, Loader2, Lock } from "lucide-react";
 import { useTranslation } from "@/hooks/useTranslation";
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface WheelData {
   enabled: boolean;
   canSpin: boolean;
@@ -23,7 +23,7 @@ interface WheelPrize {
   type: string;
 }
 
-export function DailyWheelCard({ wheel, token, onSpin }: { wheel?: WheelData; token: string; onSpin: () => void }) {
+export function DailyWheelCard({ wheel, token, onSpin }: { wheel?: WheelData; token?: string; onSpin: () => void }) {
   const { t } = useTranslation();
   const [spinning, setSpinning] = useState(false);
   const [lastPrize, setLastPrize] = useState<WheelPrize | null>(null);
@@ -40,7 +40,7 @@ export function DailyWheelCard({ wheel, token, onSpin }: { wheel?: WheelData; to
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+
         },
         body: JSON.stringify({ clientSeed }),
       });

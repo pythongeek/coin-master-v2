@@ -317,6 +317,21 @@ router.post(
 
     const token = createToken({ userId, username, isAdmin: false, role: 'user' });
 
+    // ── PR-1A: set httpOnly auth cookie ──────────────────────────
+    // httpOnly + Secure(prod) + SameSite=Strict. The frontend proxy at
+    // frontend/app/api/[...path]/route.ts copies upstream Set-Cookie
+    // headers back to the browser, so this cookie is delivered
+    // same-origin on the frontend host. Backwards compat: token is
+    // still in JSON for this PR so the Socket.IO upgrade keeps working.
+    // TODO-PR1B: remove token from response once socket uses a ticket.
+    res.cookie('cf_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days, matches JWT expiry
+      path: '/',
+    });
+
     const bonusAmount = welcomeClaim?.amountCoins ?? 10;
     res.status(201).json({
       success: true,
@@ -392,6 +407,17 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
       username: user.username,
       isAdmin: user.is_admin,
       role: user.role,
+    });
+
+    // ── PR-1A: set httpOnly auth cookie ──────────────────────────
+    // See register handler for design notes. Same shape here.
+    // TODO-PR1B: remove token from response once socket uses a ticket.
+    res.cookie('cf_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/',
     });
 
     res.json({
@@ -549,6 +575,17 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
 
     const token = createToken({ userId: u.id, username: u.username, isAdmin: u.is_admin, role: u.role });
 
+    // ── PR-1A: set httpOnly auth cookie ──────────────────────────
+    // See register handler for design notes. Same shape here.
+    // TODO-PR1B: remove token from response once socket uses a ticket.
+    res.cookie('cf_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/',
+    });
+
     res.json({
       success: true,
       token,
@@ -565,6 +602,28 @@ router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: 
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ success: false, error: message });
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/logout — clear cf_token cookie
+// ══════════════════════════════════════════════════════════════
+//
+//  PR-1A. Deliberately NO `authMiddleware`: an expired or invalid
+//  cookie must still be clearable, otherwise the browser holds a
+//  stale httpOnly cookie forever. The cookie name + path match the
+//  setter so the browser removes the right one. CSRF risk is nil —
+//  clearing another user's cookie helps no attacker (the cookie is
+//  httpOnly and the request can't forge a session).
+//
+router.post('/logout', (_req: Request, res: Response) => {
+  res.cookie('cf_token', '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 0, // expire now
+    path: '/',
+  });
+  res.json({ success: true });
 });
 
 // ══════════════════════════════════════════════════════════════

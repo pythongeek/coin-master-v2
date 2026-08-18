@@ -12,7 +12,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, adminMiddleware, roleMiddleware } from '../middleware/auth';
+import { adminMiddleware, roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import {
   listWebhookDlq,
   webhookDlqSize,
@@ -27,7 +28,7 @@ import { query } from '../config/database';
 const router = Router();
 
 // ── LIST DLQ entries ──────────────────────────────────────────
-router.get('/dlq', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.get('/dlq', adminAuthMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
     const limit = Math.min(parseInt(String(req.query.limit ?? '50'), 10) || 50, 200);
     const entries = await listWebhookDlq(limit);
@@ -48,7 +49,7 @@ router.get('/dlq', authMiddleware, adminMiddleware, async (req: Request, res: Re
 });
 
 // ── STATS ───────────────────────────────────────────────────────
-router.get('/dlq/stats', authMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
+router.get('/dlq/stats', adminAuthMiddleware, adminMiddleware, async (_req: Request, res: Response) => {
   try {
     const total = await webhookDlqSize();
     res.json({
@@ -65,7 +66,7 @@ router.get('/dlq/stats', authMiddleware, adminMiddleware, async (_req: Request, 
 // ── RETRY a single DLQ entry (super_admin only) ────────────────
 router.post(
   '/dlq/:jobId/retry',
-  authMiddleware,
+  adminAuthMiddleware,
   adminMiddleware,
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
@@ -156,7 +157,7 @@ router.post(
 // ── DELETE a single DLQ entry ─────────────────────────────────
 router.delete(
   '/dlq/:jobId',
-  authMiddleware,
+  adminAuthMiddleware,
   adminMiddleware,
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {

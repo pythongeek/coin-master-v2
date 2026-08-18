@@ -207,7 +207,9 @@ Generate a structured JSON response matching this schema:
    */
   async getAccessToken(userId: string): Promise<string> {
     if (this.isMockMode()) {
-      console.log(`[KYC Mock Mode] Generating access token for user ${userId}`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.debug(`[kyc] mock-mode token issued for user ${userId}`);
+      }
       return `mock_sdk_token_for_${userId}`;
     }
 

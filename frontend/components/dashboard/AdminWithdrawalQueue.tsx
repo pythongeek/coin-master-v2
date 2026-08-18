@@ -1,4 +1,7 @@
 'use client';
+// PR-1B: cookie-auth stubs to satisfy callers; safe to remove in Step 5.
+const token: string = '';
+
 /**
  * =============================================================
  *  ADMIN WITHDRAWAL QUEUE - with risk scoring
@@ -8,8 +11,15 @@
  *   - Per-row risk badge (low / medium / high / critical) with score
  *   - Sortable by risk score, amount, or date
  *   - Filter by minimum risk level (show me only high+critical)
+ *   - Filter by status (pending / confirmed / failed / cancelled /
+ *     payout_stuck / all) — S1-W3 exposes payout_stuck so the
+ *     operator can act on rows the W11 cron flagged.
  *   - Expandable detail panel showing every risk signal + reason
- *   - Approve / reject with reason
+ *   - Approve / Reject (Sprint 1, S1-C1 / S1-C4-R2)
+ *   - Resolve-stuck (Sprint 1, S1-W3): action='confirm'|'refund'
+ *   - Admin 2FA prompt (Sprint 1, S1-C5): when the backend returns
+ *     403 requires_2fa=true, show a TOTP input. The token persists in
+ *     sessionStorage for the 5-min grace window.
  *
  *  Multi-signal risk model (no single magic threshold):
  *    amount_band + account_age + history_ratio + recent_attempts
@@ -23,21 +33,27 @@ import {
   Check,
   X,
   RefreshCw,
+  Wrench,
   Clock,
   AlertCircle,
   Loader2,
   ShieldAlert,
   ChevronDown,
   ChevronUp,
+  Lock,
 } from 'lucide-react';
 import { useToast } from '@/components/providers/ToastProvider';
 import EquivalentAmounts from '@/components/wallet/EquivalentAmounts';
 import { getFxRates, type FxRatesResponse } from '@/lib/api/wallet';
 import { getApiBase } from '@/lib/api/base';
+import { sanitizeError } from '@/lib/api/errors';
 
 const API = getApiBase();
 
-type Status = 'pending' | 'confirmed' | 'failed' | 'cancelled' | 'all';
+// S1-W3: payout_stuck added to Status so the operator can filter and act on it.
+// S1-C5: 'rejected' is the C1 fix's terminal state. Status values mirror the live
+// CHECK constraint from migration 056 + 057 in backend/migrations/.
+type Status = 'pending' | 'confirmed' | 'failed' | 'cancelled' | 'payout_stuck' | 'rejected' | 'all';
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 type SortKey = 'risk' | 'amount' | 'date';
 type SortDir = 'asc' | 'desc';
@@ -49,67 +65,47 @@ interface RiskSignal {
   note: string;
 }
 
-interface Risk {
-  score: number;
-  level: RiskLevel;
-  signals: RiskSignal[];
-  suggestion: string;
-  reasons: string[];
-  computedAt: string;
-}
-
-interface WithdrawalEquivalent {
-  usdt: number;
-  usd: number;
-  bdt: number;
-}
-
 interface Withdrawal {
   id: string;
   user_id: string;
-  username: string | null;
-  email: string | null;
+  username?: string;
+  email?: string;
   amount: string | number;
-  currency: string;
   status: string;
-  ip_address: string | null;
-  metadata: Record<string, any> | null;
+  to_address?: string;
+  tx_hash?: string | null;
+  metadata?: Record<string, string | number | boolean | undefined>;
+  ip_address?: string;
   created_at: string;
-  confirmed_at: string | null;
-  risk?: Risk;
-  equivalent?: WithdrawalEquivalent;
+  risk?: {
+    score: number;
+    level: RiskLevel;
+    signals: RiskSignal[];
+    reasons: string[];
+    suggestion: string;
+    computedAt: string;
+  };
 }
 
 interface Stats {
   pending: number;
   confirmed: number;
   failed: number;
-  total_confirmed: number;
-  total_pending: number;
   today_total: number;
+  total_pending: string;
+  total_confirmed: string;
 }
 
-const RISK_COLORS: Record<RiskLevel, string> = {
-  low: 'bg-green-500/15 text-green-400 border-green-500/30',
-  medium: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-  high: 'bg-orange-500/15 text-orange-400 border-orange-500/30',
-  critical: 'bg-red-500/20 text-red-400 border-red-500/40',
-};
-
-const RISK_RANK: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
-
-function RiskBadge({ risk }: { risk: Risk | undefined }) {
-  if (!risk) return <span className="text-text-muted text-[10px]">unscored</span>;
-  return (
-    <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono border ${RISK_COLORS[risk.level]}`}
-      title={risk.reasons.join(' • ') || 'No risk signals'}
-    >
-      <ShieldAlert size={10} />
-      {risk.level} · {risk.score}
-    </span>
-  );
+// S1-C5: a TOTP retry context. When approve/reject/resolve returns 403 with
+// requires_2fa=true, we open this dialog so the admin can paste a TOTP token.
+// The token is then persisted to sessionStorage for the 5-min grace window.
+interface TotpPrompt {
+  action: 'approve' | 'reject' | 'resolve';
+  id: string;
+  body?: Record<string, unknown>; // body for reject/resolve calls (preserved across retry)
 }
+
+const TOTP_SESSION_KEY = 'admin_2fa_token';
 
 export default function AdminWithdrawalQueue() {
   const [status, setStatus] = useState<Status>('pending');
@@ -125,14 +121,67 @@ export default function AdminWithdrawalQueue() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // S1-W3: Resolve-stuck state. `resolveStuckId` toggles the inline action panel.
+  const [resolveStuckId, setResolveStuckId] = useState<string | null>(null);
+  const [resolveAction, setResolveAction] = useState<'confirm' | 'refund'>('refund');
+  const [resolveTxHash, setResolveTxHash] = useState('');
+  const [resolveNotes, setResolveNotes] = useState('');
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  // S1-C5: TOTP state — the X-Admin-2FA-Token header persisted for the 5-min grace window.
+  const [totpToken, setTotpToken] = useState<string>(() =>
+    typeof window !== 'undefined' ? sessionStorage.getItem(TOTP_SESSION_KEY) || '' : '',
+  );
+  const [totpPrompt, setTotpPrompt] = useState<TotpPrompt | null>(null);
+  const [totpInput, setTotpInput] = useState('');
+
   const { addToast } = useToast();
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
+
+  // Build auth headers. Adds X-Admin-2FA-Token if a TOTP is cached for this session.
+  const authHeaders = (extra?: Record<string, string>) => {
+    const h: Record<string, string> = {};
+    if (extra) Object.assign(h, extra);
+    if (totpToken) h['X-Admin-2FA-Token'] = totpToken;
+    return h;
+  };
+
+  // S1-C5: when a 2FA-protected endpoint returns 403 requires_2fa=true, we open
+  // the TOTP prompt and stash the request context so the user can retry with a
+  // valid token. After a successful retry, the token is persisted to sessionStorage
+  // for the 5-min grace window (same as the user's withdrawal 2FA step-up).
+  const handle2faRequired = (action: TotpPrompt['action'], id: string, body?: Record<string, unknown>) => {
+    setTotpPrompt({ action, id, body });
+    setTotpInput('');
+  };
+
+  const persistTotp = (tok: string) => {
+    setTotpToken(tok);
+    try { sessionStorage.setItem(TOTP_SESSION_KEY, tok); } catch { /* ignore */ }
+  };
+
+  const clearTotp = () => {
+    setTotpToken('');
+    try { sessionStorage.removeItem(TOTP_SESSION_KEY); } catch { /* ignore */ }
+  };
+
+  const retryWithTotp = async () => {
+    if (!totpPrompt || !totpInput.trim()) return;
+    persistTotp(totpInput.trim());
+    const { action, id, body } = totpPrompt;
+    const ctx = { action, id };
+    setTotpPrompt(null);
+    setTotpInput('');
+    if (action === 'approve') await approve(id, true);
+    else if (action === 'reject') await reject(id, body?.reason as string ?? '', true);
+    else if (action === 'resolve') await resolveStuck(id, body?.action as 'confirm' | 'refund' ?? 'refund', body?.tx_hash as string ?? '', body?.notes as string ?? '', true);
+  };
 
   const fetchStats = useCallback(async () => {
     try {
       const res = await fetch(`${API}/admin/withdrawals/stats`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) setStats(data.stats);
@@ -150,13 +199,13 @@ export default function AdminWithdrawalQueue() {
       params.set('limit', '200');
       if (minRisk) params.set('minRisk', minRisk);
       const res = await fetch(`${API}/admin/withdrawals?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {
         setItems(data.withdrawals || []);
       } else {
-        setError(data.error || 'Failed to load withdrawals');
+        setError(sanitizeError(data.error) || 'Failed to load withdrawals');
       }
     } catch {
       setError('Cannot connect to backend');
@@ -170,12 +219,12 @@ export default function AdminWithdrawalQueue() {
     getFxRates().then(setFxRates).catch(() => { /* keep stale */ });
   }, [status, minRisk, fetchItems, fetchStats]);
 
-  const approve = async (id: string) => {
+  const approve = useCallback(async (id: string, isRetry = false) => {
     setActionId(id);
     try {
       const res = await fetch(`${API}/admin/withdrawals/${id}/approve`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: authHeaders(),
       });
       const data = await res.json();
       if (data.success) {
@@ -184,49 +233,100 @@ export default function AdminWithdrawalQueue() {
         );
         addToast(`Approved withdrawal ${id.slice(0, 8)}`, 'success');
         fetchStats();
+      } else if (data.requires_2fa && !isRetry) {
+        handle2faRequired('approve', id);
+      } else if (data.requires_2fa && isRetry) {
+        addToast('TOTP rejected — try a fresh code', 'error');
       } else {
-        setError(data.error || 'Approve failed');
+        setError(sanitizeError(data.error) || 'Approve failed');
       }
     } catch {
       setError('Network error');
     } finally {
       setActionId(null);
     }
-  };
+  }, [token, totpToken, persistTotp, handle2faRequired, items, sanitizeError]);
 
-  const reject = async (id: string) => {
-    if (!rejectReason.trim()) return;
+  const reject = useCallback(async (id: string, reason: string, isRetry = false) => {
+    if (!reason.trim()) return;
     setActionId(id);
     try {
       const res = await fetch(`${API}/admin/withdrawals/${id}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reason: rejectReason }),
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ reason }),
       });
       const data = await res.json();
       if (data.success) {
         setItems((prev) =>
-          prev.map((it) => (it.id === id ? { ...it, status: 'failed' } : it))
+          prev.map((it) => (it.id === id ? { ...it, status: 'rejected' } : it))
         );
         addToast(`Rejected withdrawal ${id.slice(0, 8)}`, 'success');
         setRejectingId(null);
         setRejectReason('');
         fetchStats();
+      } else if (data.requires_2fa && !isRetry) {
+        handle2faRequired('reject', id, { reason });
+      } else if (data.requires_2fa && isRetry) {
+        addToast('TOTP rejected — try a fresh code', 'error');
       } else {
-        setError(data.error || 'Reject failed');
+        setError(sanitizeError(data.error) || 'Reject failed');
       }
     } catch {
       setError('Network error');
     } finally {
       setActionId(null);
     }
-  };
+  }, [token, totpToken, persistTotp, handle2faRequired, items, sanitizeError]);
+
+  // S1-W3: Resolve-stuck. action='confirm' admin-verifies on-chain; 'refund'
+  // restores the wallet. Mirrors the closed invariant from services/bonus.ts.
+  const resolveStuck = useCallback(async (
+    id: string,
+    action: 'confirm' | 'refund',
+    tx_hash: string,
+    notes: string,
+    isRetry = false,
+  ) => {
+    setResolvingId(id);
+    try {
+      const res = await fetch(`${API}/admin/withdrawals/${id}/resolve-stuck`, {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ action, tx_hash: tx_hash || undefined, notes: notes || undefined }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const newStatus = data.status || (action === 'refund' ? 'rejected' : 'completed');
+        setItems((prev) =>
+          prev.map((it) => (it.id === id ? { ...it, status: newStatus } : it))
+        );
+        addToast(`Resolved (${action}): ${data.withdrawalId.slice(0, 8)}`, 'success');
+        setResolveStuckId(null);
+        setResolveTxHash('');
+        setResolveNotes('');
+        fetchStats();
+      } else if (data.requires_2fa && !isRetry) {
+        handle2faRequired('resolve', id, { action, tx_hash, notes });
+      } else if (data.requires_2fa && isRetry) {
+        addToast('TOTP rejected — try a fresh code', 'error');
+      } else {
+        setError(sanitizeError(data.error) || 'Resolve failed');
+      }
+    } catch {
+      setError('Network error');
+    } finally {
+      setResolvingId(null);
+    }
+  }, [token, totpToken, persistTotp, handle2faRequired, items, sanitizeError]);
 
   const statusClass = (s: string) => {
     if (s === 'pending') return 'bg-amber-500/15 text-amber-400';
     if (s === 'confirmed') return 'bg-brand-green/15 text-brand-green';
     if (s === 'failed') return 'bg-brand-red/15 text-brand-red';
     if (s === 'cancelled') return 'bg-text-muted/15 text-text-muted';
+    if (s === 'payout_stuck') return 'bg-orange-500/15 text-orange-300';
+    if (s === 'rejected') return 'bg-purple-500/15 text-purple-300';
     return 'bg-text-muted/15 text-text-muted';
   };
 
@@ -287,65 +387,40 @@ export default function AdminWithdrawalQueue() {
       {/* Filters */}
       <div className="px-4 py-3 border-b border-border flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-2">
-          {(['pending', 'confirmed', 'failed', 'cancelled', 'all'] as Status[]).map((s) => (
+          {(['pending', 'confirmed', 'failed', 'cancelled', 'payout_stuck', 'rejected', 'all'] as Status[]).map((s) => (
             <button
               key={s}
               onClick={() => setStatus(s)}
               className={`px-3 py-1.5 rounded text-xs font-mono border transition-all ${
                 status === s
-                  ? 'bg-brand-maroon text-white border-brand-maroon'
-                  : 'border-border text-text-secondary hover:border-brand-maroon/50'
+                  ? 'bg-brand-green/15 border-brand-green/40 text-brand-green'
+                  : 'border-border text-text-muted hover:border-text-muted hover:text-text-primary'
               }`}
             >
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {s}
             </button>
           ))}
-        </div>
-
-        <div className="flex items-center gap-1 ml-auto">
-          <span className="text-xs text-text-muted font-mono">Min risk:</span>
-          <select
-            value={minRisk ?? ''}
-            onChange={(e) => setMinRisk((e.target.value || null) as RiskLevel | null)}
-            className="bg-bg-elevated border border-border-default rounded px-2 py-1 text-xs font-mono text-text-primary"
-          >
-            <option value="">All</option>
-            <option value="medium">≥ Medium</option>
-            <option value="high">≥ High</option>
-            <option value="critical">Critical only</option>
-          </select>
-          <button
-            onClick={() => {
-              fetchItems();
-              fetchStats();
-            }}
-            disabled={loading}
-            className="ml-2 p-1.5 rounded hover:bg-bg-elevated text-text-muted"
-            aria-label="Refresh"
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          </button>
         </div>
       </div>
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-xs font-mono">
+        <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-border text-text-muted text-left">
+            <tr className="text-text-muted border-b border-border text-left">
               <th className="px-4 py-2 font-mono font-normal">User</th>
               <th className="px-4 py-2 font-mono font-normal cursor-pointer select-none" onClick={() => {
                 if (sortKey === 'amount') setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
                 else { setSortKey('amount'); setSortDir('desc'); }
               }}>
-                Amount ({fxRates ? 'USD + BDT' : 'USDT'}) {sortIcon('amount')}
+                Amount {sortIcon('amount')}
               </th>
               <th className="px-4 py-2 font-mono font-normal">Status</th>
               <th className="px-4 py-2 font-mono font-normal cursor-pointer select-none" onClick={() => {
                 if (sortKey === 'risk') setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
                 else { setSortKey('risk'); setSortDir('desc'); }
               }}>
-                Risk {sortIcon('risk')}
+                Risk ↓ {sortIcon('risk')}
               </th>
               <th className="px-4 py-2 font-mono font-normal cursor-pointer select-none" onClick={() => {
                 if (sortKey === 'date') setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
@@ -423,6 +498,8 @@ export default function AdminWithdrawalQueue() {
                           >
                             {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                           </button>
+
+                          {/* S1-C1 / S1-C4-R2: Approve + Reject for pending */}
                           {w.status === 'pending' && (
                             <>
                               {rejectingId === w.id ? (
@@ -432,15 +509,23 @@ export default function AdminWithdrawalQueue() {
                                     placeholder="Reason"
                                     value={rejectReason}
                                     onChange={(e) => setRejectReason(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') reject(w.id, rejectReason);
+                                    }}
                                     className="w-28 px-2 py-1 text-xs bg-void border border-brand-red/50 rounded"
                                     autoFocus
                                   />
                                   <button
-                                    onClick={() => reject(w.id)}
+                                    onClick={() => reject(w.id, rejectReason)}
                                     disabled={!rejectReason.trim() || actionId === w.id}
                                     className="text-brand-red disabled:opacity-40"
+                                    title="Confirm reject"
                                   >
-                                    <Check size={13} />
+                                    {actionId === w.id ? (
+                                      <Loader2 size={13} className="animate-spin" />
+                                    ) : (
+                                      <Check size={13} />
+                                    )}
                                   </button>
                                   <button
                                     onClick={() => {
@@ -448,6 +533,7 @@ export default function AdminWithdrawalQueue() {
                                       setRejectReason('');
                                     }}
                                     className="text-text-muted"
+                                    title="Cancel"
                                   >
                                     <X size={13} />
                                   </button>
@@ -477,7 +563,100 @@ export default function AdminWithdrawalQueue() {
                               )}
                             </>
                           )}
+
+                          {/* S1-W3: Resolve-stuck button for payout_stuck rows */}
+                          {w.status === 'payout_stuck' && (
+                            <button
+                              onClick={() => {
+                                setResolveStuckId(resolveStuckId === w.id ? null : w.id);
+                                setResolveAction('refund');
+                                setResolveTxHash('');
+                                setResolveNotes('');
+                              }}
+                              className={`p-1 ${resolveStuckId === w.id ? 'text-orange-300' : 'text-orange-400/70 hover:text-orange-300'}`}
+                              title="Resolve stuck withdrawal (S1-W3)"
+                              disabled={resolvingId === w.id}
+                            >
+                              {resolvingId === w.id ? (
+                                <Loader2 size={13} className="animate-spin" />
+                              ) : (
+                                <Wrench size={13} />
+                              )}
+                            </button>
+                          )}
                         </div>
+
+                        {/* S1-W3 inline resolve panel */}
+                        {resolveStuckId === w.id && w.status === 'payout_stuck' && (
+                          <div className="mt-2 ml-6 p-3 rounded border border-orange-500/40 bg-orange-500/5 text-xs space-y-2">
+                            <div className="flex items-center gap-3">
+                              <span className="text-text-muted">Action:</span>
+                              <label className="flex items-center gap-1">
+                                <input
+                                  type="radio"
+                                  name={`action-${w.id}`}
+                                  value="refund"
+                                  checked={resolveAction === 'refund'}
+                                  onChange={() => setResolveAction('refund')}
+                                />
+                                <span className="text-text-primary">refund</span>
+                                <span className="text-text-muted">(restore wallet)</span>
+                              </label>
+                              <label className="flex items-center gap-1">
+                                <input
+                                  type="radio"
+                                  name={`action-${w.id}`}
+                                  value="confirm"
+                                  checked={resolveAction === 'confirm'}
+                                  onChange={() => setResolveAction('confirm')}
+                                />
+                                <span className="text-text-primary">confirm</span>
+                                <span className="text-text-muted">(admin verified on-chain)</span>
+                              </label>
+                            </div>
+                            {resolveAction === 'confirm' && (
+                              <input
+                                type="text"
+                                placeholder="on-chain tx_hash (optional, uses row tx_hash if empty)"
+                                value={resolveTxHash}
+                                onChange={(e) => setResolveTxHash(e.target.value)}
+                                className="w-full px-2 py-1 text-xs bg-void border border-border rounded font-mono"
+                              />
+                            )}
+                            <input
+                              type="text"
+                              placeholder="Notes (audit log)"
+                              value={resolveNotes}
+                              onChange={(e) => setResolveNotes(e.target.value)}
+                              className="w-full px-2 py-1 text-xs bg-void border border-border rounded"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() =>
+                                  resolveStuck(w.id, resolveAction, resolveTxHash, resolveNotes)
+                                }
+                                disabled={resolvingId === w.id}
+                                className="px-3 py-1 rounded bg-orange-600 hover:bg-orange-500 text-white font-mono disabled:opacity-40"
+                              >
+                                {resolvingId === w.id ? (
+                                  <Loader2 size={12} className="animate-spin inline" />
+                                ) : (
+                                  `Resolve (${resolveAction})`
+                                )}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setResolveStuckId(null);
+                                  setResolveTxHash('');
+                                  setResolveNotes('');
+                                }}
+                                className="px-2 py-1 text-xs text-text-muted hover:text-text-primary"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                     {isExpanded && w.risk && (
@@ -559,6 +738,12 @@ export default function AdminWithdrawalQueue() {
                                 {w.metadata?.currency && (
                                   <div>Currency: <span className="text-text-primary font-mono">{w.metadata.currency}</span></div>
                                 )}
+                                {w.status === 'payout_stuck' && (
+                                  <div className="text-orange-300 mt-1">
+                                    ⚠ Broadcast went on-chain but confirmations stalled.
+                                    Use the Resolve (refund or confirm) action above.
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -576,7 +761,80 @@ export default function AdminWithdrawalQueue() {
       <div className="px-4 py-2 border-t border-border text-[10px] text-text-muted font-mono">
         Showing {sortedItems.length} withdrawal{sortedItems.length === 1 ? '' : 's'}
         {minRisk && ` (min risk: ${minRisk})`}
+        {totpToken && (
+          <span className="ml-3 text-brand-green">2FA active</span>
+        )}
       </div>
+
+      {/* S1-C5: TOTP prompt dialog — surfaces on 403 requires_2fa=true */}
+      {totpPrompt && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="glass-card p-5 rounded-xl w-[420px] border border-brand-green/40">
+            <div className="flex items-center gap-2 mb-3">
+              <Lock size={18} className="text-brand-green" />
+              <h3 className="text-text-primary font-mono">Admin 2FA Required</h3>
+            </div>
+            <p className="text-text-muted text-xs font-mono mb-3">
+              The action <span className="text-brand-green">{totpPrompt.action}</span> on{' '}
+              <span className="text-text-primary">{totpPrompt.id.slice(0, 8)}</span> requires
+              admin TOTP. Enter your 6-digit code (your authenticator app on the admin account).
+              The code is cached for 5 minutes.
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={6}
+              placeholder="123456"
+              value={totpInput}
+              onChange={(e) => setTotpInput(e.target.value.replace(/\D/g, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') retryWithTotp(); }}
+              className="w-full px-3 py-2 text-sm bg-void border border-border rounded font-mono tracking-widest text-center"
+              autoFocus
+            />
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={retryWithTotp}
+                disabled={totpInput.length !== 6}
+                className="px-3 py-1.5 rounded bg-brand-green hover:bg-brand-green/80 text-bg-base font-mono disabled:opacity-40"
+              >
+                Verify & retry
+              </button>
+              <button
+                onClick={() => { setTotpPrompt(null); setTotpInput(''); }}
+                className="px-3 py-1.5 rounded text-text-muted hover:text-text-primary font-mono"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { clearTotp(); setTotpPrompt(null); setTotpInput(''); }}
+                className="ml-auto px-2 py-1 text-[10px] text-text-muted hover:text-brand-red font-mono"
+                title="Forget cached TOTP token"
+              >
+                Forget 2FA
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// RiskBadge component (kept as a local helper to avoid touching other files)
+function RiskBadge({ risk }: { risk?: { score: number; level: 'low' | 'medium' | 'high' | 'critical' } }) {
+  if (!risk) return <span className="text-text-muted text-[10px]">-</span>;
+  const cls =
+    risk.level === 'critical'
+      ? 'bg-brand-red/20 text-brand-red'
+      : risk.level === 'high'
+      ? 'bg-amber-500/20 text-amber-300'
+      : risk.level === 'medium'
+      ? 'bg-yellow-500/15 text-yellow-300'
+      : 'bg-text-muted/15 text-text-muted';
+  return (
+    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${cls}`}>
+      {risk.level} · {risk.score}
+    </span>
   );
 }

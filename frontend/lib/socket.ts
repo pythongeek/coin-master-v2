@@ -13,7 +13,8 @@
  */
 
 import { io, Socket } from 'socket.io-client';
-import { getTokenFromStorage } from './store';
+// PR-1B: getTokenFromStorage was removed (cookie auth now).
+import { useGameStore } from './store';
 
 let socket: Socket | null = null;
 let currentToken: string | undefined;
@@ -46,7 +47,8 @@ function getSocketUrl(): string {
 
 function createSocket(): Socket {
   const url = getSocketUrl();
-  currentToken = getTokenFromStorage() || undefined;
+  // PR-1B: cookie auth replaces client-token in WS handshake (DEFERRED-SOCKET).
+  currentToken = undefined;
 
   const instance = io(url, {
     path: '/socket.io',

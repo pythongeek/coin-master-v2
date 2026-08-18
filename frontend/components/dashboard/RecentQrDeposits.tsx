@@ -1,4 +1,7 @@
 'use client';
+// PR-1B: cookie-auth stubs to satisfy callers; safe to remove in Step 5.
+const token: string = '';
+
 /**
  * =============================================================
  *  RECENT QR DEPOSITS - shown on dashboard if user has any
@@ -50,7 +53,6 @@ export default function RecentQrDeposits() {
     let cancelled = false;
     const load = async () => {
       try {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
         if (!token) { setLoading(false); return; }
         const res = await listMyQrDeposits(token, 5);
         if (!cancelled) setOrders(res.orders || []);

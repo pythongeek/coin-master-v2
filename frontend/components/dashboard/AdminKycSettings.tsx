@@ -1,4 +1,7 @@
 'use client';
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ADMIN KYC SETTINGS — Configure MiniMax API key and KYC thresholds
@@ -7,10 +10,7 @@
 
 import { useState, useEffect } from 'react';
 import { Key, Shield, Loader2, Check, AlertCircle, Save, Eye, EyeOff } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface KycSettings {
   provider: string;
   minimaxApiKeySet: boolean;
@@ -25,7 +25,6 @@ interface KycSettings {
 }
 
 export default function AdminKycSettings() {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   const [settings, setSettings] = useState<KycSettings | null>(null);
   const [loading, setLoading] = useState(false);
@@ -39,7 +38,7 @@ export default function AdminKycSettings() {
   const fetchSettings = async () => {
     try {
       const res = await fetch(`${API}/kyc/admin/settings`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {
@@ -64,7 +63,7 @@ export default function AdminKycSettings() {
     try {
       const res = await fetch(`${API}/kyc/admin/settings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify({
           provider: settings.provider,
           minimaxModel: settings.minimaxModel,
@@ -100,7 +99,7 @@ export default function AdminKycSettings() {
     try {
       const res = await fetch(`${API}/kyc/admin/api-key`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json',},
         body: JSON.stringify({ apiKey }),
       });
       const data = await res.json();

@@ -159,13 +159,34 @@ export async function requestWithdrawal(
       throw new Error(`Daily withdrawal limit of ${maxDaily} ${currency} exceeded`);
     }
 
-    // 4. Debit balance immediately & increase locked_balance
-    await client.query(
-      'UPDATE wallets SET balance = balance - $1, locked_balance = locked_balance + $1, updated_at = NOW() WHERE id = $2',
+    // 4. Debit balance immediately & increase locked_balance.
+    //
+    // S1-H13: Add rowCount guard. The FOR UPDATE on the wallet row
+    // (step 2 above) should serialize concurrent withdrawals so the
+    // balance check on line 123 is authoritative. However, if anything
+    // drifts (e.g., wallet deleted between SELECT and UPDATE), the
+    // UPDATE silently affects 0 rows and we'd commit a tx record with
+    // a phantom debit. Catching rowCount=0 makes that crash instead
+    // of silently corrupting the user's balance.
+    const walletUpdate = await client.query(
+      `UPDATE wallets
+          SET balance = balance - $1,
+              locked_balance = locked_balance + $1,
+              updated_at = NOW()
+        WHERE id = $2
+          AND balance >= $1
+          AND locked_balance + $1 <= balance + locked_balance + $1`,
       [amount, walletId]
     );
+    if (!walletUpdate.rowCount) {
+      throw new Error('Insufficient balance or concurrent withdrawal detected (requestWithdrawal rowCount=0)');
+    }
 
-    // 5. Create transaction record (status = 'pending')
+    // 5. Create transaction record (status = 'pending').
+    // The CHECK constraint on amount > 0 and the type/status enums
+    // protects against malformed inputs. rowCount is checked for
+    // symmetry with the wallet UPDATE so a silent INSERT failure is
+    // caught before commit.
     const txResult = await client.query(
       `INSERT INTO transactions (
         user_id, wallet_id, type, amount, status, to_address, metadata, created_at
@@ -173,6 +194,9 @@ export async function requestWithdrawal(
       RETURNING id`,
       [userId, walletId, amount, toAddress, JSON.stringify({ chain, currency, memo: memo || null })]
     );
+    if (!txResult.rowCount || !txResult.rows[0]?.id) {
+      throw new Error('Failed to insert withdrawal transaction record');
+    }
     const txId = txResult.rows[0].id;
 
     // Run reconciliation check

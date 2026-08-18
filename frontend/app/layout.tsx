@@ -1,6 +1,7 @@
 import { Inter, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { GameStoreProvider } from '@/components/providers/GameStoreProvider';
+import { ClientInit } from '@/components/ClientInit'; // PR-1B: hydrate /api/auth/me on mount
 import GlobalBanner from '@/components/GlobalBanner';
 import ServiceWorkerRegister from '@/components/ServiceWorkerRegister';
 
@@ -55,6 +56,10 @@ export default function RootLayout({
       >
         <div className="fixed inset-0 pointer-events-none z-0 bg-vignette" />
         <div className="relative z-10">
+          {/* PR-1B: ClientInit must run on every mount to hydrate the
+              auth store from /api/auth/me using the httpOnly cookie.
+              Rendered first so other components see populated state. */}
+          <ClientInit />
           <ServiceWorkerRegister />
           <GameStoreProvider>
             <GlobalBanner />

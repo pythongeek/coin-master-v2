@@ -1,4 +1,7 @@
 "use client";
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 
 /**
  * RakebackCard — Wager-based rebate claim widget.
@@ -7,11 +10,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Coins, Gift } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface RakebackStatus {
   pending: number;
   claimed: number;
@@ -21,7 +20,7 @@ interface RakebackStatus {
   minClaim: number;
 }
 
-export function RakebackCard({ token, onClaim }: { token: string; onClaim?: () => void }) {
+export function RakebackCard({ token, onClaim }: { token?: string; onClaim?: () => void }) {
   const { addToast } = useToast();
   const [status, setStatus] = useState<RakebackStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +28,7 @@ export function RakebackCard({ token, onClaim }: { token: string; onClaim?: () =
 
   const fetchStatus = useCallback(async () => {
     const res = await fetch(`${API}/dashboard/rakeback`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     });
     const data = await res.json();
     if (data.success) setStatus(data.data);
@@ -45,7 +44,7 @@ export function RakebackCard({ token, onClaim }: { token: string; onClaim?: () =
     try {
       const res = await fetch(`${API}/dashboard/rakeback/claim`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {

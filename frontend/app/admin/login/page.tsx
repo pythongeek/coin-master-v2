@@ -4,31 +4,39 @@
  *  ADMIN LOGIN — Dedicated admin gateway login page
  * ═══════════════════════════════════════════════════════════════
  *
- *  Unlike the game login modal, this page is reached only through
- *  the secret admin gateway URL. It logs the user in with the same
- *  cf_token so they can use both the admin panel and the game UI.
+ *  Posts to /api/admin/login (NOT /api/auth/login). The backend sets
+ *  an `admin_cf_token` httpOnly cookie scoped to Path=/api/admin, which
+ *  the admin page (server-side gate) reads for subsequent requests.
+ *  This cookie is NEVER sent to user-facing endpoints like /api/auth/*
+ *  or /api/game/* — admin and user auth are completely isolated.
+ *
+ *  TOTP step-up: if the admin account has 2FA enrolled (column
+ *  users.totp_enabled = true, set via /api/auth/2fa/setup +
+ *  /api/auth/2fa/verify), the first login returns
+ *  { requires2FA: true }. The frontend then shows a 6-digit TOTP
+ *  input field and re-submits with { totp_code } included. The
+ *  backend's `admin-auth.ts` POST /login handler verifies the TOTP
+ *  via utils/totp.verifyTotp before setting the admin_cf_token
+ *  cookie.
+ *
+ *  Without this step-up, an admin who enrolled 2FA could log in with
+ *  only username + password — a regression vs. the pre-refactor flow.
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Coins, Loader2, Shield, ArrowLeft } from 'lucide-react';
-import { useGameStore } from '@/lib/store';
-import { storeToken, reconnectWithToken } from '@/lib/socket';
-import { setTokenCookie } from '@/lib/auth-cookies';
-import { trackEvent, identifyUser } from '@/utils/analytics';
+import { Loader2, Shield, ArrowLeft, KeyRound } from 'lucide-react';
 
-const API = '/api';
+const API = '/api/admin';
 
 export default function AdminLoginPage() {
   const router = useRouter();
-  const { login } = useGameStore();
-  const [form, setForm] = useState({ username: '', password: '', token: '' });
+  const [form, setForm] = useState({ username: '', password: '', totp_code: '' });
+  const [require2FA, setRequire2FA] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [require2FA, setRequire2FA] = useState(false);
-  const [tempToken, setTempToken] = useState('');
 
   const handleLogin = async () => {
     setError('');
@@ -36,94 +44,48 @@ export default function AdminLoginPage() {
       setError('Username and password are required.');
       return;
     }
-
+    if (require2FA && !/^\d{6}$/.test(form.totp_code)) {
+      setError('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
     setLoading(true);
     try {
-      // If 2FA step already triggered, verify the TOTP code.
-      if (require2FA && tempToken) {
-        const res = await fetch(`${API}/auth/2fa/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tempToken, token: form.token }),
-        });
-        const data = await res.json();
+      const body: Record<string, string> = {
+        username: form.username,
+        password: form.password,
+      };
+      if (require2FA) body.totp_code = form.totp_code;
 
-        if (!data.success) {
-          setError(data.error || 'Invalid 2FA code.');
-          trackEvent('admin_login_failed', { error: data.error || '2FA invalid' });
-          return;
-        }
-
-        finalizeLogin(data.token, data.user);
-        return;
-      }
-
-      const res = await fetch(`${API}/auth/login`, {
+      const res = await fetch(`${API}/login`, {
         method: 'POST',
+        credentials: 'include',  // critical: receive the admin_cf_token cookie
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: form.username, password: form.password }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
 
       if (!data.success) {
+        if (data.requires2FA) {
+          setRequire2FA(true);
+          setError('');
+          return;
+        }
         setError(data.error || 'Login failed.');
-        trackEvent('admin_login_failed', { error: data.error || 'API Error' });
         return;
       }
 
-      if (data.require2FA) {
-        setTempToken(data.tempToken);
-        setRequire2FA(true);
-        return;
-      }
-
-      if (!data.user?.isAdmin) {
-        setError('This account is not authorized for admin access.');
-        trackEvent('admin_login_failed', { error: 'not_admin' });
-        return;
-      }
-
-      finalizeLogin(data.token, data.user);
+      // The browser now has the admin_cf_token cookie. Force a hard
+      // navigation so the server-side admin gate reads the cookie
+      // fresh (Next.js router.push alone won't re-trigger SSR).
+      // Strip the trailing /login from the current path so the
+      // operator stays inside the /sysop-.../admin/ secret prefix.
+      const target = window.location.pathname.replace(/\/?login$/, '') || '/admin';
+      window.location.href = target;
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
       setError('Network error. Please try again.');
-      trackEvent('admin_login_failed', { error: errMsg });
     } finally {
       setLoading(false);
     }
-  };
-
-  const finalizeLogin = (token: string, user: any) => {
-    storeToken(token);
-    localStorage.setItem('cf_token', token);
-    setTokenCookie(token);
-
-    login({
-      user: {
-        userId: user.userId,
-        username: user.username,
-        balance: user.balance ?? 0,
-        isAdmin: user.isAdmin,
-        walletAddress: user.walletAddress,
-        isFlagged: user.isFlagged ?? false,
-        email: user.email,
-      },
-      token,
-    });
-
-    reconnectWithToken(token);
-
-    identifyUser(user.userId, {
-      username: user.username,
-      email: user.email,
-      walletAddress: user.walletAddress,
-    });
-
-    trackEvent('admin_login_success');
-    const target = typeof window !== 'undefined'
-      ? window.location.pathname.replace(/\/?login$/, '')
-      : '/admin';
-    window.location.href = target;
   };
 
   return (
@@ -135,7 +97,7 @@ export default function AdminLoginPage() {
           </div>
           <h1 className="heading-display text-xl text-text-primary">Admin Access</h1>
           <p className="text-text-muted text-xs font-mono mt-1">
-            Secure gateway login for operators
+            {require2FA ? 'Enter your authenticator code' : 'Secure gateway login for operators'}
           </p>
         </div>
 
@@ -152,6 +114,8 @@ export default function AdminLoginPage() {
             value={form.username}
             onChange={(e) => setForm(p => ({ ...p, username: e.target.value }))}
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            autoFocus
+            disabled={require2FA}
           />
 
           <input
@@ -161,19 +125,26 @@ export default function AdminLoginPage() {
             value={form.password}
             onChange={(e) => setForm(p => ({ ...p, password: e.target.value }))}
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            disabled={require2FA}
           />
 
           {require2FA && (
-            <input
-              className="input-cyber w-full"
-              placeholder="2FA code (6 digits)"
-              value={form.token}
-              onChange={(e) => setForm(p => ({ ...p, token: e.target.value }))}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              maxLength={6}
-              inputMode="numeric"
-              autoFocus
-            />
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-text-muted text-xs font-mono">
+                <KeyRound size={12} />
+                <span>Authenticator code</span>
+              </div>
+              <input
+                className="input-cyber w-full font-mono text-center tracking-[0.4em] text-lg"
+                placeholder="000000"
+                value={form.totp_code}
+                onChange={(e) => setForm(p => ({ ...p, totp_code: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                maxLength={6}
+                inputMode="numeric"
+                autoFocus
+              />
+            </div>
           )}
 
           <button
@@ -182,7 +153,9 @@ export default function AdminLoginPage() {
             className="btn-brand w-full flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {loading && <Loader2 size={15} className="animate-spin" />}
-            {loading ? 'Signing in...' : require2FA ? 'Verify 2FA' : 'Sign in to Admin'}
+            {loading
+              ? (require2FA ? 'Verifying...' : 'Signing in...')
+              : (require2FA ? 'Verify 2FA' : 'Sign in to Admin')}
           </button>
 
           <Link

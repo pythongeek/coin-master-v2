@@ -1,4 +1,7 @@
 "use client";
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
 
 /**
  * ChallengesCard — Daily mission progress and claim widget.
@@ -7,11 +10,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Target, CheckCircle, Lock } from "lucide-react";
 import { useToast } from "@/components/providers/ToastProvider";
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface ChallengeProgress {
   id: string;
   label: string;
@@ -22,14 +21,14 @@ interface ChallengeProgress {
   claimed: boolean;
 }
 
-export function ChallengesCard({ token, onClaim }: { token: string; onClaim?: () => void }) {
+export function ChallengesCard({ token, onClaim }: { token?: string; onClaim?: () => void }) {
   const { addToast } = useToast();
   const [challenges, setChallenges] = useState<ChallengeProgress[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchChallenges = useCallback(async () => {
     const res = await fetch(`${API}/dashboard/challenges`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     });
     const data = await res.json();
     if (data.success) setChallenges(data.data || []);
@@ -43,7 +42,7 @@ export function ChallengesCard({ token, onClaim }: { token: string; onClaim?: ()
   const claim = async (id: string) => {
     const res = await fetch(`${API}/dashboard/challenges/${id}/claim`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {},
     });
     const data = await res.json();
     if (data.success) {

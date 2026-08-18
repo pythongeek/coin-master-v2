@@ -735,13 +735,24 @@ async function triggerCryptoRain(userId: string, config: GameConfig): Promise<vo
 }
 
 // ── ইউজারের বেট হিস্ট্রি ─────────────────────────────────────────
+// PR Step 3 (FIX MEDIUM-2 / RNG-5): JOIN game_seeds so the response
+// carries serverSeed, serverSeedHash, clientSeed, nonce alongside the
+// bet row. A user must be able to take a past bet, recompute the
+// HMAC-SHA256(serverSeed, clientSeed:nonce), and confirm the result —
+// without these fields, offline verification is impossible. The bets
+// row stores `seed_id` referencing `game_seeds.id` (set during placeBet
+// at game-engine.ts:577).
 export async function getBetHistory(userId: string, limit: number = 20) {
   const result = await query(
-    `SELECT id, choice, amount, result, won, payout, house_edge,
-            target_multiplier, actual_multiplier, win_chance,
-            flip_hash, created_at, resolved_at
-     FROM bets WHERE user_id = $1
-     ORDER BY created_at DESC LIMIT $2`,
+    `SELECT b.id, b.choice, b.amount, b.result, b.won, b.payout, b.house_edge,
+            b.target_multiplier, b.actual_multiplier, b.win_chance,
+            b.flip_hash, b.created_at, b.resolved_at,
+            g.server_seed, g.server_seed_hash, g.client_seed, g.nonce
+       FROM bets b
+       LEFT JOIN game_seeds g ON g.id = b.seed_id
+      WHERE b.user_id = $1
+      ORDER BY b.created_at DESC
+      LIMIT $2`,
     [userId, limit]
   );
   return result.rows;

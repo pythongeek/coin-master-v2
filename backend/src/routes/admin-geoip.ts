@@ -32,7 +32,7 @@
  *     was actually used, latency, cache hit/miss, full record.
  *     Useful for debugging KYC mismatch signals.
  *
- * Auth: authMiddleware + roleMiddleware(['super_admin']) everywhere.
+ * Auth: adminAuthMiddleware + roleMiddleware(['super_admin']) everywhere.
  * Rate limit: adminLimiter (consistent with the rest of /api/admin).
  *
  * The whole module is one router; mount with:
@@ -52,7 +52,8 @@ import {
   lookupCountry,
   DEFAULT_HIGH_RISK_COUNTRIES,
 } from '../services/maxmind';
-import { authMiddleware, roleMiddleware } from '../middleware/auth';
+import { roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 
 const router = Router();
 
@@ -60,7 +61,7 @@ const router = Router();
 // middleware (in middleware/auth.ts) accepts `isAdmin: true`
 // tokens as super_admin even if the role field is unset, which
 // matches the existing pattern across /api/admin.
-router.use(authMiddleware, roleMiddleware(['super_admin']));
+router.use(adminAuthMiddleware, roleMiddleware(['super_admin']));
 
 // ── GET /status ────────────────────────────────────────────────
 router.get('/status', async (_req: Request, res: Response) => {

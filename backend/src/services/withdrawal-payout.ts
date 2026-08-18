@@ -5,6 +5,7 @@ import { env } from '../config/env';
 import { db, query } from '../config/database';
 import { tronMcpService } from './tron-mcp.service';
 import { decryptSecretToBuffer } from './secret-vault';
+import { queueAdminEmail } from './notification.service';
 
 const REQUIRED_CONFIRMATIONS = 19;
 
@@ -37,6 +38,14 @@ export interface WithdrawalPayoutResult {
   success: boolean;
   txHash?: string;
   error?: string;
+  /**
+   * S1-W3: true when the broadcast succeeded but the on-chain
+   * confirmation polling never reached REQUIRED_CONFIRMATIONS within
+   * the 5-minute polling window. The row is in 'payout_stuck' state
+   * and an admin must resolve it manually via the resolve-stuck
+   * endpoint. Callers (BullMQ) should NOT retry.
+   */
+  stuck?: boolean;
 }
 
 /**
@@ -54,6 +63,14 @@ export interface WithdrawalPayoutResult {
  *  6. Poll getTransactionInfoById until confirmed.
  *  7. Mark withdrawal completed with the real tx hash.
  *
+ * S1-W3 — Confirmation timeout:
+ *  If the polling loop exhausts 30 × 10s = 5 minutes without reaching
+ *  REQUIRED_CONFIRMATIONS, the row is set to 'payout_stuck' (NOT
+ *  'failed', NOT throw). The on-chain tx_hash is preserved, the
+ *  locked_balance is NOT restored (money is on-chain), and an admin
+ *  email is queued. The function returns success=false with stuck=true.
+ *  BullMQ MUST NOT retry (no double-broadcast).
+ *
  * Security:
  * - Private key is held in a NodeJS `Buffer`, never in a JS `string`.
  *   This avoids V8's external (UTF-16) heap for the secret bytes.
@@ -69,6 +86,38 @@ export interface WithdrawalPayoutResult {
 export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayoutResult> {
   if (!env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED) {
     return { success: false, error: 'HOT_WALLET_PRIVATE_KEY_ENCRYPTED is not configured' };
+  }
+
+  // S1-W6-KMS: Production hot-wallet key custody guard.
+  //
+  // The default mode is 'env' — HOT_WALLET_PRIVATE_KEY_ENCRYPTED is
+  // AES-256-GCM with a single ENCRYPTION_KEY env var. If the .env
+  // leaks, the attacker can decrypt the hot-wallet key and drain the
+  // wallet. KMS_PROVIDER moves the decryption to AWS KMS / Fireblocks
+  // / Vault, where the plaintext key never exists in process memory
+  // and access is gated by IAM.
+  //
+  // This guard is the GATING gate for production with real funds.
+  // Without it, the deployment is acceptable for pre-beta testing
+  // with zero real money ONLY.
+  if (env.NODE_ENV === 'production') {
+    if (env.KMS_PROVIDER === 'env' && env.ALLOW_INSECURE_HOT_WALLET !== 'true') {
+      throw new Error(
+        'FATAL: Production deployment requires KMS_PROVIDER to be set to ' +
+        'aws-kms | fireblocks | hashicorp-vault. ' +
+        'Set ALLOW_INSECURE_HOT_WALLET=true ONLY for pre-beta testing with ' +
+        'zero real funds. See docs/KMS_MIGRATION.md for migration paths.',
+      );
+    }
+    if (env.ALLOW_INSECURE_HOT_WALLET === 'true' && env.KMS_PROVIDER === 'env') {
+      // Log loudly so this doesn't go unnoticed in production logs.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[SECURITY WARNING] Hot wallet using single-key AES-GCM in production. ' +
+        'ALLOW_INSECURE_HOT_WALLET=true is set. Migrate to KMS before handling real funds. ' +
+        'See docs/KMS_MIGRATION.md.',
+      );
+    }
   }
 
   let privateKeyBuf: Buffer | null = null;
@@ -117,11 +166,71 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       // Ensure MCP session is ready
       await tronMcpService.start();
 
-      // 1. Hot wallet balance and daily limit checks to prevent drain
+      // 1. Hot wallet balance and daily limit checks to prevent drain.
+      //
+      // S1-W10: The audit found that the existing check
+      // (hotBalance < amount) was binary — it would throw on ANY
+      // shortfall, even if the shortfall was just below the safety
+      // reserve. The fix: keep a MIN_BALANCE reserve on the hot
+      // wallet (default 1000 USDT), so a withdrawal that would
+      // dip the hot wallet below the reserve is HALTED, not rejected.
+      //
+      // The halt uses the same 'payout_stuck' status as S1-W3
+      // (broadcast never happened → admin must resolve, no
+      // locked_balance mutation).
       const hotWalletAddress = hotWalletAddressFromKey(privateKeyBuf);
       const hotBalance = await tronMcpService.getUsdtBalance(hotWalletAddress);
-      if (new Decimal(hotBalance).lessThan(amount)) {
+      const hotBalanceDec = new Decimal(hotBalance);
+      const minBalance = new Decimal(env.HOT_WALLET_MIN_BALANCE_USDT);
+      const requiredBalance = minBalance.plus(amount);
+      if (hotBalanceDec.lessThan(amount)) {
         throw new Error(`Hot wallet USDT balance insufficient: ${hotBalance} available, ${amount} requested`);
+      }
+      if (hotBalanceDec.lessThan(requiredBalance)) {
+        // Halt: would dip below the safety reserve. Mark payout_stuck
+        // (not failed) and queue admin alert. Funds have NOT been
+        // broadcast yet.
+        await client.query(
+          `UPDATE transactions
+              SET status = 'payout_stuck',
+                  metadata = metadata || jsonb_build_object(
+                    'payout_stuck_at', NOW()::text,
+                    'payout_stuck_reason', 'hot_wallet_min_balance',
+                    'payout_stuck_hot_balance', $1::text,
+                    'payout_stuck_required_balance', $2::text,
+                    'payout_stuck_min_balance', $3::text,
+                    'payout_stuck_amount', $4::text
+                  )
+            WHERE id = $5`,
+          [hotBalance, requiredBalance.toString(), minBalance.toString(), amount.toString(), txId],
+        );
+        await client.query('COMMIT');
+
+        try {
+          await queueAdminEmail({
+            event_type: 'withdrawal.hot_wallet_min_balance',
+            user_id: tx?.user_id || null,
+            context: {
+              withdrawal_id: txId,
+              hot_balance: hotBalance,
+              required_balance: requiredBalance.toString(),
+              min_balance: minBalance.toString(),
+              requested_amount: amount,
+              resolve_endpoint: `/api/admin/withdrawals/${txId}/resolve-stuck`,
+            },
+          });
+        } catch (emailErr) {
+          logger.error('hot_wallet_min_balance: failed to queue admin email', { txId, error: String(emailErr) });
+        }
+
+        logger.error('Hot wallet balance below MIN_BALANCE reserve — withdrawal halted', {
+          txId,
+          hotBalance,
+          requiredBalance: requiredBalance.toString(),
+          minBalance: minBalance.toString(),
+        });
+
+        return { success: false, stuck: true, error: 'Hot wallet below MIN_BALANCE reserve' };
       }
 
       const dailyLimit = parseFloat(String(env.HOT_WALLET_DAILY_WITHDRAWAL_LIMIT));
@@ -159,6 +268,22 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       }
       logger.info('USDT withdrawal broadcast', { txId, onChainTxHash: broadcast.txId });
 
+      // Persist the tx_hash as soon as broadcast succeeds. This is the
+      // critical invariant: even if confirmation polling never resolves,
+      // the row carries the on-chain tx_hash so the S1-W11 reconciliation
+      // cron (and S1-W3 admin resolve-stuck endpoint) can find it.
+      await client.query(
+        `UPDATE transactions
+            SET tx_hash = $1,
+                metadata = metadata || jsonb_build_object(
+                  'payout_chain', 'tron',
+                  'energy_estimate', $2::int,
+                  'broadcast_at', NOW()::text
+                )
+          WHERE id = $3`,
+        [broadcast.txId, energyEstimate.energy, txId],
+      );
+
       // 5. Wait for on-chain confirmation (real tx hash, not mock)
       let confirmation = await tronMcpService.confirmTransaction(broadcast.txId, REQUIRED_CONFIRMATIONS);
       let attempts = 0;
@@ -175,17 +300,65 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       }
 
       if (!confirmation.confirmed) {
-        throw new Error(`Withdrawal broadcast ${broadcast.txId} did not reach ${REQUIRED_CONFIRMATIONS} confirmations in time`);
+        // S1-W3: stop throwing. The broadcast already happened on-chain.
+        // Throwing causes BullMQ to retry, which would double-broadcast.
+        // Instead: mark the row 'payout_stuck', preserve the tx_hash,
+        // DO NOT restore locked_balance (money is on-chain), commit
+        // the transaction, queue an admin email, and return success=false
+        // with stuck=true so the BullMQ worker flips the job to 'failed'
+        // (no retry) instead of 'completed' (no double-broadcast).
+        await client.query(
+          `UPDATE transactions
+              SET status = 'payout_stuck',
+                  metadata = metadata || jsonb_build_object(
+                    'payout_stuck_at', NOW()::text,
+                    'payout_stuck_attempts', $1::int,
+                    'payout_stuck_reason', 'confirmation_timeout',
+                    'payout_stuck_confirmations', $2::int
+                  )
+            WHERE id = $3`,
+          [attempts, confirmation.confirmations, txId],
+        );
+        await client.query('COMMIT');
+
+        // Best-effort admin alert. Outside the DB transaction so the
+        // alert system can't block the row commit.
+        try {
+          await queueAdminEmail({
+            event_type: 'withdrawal.payout_stuck',
+            user_id: tx?.user_id || null,
+            context: {
+              withdrawal_id: txId,
+              on_chain_tx_hash: broadcast.txId,
+              attempts,
+              last_confirmations: confirmation.confirmations,
+              required_confirmations: REQUIRED_CONFIRMATIONS,
+              resolve_endpoint: `/api/admin/withdrawals/${txId}/resolve-stuck`,
+            },
+          });
+        } catch (emailErr) {
+          logger.error('payout_stuck: failed to queue admin email', { txId, error: String(emailErr) });
+        }
+
+        logger.error('TRON withdrawal payout STUCK — manual sweep required', {
+          txId,
+          onChainTxHash: broadcast.txId,
+          attempts,
+          confirmations: confirmation.confirmations,
+        });
+
+        // Commit done; release client (finally block).
+        return { success: false, stuck: true, txHash: broadcast.txId, error: 'Confirmation timeout' };
       }
 
       // 6. Mark completed and release locked balance
       await client.query(
         `UPDATE transactions
-         SET status = 'completed', tx_hash = $1, completed_at = NOW(),
-             confirmations = $2,
-             metadata = metadata || jsonb_build_object('broadcast_block', $3::text, 'payout_chain', 'tron', 'energy_estimate', $4::int)
-         WHERE id = $5`,
-        [broadcast.txId, confirmation.confirmations, confirmation.blockNumber, energyEstimate.energy, txId],
+         SET status = 'completed', completed_at = NOW(),
+             confirmations = $1,
+             metadata = metadata || jsonb_build_object('payout_completed_at', NOW()::text)
+         WHERE id = $2`,
+        [confirmation.confirmations, txId],
       );
 
       await client.query(
@@ -210,9 +383,18 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       await client.query('ROLLBACK');
       const error = err instanceof Error ? err.message : String(err);
 
+      // S1-W3: do NOT overwrite the 'payout_stuck' status if we set it
+      // (the 'stuck' branch returns early and never gets here). But if
+      // any other failure happens (broadcast error, balance check, etc.)
+      // we still want to record the failure.
+      // Exception: if the row was already 'payout_stuck' (re-process),
+      // don't downgrade it to 'failed'.
       await query(
         `UPDATE transactions
-         SET status = 'failed',
+         SET status = CASE
+               WHEN status = 'payout_stuck' THEN status
+               ELSE 'failed'
+             END,
              metadata = metadata || jsonb_build_object('payout_error', $1::text, 'payout_failed_at', NOW()::text)
          WHERE id = $2`,
         [error, txId],

@@ -16,7 +16,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, AuthPayload, roleMiddleware } from '../middleware/auth';
+import { AuthPayload, roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { adminLimiter } from '../middleware/rate-limiter';
 import { adminBonusCampaignSchema } from '../schemas';
 import { validateBody } from '../middleware/validation';
@@ -38,7 +39,7 @@ const router = Router();
 router.get(
   '/bonus-campaigns',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'support', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -61,7 +62,7 @@ router.get(
 router.get(
   '/bonus-campaigns/stats/summary',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'support', 'auditor']),
   async (_req: Request, res: Response) => {
     try {
@@ -78,7 +79,7 @@ router.get(
 router.get(
   '/bonus-campaigns/:id',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'support', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -96,7 +97,7 @@ router.get(
 router.post(
   '/bonus-campaigns',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance']),
   validateBody(adminBonusCampaignSchema),
   async (req: Request, res: Response) => {
@@ -116,7 +117,7 @@ router.post(
 router.patch(
   '/bonus-campaigns/:id',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance']),
   async (req: Request, res: Response) => {
     try {
@@ -135,7 +136,7 @@ router.patch(
 router.delete(
   '/bonus-campaigns/:id',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
     try {
@@ -154,7 +155,7 @@ router.delete(
 router.post(
   '/bonus-campaigns/:id/grant',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'support']),
   async (req: Request, res: Response) => {
     try {
@@ -202,7 +203,7 @@ router.post(
 router.post(
   '/bonus-campaigns/trigger/:event',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin']),
   async (req: Request, res: Response) => {
     try {
@@ -222,7 +223,7 @@ router.post(
 router.get(
   '/bonus-campaigns/:id/claims',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'support', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -261,7 +262,7 @@ router.get(
 router.get(
   '/bonus/user/:userId/audit',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'support', 'auditor']),
   async (req: Request, res: Response) => {
     try {
@@ -382,7 +383,7 @@ router.get(
 router.get(
   '/analytics',
   adminLimiter,
-  authMiddleware,
+  adminAuthMiddleware,
   roleMiddleware(['super_admin', 'finance', 'auditor', 'support']),
   async (_req: Request, res: Response) => {
     try {

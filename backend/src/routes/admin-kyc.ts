@@ -31,8 +31,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, AuthPayload } from '../middleware/auth';
-import { roleMiddleware } from '../middleware/auth';
+import { AuthPayload} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
+import { roleMiddleware } from '../middleware/auth'
 import { query } from '../config/database';
 import { getRawSetting, setRawSetting } from '../services/admin-config';
 import { logKycOverride } from '../services/kyc-enforcement.service';
@@ -44,7 +45,7 @@ interface AuthRequest extends Request {
 }
 
 // All routes require super_admin
-router.use(authMiddleware, roleMiddleware(['super_admin']));
+router.use(adminAuthMiddleware, roleMiddleware(['super_admin']));
 
 // =============================================================================
 //  Config endpoints

@@ -5,11 +5,42 @@
  *
  *  প্রতিটি API কলে JWT টোকেন যাচাই করে।
  *  টোকেন না থাকলে বা ভুল হলে অ্যাক্সেস বন্ধ।
+ *
+ *  PR-1A (cm2 step 1): read JWT from `Authorization: Bearer` first,
+ *  then fall back to the `cf_token` cookie so the auth flow can move
+ *  to httpOnly cookies without breaking existing Bearer-header clients.
+ *  Inlined cookie parsing keeps us off cookie-parser (no new dep).
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+
+/**
+ * Parse a single key out of the raw Cookie header.
+ *
+ * Express does not populate `req.cookies` unless cookie-parser is
+ * mounted. We deliberately avoid that dependency here and parse only
+ * the key we care about (`cf_token`). If more cookies are ever needed,
+ * install cookie-parser properly.
+ *
+ * Why percent-decode: cookies are sent URL-encoded by the browser
+ * when written via `res.cookie(value, { ... })` with non-ASCII or
+ * special chars in the value. JWTs are base64url (alnum + - + _) so
+ * the decode is a no-op for them in practice, but we call it for
+ * correctness.
+ */
+function readCookieValue(cookieHeader: string | undefined, key: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(/;\s*/)) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const name = part.slice(0, eq).trim();
+    if (name !== key) continue;
+    return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return undefined;
+}
 
 export interface AuthPayload {
   userId: string;
@@ -40,7 +71,16 @@ export { JWT_SECRET };
 
 // JWT টোকেন যাচাই করো
 export function authMiddleware(req: Request, res: Response, next: NextFunction): Response | void {
-  const token = req.headers.authorization?.replace('Bearer ', '');
+  // Bearer header first — keeps existing clients working unchanged.
+  // Cookie fallback for PR-1A: if no Authorization header, look for
+  // the httpOnly cf_token cookie set by the login route. The browser
+  // sends the cookie automatically on same-origin requests (and via
+  // the Next.js catch-all proxy for /api/*), so no client code change
+  // is needed to use the cookie path.
+  let token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) {
+    token = readCookieValue(req.headers.cookie, 'cf_token');
+  }
 
   if (!token) {
     return res.status(401).json({ success: false, error: 'লগইন করুন। টোকেন পাওয়া যায়নি।' });

@@ -16,7 +16,7 @@
  *   GET  /api/admin/cohorts/settings
  *     Read current admin_settings for the cron.
  *
- * Auth: authMiddleware + roleMiddleware(['super_admin']) on every
+ * Auth: adminAuthMiddleware + roleMiddleware(['super_admin']) on every
  * endpoint, matches the canonical /api/admin pattern.
  *
  * Path convention: this router is mounted at /api/admin/cohorts,
@@ -24,7 +24,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, roleMiddleware } from '../middleware/auth';
+import { roleMiddleware} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
 import { query } from '../config/database';
 import { getAdminSetting } from '../services/admin-settings.service';
 import {
@@ -34,7 +35,7 @@ import {
 } from '../services/cohort-analysis';
 
 const router = Router();
-router.use(authMiddleware, roleMiddleware(['super_admin']));
+router.use(adminAuthMiddleware, roleMiddleware(['super_admin']));
 
 // ── GET /overview ──────────────────────────────────────
 router.get('/overview', async (_req: Request, res: Response) => {

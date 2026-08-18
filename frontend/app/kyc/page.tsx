@@ -1,4 +1,10 @@
 'use client';
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
+// PR-1B: cookie-auth stubs to satisfy callers; safe to remove in Step 5.
+const token: string = '';
+
 /**
  * ═══════════════════════════════════════════════════════════════
  *  KYC VERIFICATION PAGE — Real AI-powered KYC using MiniMax M3
@@ -9,10 +15,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, UploadCloud, Camera, Loader2, ArrowLeft, CheckCircle2, AlertTriangle, RefreshCw, Fingerprint, Check, Sparkles } from 'lucide-react';
 import { useGameStore } from '@/lib/store';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface KycVerifyResponse {
   success: boolean;
   sessionId?: string;
@@ -78,7 +81,6 @@ export default function KYCPage() {
   const [result, setResult] = useState<KycVerifyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') || '' : '';
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const steps = [
@@ -93,7 +95,7 @@ export default function KYCPage() {
     setLoading(true);
     try {
       const res = await fetch(`${API}/kyc/status`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = (await res.json()) as KycStatusResponse;
       if (data.success) {
@@ -195,7 +197,7 @@ export default function KYCPage() {
     try {
       const res = await fetch(`${API}/kyc/verify`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: {'Content-Type': 'application/json' },
         body: JSON.stringify({ document: docBase64, selfie: selfieBase64 }),
       });
 

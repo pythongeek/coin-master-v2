@@ -38,7 +38,7 @@ import { getFxRates, type FxRatesResponse } from '@/lib/api/wallet';
 
 function getToken(): string {
   if (typeof window === 'undefined') return '';
-  return localStorage.getItem('cf_token') || '';
+  return ''
 }
 
 interface AddressCheck {

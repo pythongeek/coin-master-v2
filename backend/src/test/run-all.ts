@@ -47,6 +47,14 @@ const testFiles = [
   'daily-fraud-report.test.ts',
   'cohort-analysis.test.ts',
   'game-fraud-controls.test.ts',
+  's1-c1-reject-refund.test.ts',
+  's1-c4-r2-approve-race.test.ts',
+  's1-c5-admin-2fa.test.ts',
+  's1-w3-payout-stuck.test.ts',
+  's1-h13-request-tx.test.ts',
+  's1-w10-hot-wallet-min.test.ts',
+  's1-w11-reconciliation.test.ts',
+  's1-w6-kms-guard.test.ts',
   'concurrency.test.ts',
 ];
 

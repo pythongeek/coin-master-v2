@@ -11,6 +11,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import { placeBet, getBetHistory } from '../services/game-engine';
 import { verifyFlip } from '../services/provably-fair';
 import { getConfig } from '../services/admin-config';
@@ -103,14 +104,31 @@ router.post('/bet', gameLimiter, authMiddleware, validateBody(betSchema), fraudG
 });
 
 // ══════════════════════════════════════════════════════════════
-//  POST /api/game/verify — নিজে ভেরিফাই করো
+//  POST /api/game/verify — নিজে ভেরিফাই করুন
 //
 //  ইউজার গেম শেষে দেখতে পারবে রেজাল্টটি সত্যিই ফেয়ার ছিল কিনা।
 //  তাকে শুধু serverSeed, clientSeed, nonce দিতে হবে।
+//
+//  PR RNG-2 (Step 3): verify the SHA-256(serverSeed) matches the committed
+//  serverSeedHash BEFORE running the HMAC computation. Without this gate,
+//  an attacker could submit any serverSeed+serverSeedHash pair and get a
+//  "computed outcome" back. The browser widget already refuses to render
+//  the result when hashMatches=false, but this endpoint will refuse at 400.
 // ══════════════════════════════════════════════════════════════
 router.post('/verify', gameLimiter, validateBody(verifySchema), (req: Request, res: Response) => {
   try {
     const { serverSeed, clientSeed, nonce, serverSeedHash, choice, targetMultiplier, houseEdge, jackpotHitChance } = req.body;
+
+    // PR RNG-2: hash-mismatch gate. Front-loaded so we never run the
+    // HMAC for an obviously forged seed pair.
+    const computedHash = crypto.createHash('sha256').update(serverSeed).digest('hex');
+    if (computedHash !== serverSeedHash) {
+      return res.status(400).json({
+        success: false,
+        error: 'Server seed does not match committed hash.',
+        code: 'SEED_HASH_MISMATCH',
+      });
+    }
 
     const result = verifyFlip({
       serverSeed,
@@ -124,7 +142,6 @@ router.post('/verify', gameLimiter, validateBody(verifySchema), (req: Request, r
 
     // Jackpot verification calculation
     const hitChance = Number(jackpotHitChance || 10000);
-    const crypto = require('crypto');
     const jackpotSignature = `${clientSeed}:${nonce}:jackpot`;
     const jackpotHash = crypto.createHmac('sha256', serverSeed).update(jackpotSignature).digest('hex');
     const rawJackpotVal = parseInt(jackpotHash.slice(0, 8), 16);

@@ -1,4 +1,10 @@
 'use client';
+// PR-1B: cookie-auth stub. Raw fetch falls through the /api/* proxy.
+const API: string = '';
+
+// PR-1B: cookie-auth stubs to satisfy callers; safe to remove in Step 5.
+const token: string = '';
+
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ADMIN HEALTH DASHBOARD — /api/admin/health
@@ -7,11 +13,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Activity, Database, Server, Link2, RefreshCw, Loader2, CheckCircle, XCircle } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-
-const API = getApiBase();
-
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 interface HealthCheck {
   status: 'ok' | 'err';
   latencyMs: number;
@@ -41,14 +43,13 @@ export default function AdminHealthDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
 
   const fetchHealth = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`${API}/admin/health`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {},
       });
       const data = await res.json();
       if (data.success) {

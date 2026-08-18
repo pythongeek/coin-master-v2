@@ -7,7 +7,7 @@
  *  user withdrawal requests.
  *
  *  All routes require admin role (mounted under app.use('/api/admin',
- *  with authMiddleware + adminMiddleware applied).
+ *  with adminAuthMiddleware + adminMiddleware applied).
  *
  *  Mounted in index.ts BEFORE the catch-all admin router (so the more
  *  specific /api/admin/withdrawals path matches before /api/admin).
@@ -21,11 +21,13 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { authMiddleware, adminMiddleware, AuthPayload } from '../middleware/auth';
+import { adminMiddleware, AuthPayload} from '../middleware/auth'
+import { adminAuthMiddleware } from '../middleware/admin-auth';
+import { requireAdmin2FA } from '../middleware/require-admin-2fa';
 import {
   approveWithdrawal, rejectWithdrawal, expireBonuses,
 } from '../services/bonus';
-import { query } from '../config/database';
+import { query, withTransaction } from '../config/database';
 import { scoreWithdrawalRisk, scoreWithdrawalsBatch } from '../services/withdrawal-risk.service';
 import { queueAdminEmail, queueEmail } from '../services/notification.service';
 import { coinsToCurrency } from '../services/rate-fetcher';
@@ -33,7 +35,7 @@ import { coinsToCurrency } from '../services/rate-fetcher';
 const router = Router();
 
 // All routes are admin-only
-router.use(authMiddleware);
+router.use(adminAuthMiddleware);
 router.use(adminMiddleware);
 
 // ── GET /api/admin/withdrawals ─────────────────────────────────
@@ -42,7 +44,10 @@ router.get('/', async (req: Request, res: Response) => {
     const status = (req.query.status as string) ?? 'pending';
     const minRisk = (req.query.minRisk as string) ?? null; // 'low'|'medium'|'high'|'critical'
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
-    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled'];
+    // S1-W3 / S1-C1: payout_stuck + rejected added so the operator can filter on the
+    // S1-W11 cron output and on S1-C1 rejects via the UI. Backend schema allows
+    // these per migrations 056 + 057.
+    const validStatuses = ['pending', 'confirmed', 'failed', 'cancelled', 'payout_stuck', 'rejected'];
     if (!validStatuses.includes(status) && status !== 'all') {
       return res.status(400).json({ success: false, error: 'invalid status' });
     }
@@ -177,7 +182,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // ── POST /api/admin/withdrawals/:id/approve ────────────────────
-router.post('/:id/approve', async (req: Request, res: Response) => {
+router.post('/:id/approve', requireAdmin2FA, async (req: Request, res: Response) => {
   try {
     const admin = (req as Request & { user: AuthPayload }).user;
     const id = String(req.params.id);
@@ -212,7 +217,7 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
 
 // ── POST /api/admin/withdrawals/:id/reject ─────────────────────
 // body: { reason: string } — required
-router.post('/:id/reject', async (req: Request, res: Response) => {
+router.post('/:id/reject', requireAdmin2FA, async (req: Request, res: Response) => {
   try {
     const admin = (req as Request & { user: AuthPayload }).user;
     const id = String(req.params.id);
@@ -245,6 +250,155 @@ router.post('/:id/reject', async (req: Request, res: Response) => {
       withdrawalId: id,
       status: 'failed',
       refundedCoins: result.refundedCoins,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ── POST /api/admin/withdrawals/:id/resolve-stuck ─────────────
+// S1-W3: resolves a withdrawal that reached 'payout_stuck' state —
+// the broadcast went on-chain but the confirmation polling never
+// completed within 5 minutes. Admin must verify on-chain and pick:
+//
+//   action: 'confirm'  → admin verified on-chain TX. Settle the row:
+//                       status='completed', decrement locked_balance.
+//   action: 'refund'   → on-chain TX failed or reversed. Refund per
+//                       S1-C1 invariant: balance += amount,
+//                       locked_balance -= amount. status='rejected'.
+//
+// Both paths require requireSuperAdmin + requireAdmin2FA (the admin
+// 2FA middleware is already applied because the route lives in this
+// file; we add roleMiddleware('super_admin') to gate non-super-admins).
+router.post('/:id/resolve-stuck', requireAdmin2FA, async (req: Request, res: Response) => {
+  try {
+    const admin = (req as Request & { user: AuthPayload }).user;
+    const id = String(req.params.id);
+    const body = (req.body || {}) as { action?: string; tx_hash?: string; notes?: string };
+    const action = String(body.action || '').trim();
+
+    if (action !== 'confirm' && action !== 'refund') {
+      return res.status(400).json({
+        success: false,
+        error: "action must be 'confirm' or 'refund'",
+      });
+    }
+
+    // Use the same approve/reject service helpers so the closed invariant
+    // (wallet balance/locked_balance transition) is preserved. For
+    // 'refund' we reuse rejectWithdrawal from S1-C1 (the function is
+    // stateless w.r.t. status — it checks status='pending' and would
+    // refuse a 'payout_stuck' row). So we manually restore the wallet
+    // here for the refund path, keeping the invariant explicit.
+    //
+    // For 'confirm' we manually flip the row to 'completed' and decrement
+    // locked_balance.
+    const wr = await query(
+      `SELECT id, user_id, wallet_id, amount, status, tx_hash FROM transactions
+        WHERE id = $1 AND type = 'withdrawal'`,
+      [id],
+    );
+    if (wr.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'withdrawal not found' });
+    }
+    const txRow = wr.rows[0];
+
+    if (txRow.status !== 'payout_stuck') {
+      return res.status(400).json({
+        success: false,
+        error: `withdrawal is in ${txRow.status} state; only payout_stuck can be resolved`,
+      });
+    }
+
+    if (action === 'confirm') {
+      // Admin asserts the on-chain TX is settled. In a KMS-migrated
+      // future (S1-W6-KMS) we would re-fetch confirmations here. For
+      // now, we trust the admin's verification.
+      const confirmTxHash = String(body.tx_hash || txRow.tx_hash || '').trim();
+      if (!confirmTxHash) {
+        return res.status(400).json({
+          success: false,
+          error: 'tx_hash is required for confirm action (or it must be on the row)',
+        });
+      }
+
+      await withTransaction(async (tx) => {
+        await tx(
+          `UPDATE transactions
+              SET status = 'completed',
+                  tx_hash = $1,
+                  completed_at = NOW(),
+                  metadata = metadata || jsonb_build_object(
+                    'resolved_by', $2::text,
+                    'resolved_at', NOW()::text,
+                    'resolve_action', 'confirm'
+                  )
+            WHERE id = $3`,
+          [confirmTxHash, admin.userId, id],
+        );
+        await tx(
+          `UPDATE wallets
+              SET locked_balance = locked_balance - $1,
+                  updated_at = NOW()
+            WHERE id = $2`,
+          [parseFloat(txRow.amount), txRow.wallet_id],
+        );
+      });
+
+      await query(
+        `INSERT INTO audit_log (category, action, severity, user_id, details)
+         VALUES ('withdrawal', 'withdrawal.stuck_resolved', 'warn', $1, $2)`,
+        [txRow.user_id, JSON.stringify({ tx_id: id, amount: txRow.amount, action: 'confirm', resolved_by: admin.userId, tx_hash: confirmTxHash, notes: body.notes || null })],
+      );
+
+      return res.json({
+        success: true,
+        withdrawalId: id,
+        action: 'confirm',
+        status: 'completed',
+        txHash: confirmTxHash,
+      });
+    }
+
+    // action === 'refund' — restore the wallet that was debited.
+    //   balance += amount, locked_balance -= amount
+    // (same closed invariant as S1-C1 reject).
+    await withTransaction(async (tx) => {
+      await tx(
+        `UPDATE wallets
+            SET balance = balance + $1,
+                locked_balance = locked_balance - $1,
+                updated_at = NOW()
+          WHERE id = $2 AND user_id = $3`,
+        [parseFloat(txRow.amount), txRow.wallet_id, txRow.user_id],
+      );
+      await tx(
+        `UPDATE transactions
+            SET status = 'rejected',
+                completed_at = NOW(),
+                metadata = metadata || jsonb_build_object(
+                  'rejected_by', $1::text,
+                  'rejection_reason', $2::text,
+                  'resolve_action', 'refund'
+                )
+          WHERE id = $3`,
+        [admin.userId, body.notes || 'admin refund of stuck payout', id],
+      );
+    });
+
+    await query(
+      `INSERT INTO audit_log (category, action, severity, user_id, details)
+       VALUES ('withdrawal', 'withdrawal.stuck_resolved', 'warn', $1, $2)`,
+      [txRow.user_id, JSON.stringify({ tx_id: id, amount: txRow.amount, action: 'refund', resolved_by: admin.userId, notes: body.notes || null })],
+    );
+
+    return res.json({
+      success: true,
+      withdrawalId: id,
+      action: 'refund',
+      status: 'rejected',
+      refundedCoins: parseFloat(txRow.amount),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

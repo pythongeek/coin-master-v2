@@ -547,6 +547,8 @@ class MockRedisClass {
   async flushall() { _redisStore.clear(); return 'OK'; }
   async quit() { return 'OK'; }
   async ping() { return 'PONG'; }
+  // No-op so config/redis.ts:58 `redis.connect()` doesn't crash on import.
+  async connect() { return Promise.resolve(); }
   pipeline() { return this; }
   multi() { return this; }
   exec() { return []; }

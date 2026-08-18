@@ -13,9 +13,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Search, Check, X, Pencil, Lock, Unlock, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getApiBase } from '@/lib/api/base';
-
-const API = getApiBase();
+// PR-1B: import cookie-bearing fetch helpers. The browser auto-attaches
+// the httpOnly cf_token cookie for these same-origin calls.
+import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 
 interface UserRow {
   id:             string;
@@ -42,15 +42,13 @@ export default function AdminUserTable() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBalance, setEditBalance] = useState('');
 
-  const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : '';
-
   const fetchUsers = useCallback(async (q = '', p = 1, l = 20) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/dashboard/admin/users?search=${encodeURIComponent(q)}&page=${p}&limit=${l}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiGet(
+        `/dashboard/admin/users?search=${encodeURIComponent(q)}&page=${p}&limit=${l}`,
+      );
       const data = await res.json();
       if (data.success) {
         setUsers((data.data || []).map((u: any) => ({
@@ -74,7 +72,7 @@ export default function AdminUserTable() {
       setError('Cannot connect to backend');
     }
     setLoading(false);
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => { setPage(1); fetchUsers(search, 1, limit); }, 400);
@@ -91,11 +89,12 @@ export default function AdminUserTable() {
     const newStatus = !user.is_active;
     setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: newStatus } : u));
     try {
-      const res = await fetch(`${API}/dashboard/admin/users/${user.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ isActive: newStatus }),
-      });
+      // PR-1B: apiPost wraps fetch with credentials: 'include' so the
+      // httpOnly cf_token cookie is sent automatically.
+      const res = await apiPost(
+        `/dashboard/admin/users/${user.id}`,
+        { isActive: newStatus },
+      );
       const data = await res.json();
       if (!data.success) {
         setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !newStatus } : u));
@@ -117,11 +116,11 @@ export default function AdminUserTable() {
     setEditingId(null);
 
     try {
-      const res = await fetch(`${API}/dashboard/admin/users/${userId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ balance: newBalance }),
-      });
+      // PR-1B: see note above re: cookie.
+      const res = await apiPost(
+        `/dashboard/admin/users/${userId}`,
+        { balance: newBalance },
+      );
       const data = await res.json();
       if (!data.success) {
         setUsers(prev => prev.map(u => u.id === userId ? { ...u, balance: prevBalance } : u));
