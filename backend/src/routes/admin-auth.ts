@@ -33,6 +33,7 @@ import { authLimiter as _unused } from '../middleware/rate-limiter'; // re-expor
 import { validateBody } from '../middleware/validation';
 import { z } from 'zod';
 import { createToken as makeUserToken, JWT_SECRET } from '../middleware/auth';
+import { decryptSecret, verifyTotp } from '../utils/totp';
 
 // ─────────────────────────────────────────────────────────────────
 //  Rate limiter — admin login is much stricter than user login.
@@ -138,7 +139,8 @@ adminAuthRouter.post(
 
     try {
       const result = await query(
-        `SELECT id, username, email, password_hash, role, is_admin, is_active, two_factor_enabled
+        `SELECT id, username, email, password_hash, role, is_admin, is_active,
+                two_factor_enabled, totp_enabled, totp_secret_encrypted
            FROM users
           WHERE username = $1 AND is_active = true`,
         [username],
@@ -168,6 +170,66 @@ adminAuthRouter.post(
         return res.status(401).json({ success: false, error: 'Invalid credentials.' });
       }
 
+      // ─── TOTP step-up (matches require-admin-2fa.ts + auth.ts pattern) ───
+      // The authoritative TOTP enrollment columns are `totp_enabled` and
+      // `totp_secret_encrypted` (migration 025). The legacy `two_factor_enabled`
+      // column (migration 001) is never written by the current enrollment flow,
+      // so it would always be false even after the user enables 2FA.
+      //
+      // If the admin has TOTP enrolled, require a 6-digit TOTP code in the
+      // request body. On missing/invalid code, return 401 with
+      // { requires2FA: true } so the frontend can show a TOTP input.
+      if (user.totp_enabled && user.totp_secret_encrypted) {
+        const totpCode = typeof req.body.totp_code === 'string'
+          ? req.body.totp_code.trim()
+          : '';
+        if (!totpCode) {
+          await safeAuditLog({
+            actor_user_id: user.id,
+            action: 'admin.login.failed',
+            source_ip: sourceIp,
+            result: 'totp_missing',
+            meta: { username },
+          });
+          return res.status(401).json({
+            success: false,
+            error: '2FA code required.',
+            requires2FA: true,
+          });
+        }
+        let secret: string;
+        try {
+          secret = decryptSecret(user.totp_secret_encrypted);
+        } catch (decryptErr) {
+          await safeAuditLog({
+            actor_user_id: user.id,
+            action: 'admin.login.failed',
+            source_ip: sourceIp,
+            result: 'totp_decrypt_error',
+            meta: { username },
+          });
+          return res.status(500).json({
+            success: false,
+            error: '2FA verification unavailable. Contact an operator.',
+          });
+        }
+        const totpValid = verifyTotp(secret, totpCode, 1);
+        if (!totpValid) {
+          await safeAuditLog({
+            actor_user_id: user.id,
+            action: 'admin.login.failed',
+            source_ip: sourceIp,
+            result: 'totp_invalid',
+            meta: { username },
+          });
+          return res.status(401).json({
+            success: false,
+            error: 'Invalid 2FA code.',
+            requires2FA: true,
+          });
+        }
+      }
+
       const token = makeAdminToken({ id: user.id, username: user.username, role: user.role });
       setAdminCookie(res, token);
 
@@ -176,7 +238,7 @@ adminAuthRouter.post(
         action: 'admin.login.success',
         source_ip: sourceIp,
         result: 'ok',
-        meta: { username, role: user.role, scope: 'admin' },
+        meta: { username, role: user.role, scope: 'admin', totp_used: !!(user.totp_enabled && user.totp_secret_encrypted) },
       });
 
       return res.json({
