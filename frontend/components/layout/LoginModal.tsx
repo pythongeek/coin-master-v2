@@ -95,7 +95,13 @@ export default function LoginModal({ onClose }: Props) {
       const res = await fetch(`${API}/auth/wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
+        body: JSON.stringify({
+          walletAddress: conn.address,
+          signature:     conn.signature,
+          timestamp:     conn.timestamp,
+          nonce:         conn.nonce,
+          fingerprint,
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -126,7 +132,13 @@ export default function LoginModal({ onClose }: Props) {
       const res = await fetch(`${API}/auth/wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: conn.address, signature: conn.signature, fingerprint }),
+        body: JSON.stringify({
+          walletAddress: conn.address,
+          signature:     conn.signature,
+          timestamp:     conn.timestamp,
+          nonce:         conn.nonce,
+          fingerprint,
+        }),
       });
       const data = await res.json();
       if (data.success) {
