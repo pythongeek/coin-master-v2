@@ -25,6 +25,7 @@ import { getAdminSettingBool } from '../services/admin-settings.service';
 import { validateBody } from '../middleware/validation';
 import { authLimiter, registerStrictLimiter } from '../middleware/rate-limiter';
 import { hcaptchaMiddleware } from '../middleware/hcaptcha';
+import { redis } from '../config/redis';
 import {
   registerSchema,
   loginSchema,
@@ -412,15 +413,94 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
 });
 
 // ══════════════════════════════════════════════════════════════
-//  POST /api/auth/wallet — MetaMask ওয়ালেট দিয়ে লগইন
+//  GET /api/auth/wallet/challenge — server-issued nonce for wallet login
+// ══════════════════════════════════════════════════════════════
+//
+// P2-22: the previous wallet-login flow had no nonce and the timestamp
+// mismatch meant every signature verification failed. This endpoint
+// issues a single-use nonce that the client must include in the signed
+// message posted to /api/auth/wallet. The nonce is stored in Redis with
+// a 5-minute TTL and is atomically consumed via GETDEL on the login
+// route.
+//
+// Response: { success, nonce, timestamp, expiresInSeconds, messageFormat }
+//
+// `timestamp` is the ISO-8601 string the client MUST embed in the
+// signed message (the buildSignMessage helper on the client uses this).
+// The exact message format is documented in `messageFormat`; the client
+// MUST sign that exact string for the signature to verify.
+const WALLET_CHALLENGE_TTL_SECONDS = 300; // 5 minutes
+
+function generateWalletNonce(): string {
+  // 32 hex chars = 128 bits of entropy. Plenty for a 5-min single-use nonce.
+  return crypto.randomBytes(16).toString('hex');
+}
+
+router.get('/wallet/challenge', authLimiter, async (_req: Request, res: Response) => {
+  try {
+    const nonce = generateWalletNonce();
+    const timestamp = new Date().toISOString();
+    const key = `wallet_challenge:${nonce}`;
+    const ok = await redis.set(key, '1', 'EX', WALLET_CHALLENGE_TTL_SECONDS, 'NX');
+    if (ok !== 'OK') {
+      // crypto.randomBytes collided — astronomically unlikely. Retry once.
+      const retryNonce = generateWalletNonce();
+      await redis.set(`wallet_challenge:${retryNonce}`, '1', 'EX', WALLET_CHALLENGE_TTL_SECONDS, 'NX');
+      return res.json({
+        success: true,
+        nonce: retryNonce,
+        timestamp,
+        expiresInSeconds: WALLET_CHALLENGE_TTL_SECONDS,
+        messageFormat: 'CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: <walletAddress>\nসময়: <timestamp>\nননস: <nonce>',
+      });
+    }
+    return res.json({
+      success: true,
+      nonce,
+      timestamp,
+      expiresInSeconds: WALLET_CHALLENGE_TTL_SECONDS,
+      messageFormat: 'CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: <walletAddress>\nসময়: <timestamp>\nননস: <nonce>',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/wallet — MetaMask/Phantom ওয়ালেট দিয়ে লগইন
 // ══════════════════════════════════════════════════════════════
 router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: Request, res: Response) => {
   try {
-    const { walletAddress, signature, fingerprint } = req.body;
+    const { walletAddress, signature, fingerprint, timestamp, nonce } = req.body;
     const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
 
+    // P2-22: enforce a 5-minute freshness window on the timestamp. Even
+    // if the nonce itself is valid, a stale timestamp lets attackers
+    // hold onto a captured nonce for longer than intended.
+    const tsMs = Date.parse(timestamp);
+    if (!Number.isFinite(tsMs)) {
+      return res.status(400).json({ success: false, error: 'সময় অবৈধ।' });
+    }
+    const ageMs = Date.now() - tsMs;
+    if (ageMs < -5_000 || ageMs > WALLET_CHALLENGE_TTL_SECONDS * 1000) {
+      return res.status(401).json({ success: false, error: 'সময়সীমা শেষ। আবার চেষ্টা করুন।' });
+    }
+
+    // P2-22: atomically consume the nonce. GETDEL returns the value
+    // and removes the key in one round-trip, so two parallel requests
+    // with the same nonce cannot both succeed.
+    const nonceKey = `wallet_challenge:${nonce}`;
+    const consumed = await redis.getdel(nonceKey);
+    if (consumed === null) {
+      return res.status(401).json({
+        success: false,
+        error: 'ননস অবৈধ বা মেয়াদোত্তীর্ণ। challenge আবার নিন।',
+      });
+    }
+
     const walletType = detectWalletType(walletAddress);
-    const expectedMessage = buildSignMessage(walletAddress);
+    const expectedMessage = buildSignMessage(walletAddress, timestamp, nonce);
 
     if (!verifyWalletSignature(walletAddress, signature, expectedMessage)) {
       return res.status(401).json({ success: false, error: 'ওয়ালেট স্বাক্ষর যাচাই ব্যর্থ হয়েছে।' });

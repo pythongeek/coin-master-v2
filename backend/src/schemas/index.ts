@@ -52,13 +52,28 @@ export const loginSchema = z.object({
     .min(1, 'পাসওয়ার্ড প্রয়োজন।'),
 });
 
+// P2-22: wallet-auth now requires the timestamp + nonce that the client
+// signed. Without these, the backend cannot rebuild the exact signed
+// message and signature verification fails (the previous silent
+// timestamp-regeneration bug). Both fields are validated here at the
+// schema layer so the route sees a strongly-typed request.
 export const walletAuthSchema = z.object({
   walletAddress: z
     .string()
-    .min(10, 'সঠিক ওয়ালেট অ্যাড্রেস প্রয়োজন।'),
+    .min(10, 'সঠিক ওয়ালেট অ্যাড্রেস প্রয়োজন।'),
   signature: z
     .string()
-    .optional(),
+    .min(1, 'স্বাক্ষর প্রয়োজন।'),
+  // ISO-8601 timestamp embedded in the message the client signed.
+  timestamp: z
+    .string()
+    .datetime({ message: 'সময় ISO-8601 ফরম্যাটে হতে হবে।' }),
+  // Server-issued nonce from GET /api/auth/wallet/challenge. Stored
+  // in Redis with a 5-minute TTL and consumed atomically on login.
+  nonce: z
+    .string()
+    .min(8, 'ননস অনুপস্থিত বা অবৈধ।')
+    .max(128, 'ননস অবৈধ।'),
   fingerprint: z
     .string()
     .optional(),
