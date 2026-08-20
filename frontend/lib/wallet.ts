@@ -43,6 +43,40 @@ export interface WalletConnection {
   address:   string;
   type:      WalletType;
   signature: string;
+  // P2-22: timestamp + nonce are server-issued and embedded in the
+  // signed message. The backend's buildSignMessage(addr, timestamp, nonce)
+  // reconstructs the exact message that was signed; without these the
+  // signature can't verify (the previous wallet-login bug at HEAD).
+  timestamp: string;
+  nonce:     string;
+}
+
+/**
+ * P2-22: fetch a server-issued challenge (nonce + canonical timestamp)
+ * before asking the wallet to sign. The backend stores the nonce in
+ * Redis with a 5-minute TTL and atomically consumes it on login.
+ */
+interface WalletChallenge {
+  success:           boolean;
+  nonce:             string;
+  timestamp:         string;
+  expiresInSeconds:  number;
+  messageFormat:     string;
+}
+
+async function fetchWalletChallenge(): Promise<WalletChallenge> {
+  const res = await fetch('/api/auth/wallet/challenge', {
+    method: 'GET',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    throw new Error('চ্যালেঞ্জ নেওয়া যায়নি। আবার চেষ্টা করুন।');
+  }
+  const data = await res.json();
+  if (!data.success || !data.nonce || !data.timestamp) {
+    throw new Error('চ্যালেঞ্জ অবৈধ।');
+  }
+  return data as WalletChallenge;
 }
 
 // ── এক্সটেনশন ইন্সটল আছে কিনা চেক ────────────────────────────────
@@ -72,13 +106,15 @@ export async function connectMetaMask(): Promise<WalletConnection> {
   const address = accounts[0];
 
   // ধাপ ২: প্রমাণের জন্য একটি বার্তায় সাইন করতে বলো
-  const message = `CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: ${address}\nসময়: ${new Date().toISOString()}`;
+  const challenge = await fetchWalletChallenge();
+
+  const message = `CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: ${address}\nসময়: ${challenge.timestamp}\nননস: ${challenge.nonce}`;
   const signature = await window.ethereum.request({
     method: 'personal_sign',
     params: [message, address],
   }) as string;
 
-  return { address, type: 'metamask', signature };
+  return { address, type: 'metamask', signature, timestamp: challenge.timestamp, nonce: challenge.nonce };
 }
 
 // ── Phantom কানেক্ট করো ──────────────────────────────────────────
@@ -91,13 +127,19 @@ export async function connectPhantom(): Promise<WalletConnection> {
   const resp = await window.solana.connect();
   const address = resp.publicKey.toString();
 
+  // P2-22: get a server-issued nonce + timestamp before signing. See
+  // connectMetaMask for the rationale — the bug at HEAD was that the
+  // backend rebuilt the message with a fresh timestamp so the signature
+  // never verified.
+  const challenge = await fetchWalletChallenge();
+
   // ধাপ ২: প্রমাণের জন্য সাইন করো
-  const message = `CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: ${address}\nসময়: ${new Date().toISOString()}`;
+  const message = `CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: ${address}\nসময়: ${challenge.timestamp}\nননস: ${challenge.nonce}`;
   const encoded = new TextEncoder().encode(message);
   const { signature } = await window.solana.signMessage(encoded);
   const signatureHex = Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('');
 
-  return { address, type: 'phantom', signature: signatureHex };
+  return { address, type: 'phantom', signature: signatureHex, timestamp: challenge.timestamp, nonce: challenge.nonce };
 }
 
 // ── ওয়ালেট ডিসকানেক্ট ─────────────────────────────────────────
