@@ -260,3 +260,91 @@ export async function confirmTronWithdrawal(txId: string): Promise<{ confirmed: 
   const confirmation = await tronMcpService.confirmTransaction(tx.tx_hash, REQUIRED_CONFIRMATIONS);
   return { confirmed: confirmation.confirmed, confirmations: confirmation.confirmations };
 }
+
+
+// ══════════════════════════════════════════════════════════════
+//  CHAIN ALLOWLIST + DISPATCHER (P2-22 fix)
+// ══════════════════════════════════════════════════════════════
+//
+// Audit finding: withdrawal-queue.ts:223-253 generated fake
+// `crypto.randomUUID()` tx hashes for ethereum/solana/'mock' chains
+// and marked the transaction `status='completed'`. Funds were debited
+// from `wallets.locked_balance` but never actually left custody.
+// Customer's balance went down, no on-chain settlement happened.
+//
+// Fix: only the chains listed below have a real payout broadcaster.
+// Every other chain is rejected at BOTH the request layer (so the
+// user never even gets a pending transaction) AND the worker layer
+// (so any legacy pending row in the queue fails safely instead of
+// silently writing a fake hash).
+//
+// When a new chain is wired (e.g. Ethereum via `payoutEvmWithdrawal`),
+// add it here AND write the implementation — never bypass this list.
+
+export type SupportedWithdrawalChain = 'tron';
+
+export const SUPPORTED_WITHDRAWAL_CHAINS: readonly SupportedWithdrawalChain[] = ['tron'] as const;
+
+export function isSupportedWithdrawalChain(chain: string): chain is SupportedWithdrawalChain {
+  return (SUPPORTED_WITHDRAWAL_CHAINS as readonly string[]).includes(chain);
+}
+
+export type PayoutFailureReason =
+  | 'unsupported_chain'
+  | 'real_broadcast_failed'
+  | 'configuration_missing';
+
+export interface PayoutDispatcherResult {
+  success: boolean;
+  txHash?: string;
+  /** When success=false, the reason the payout was not broadcast. */
+  failureReason?: PayoutFailureReason;
+  error?: string;
+}
+
+/**
+ * Dispatch a withdrawal payout to the real broadcaster for the chain.
+ * Returns success=true ONLY if a real on-chain transaction hash was
+ * produced. Any other path returns success=false with a
+ * failureReason so the caller can mark the transaction failed and
+ * surface a clear error to the user.
+ *
+ * IMPORTANT: this is the SINGLE entry point the worker calls. Do not
+ * add crypto.randomUUID() paths here — every branch must end in a
+ * real broadcast or a clean refusal.
+ */
+export async function payoutWithdrawal(
+  chain: string,
+  txId: string,
+): Promise<PayoutDispatcherResult> {
+  if (!isSupportedWithdrawalChain(chain)) {
+    return {
+      success: false,
+      failureReason: 'unsupported_chain',
+      error: `Withdrawal is not supported on chain '${chain}'. Supported chains: ${SUPPORTED_WITHDRAWAL_CHAINS.join(', ')}.`,
+    };
+  }
+
+  // TRON — the only chain with a real payout at HEAD.
+  if (chain === 'tron') {
+    const result = await payoutTronWithdrawal(txId);
+    if (!result.success) {
+      return {
+        success: false,
+        failureReason: result.error && /HOT_WALLET|encrypted|empty/i.test(result.error)
+          ? 'configuration_missing'
+          : 'real_broadcast_failed',
+        error: result.error,
+      };
+    }
+    return { success: true, txHash: result.txHash };
+  }
+
+  // Unreachable. isSupportedWithdrawalChain guards all supported
+  // chains above; this branch is for type-narrowing only.
+  return {
+    success: false,
+    failureReason: 'unsupported_chain',
+    error: `Unhandled chain in payoutWithdrawal: ${chain}`,
+  };
+}
