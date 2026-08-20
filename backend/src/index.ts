@@ -30,6 +30,12 @@ import adminKycRoutes from './routes/admin-kyc';
 import adminBalanceRoutes from './routes/admin-balance';
 import adminAuditRoutes from './routes/admin-audit';
 import adminWebhooksRoutes from './routes/admin-webhooks';
+// P2-22: mount the provider-callback webhook router at /api/webhooks.
+// This route file (routes/webhooks.ts) was previously orphaned — defined
+// but never imported in index.ts — so POST /api/webhooks/binance and
+// POST /api/webhooks/redot returned 404. Audit finding: "unmounted
+// canonical webhook routes." Fix is a single import + a single mount.
+import webhooksRoutes from './routes/webhooks';
 import adminFraudRoutes from './routes/admin-fraud';
 import graphRoutes from './routes/graphs';
 import mlRoutes from './routes/ml-routes';
@@ -152,6 +158,25 @@ app.use(cors({
   },
   credentials: true,
 }));
+// P2-22: provider-callback webhooks (Binance Pay, Redot Pay) at
+// /api/webhooks/*. MUST be mounted:
+//   1. BEFORE express.json() — otherwise the global json parser
+//      consumes the body for application/json requests and the
+//      raw-body stream is empty when the handler runs.
+//   2. BEFORE the global rate limiter and CSRF middleware — provider
+//      callbacks come from provider infrastructure with stable IPs
+//      and HMAC signatures, not user requests; rate-limiting them
+//      would break legitimate provider traffic.
+//
+// express.raw() with type: () => true fires regardless of Content-Type
+// (Binance Pay and Redot Pay both send JSON but with different
+// content-type headers). The handler in routes/webhooks.ts reads the
+// raw bytes for HMAC verification.
+app.use(
+  '/api/webhooks',
+  express.raw({ type: () => true, limit: '256kb' }),
+  webhooksRoutes
+);
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -166,6 +191,8 @@ if (sentryEnabled) {
     });
   });
 }
+
+
 
 // Rate Limiting
 app.use('/api', globalLimiter);
