@@ -19,6 +19,8 @@ import { startReconciliationLoop } from './services/reconciliation';
 import { geoipMiddleware } from './middleware/geoip';
 import { globalLimiter } from './middleware/rate-limiter';
 import { csrfMiddleware, helmetConfig } from './middleware/security';
+import { errorHandler, setSentryCapture } from './middleware/error-handler';
+import { rateLimitErrorMiddleware } from './middleware/rate-limiter';
 import { startAuditBackupWorker } from './services/audit-backup';
 import { startWebhookWorker } from './services/webhook';
 import { adminHealthRoutes } from './routes/admin-health';
@@ -27,6 +29,13 @@ import adminEmailRoutes from './routes/admin-email';
 import adminKycRoutes from './routes/admin-kyc';
 import adminBalanceRoutes from './routes/admin-balance';
 import adminAuditRoutes from './routes/admin-audit';
+import adminWebhooksRoutes from './routes/admin-webhooks';
+// P2-22: mount the provider-callback webhook router at /api/webhooks.
+// This route file (routes/webhooks.ts) was previously orphaned — defined
+// but never imported in index.ts — so POST /api/webhooks/binance and
+// POST /api/webhooks/redot returned 404. Audit finding: "unmounted
+// canonical webhook routes." Fix is a single import + a single mount.
+import webhooksRoutes from './routes/webhooks';
 import adminFraudRoutes from './routes/admin-fraud';
 import graphRoutes from './routes/graphs';
 import mlRoutes from './routes/ml-routes';
@@ -149,6 +158,25 @@ app.use(cors({
   },
   credentials: true,
 }));
+// P2-22: provider-callback webhooks (Binance Pay, Redot Pay) at
+// /api/webhooks/*. MUST be mounted:
+//   1. BEFORE express.json() — otherwise the global json parser
+//      consumes the body for application/json requests and the
+//      raw-body stream is empty when the handler runs.
+//   2. BEFORE the global rate limiter and CSRF middleware — provider
+//      callbacks come from provider infrastructure with stable IPs
+//      and HMAC signatures, not user requests; rate-limiting them
+//      would break legitimate provider traffic.
+//
+// express.raw() with type: () => true fires regardless of Content-Type
+// (Binance Pay and Redot Pay both send JSON but with different
+// content-type headers). The handler in routes/webhooks.ts reads the
+// raw bytes for HMAC verification.
+app.use(
+  '/api/webhooks',
+  express.raw({ type: () => true, limit: '256kb' }),
+  webhooksRoutes
+);
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -163,6 +191,8 @@ if (sentryEnabled) {
     });
   });
 }
+
+
 
 // Rate Limiting
 app.use('/api', globalLimiter);
@@ -198,8 +228,12 @@ if (_envLoadResult.loaded > 0) {
   console.log(`[env-loader] injected ${_envLoadResult.loaded} vars from: ${_envLoadResult.files.join(", ")}`);
 }
 
-app.use('/api/admin/config', adminPublicRoutes);
 // Protected admin routes (order matters: withdrawals before catch-all adminRoutes)
+//
+// P1-10: removed the prior `app.use('/api/admin/config', adminPublicRoutes)` duplicate.
+// adminPublicRoutes is now mounted exactly once — at /api/public below — so anonymous
+// users no longer accidentally reach a path that is named under /api/admin/*.
+
 app.use('/api/admin/withdrawals', adminWithdrawalsRoutes);
 app.use('/api/admin/kyc', adminKycRoutes);
 app.use('/api/admin/balance', adminBalanceRoutes);
@@ -209,6 +243,7 @@ app.use('/api/admin', adminHealthRoutes);
 app.use('/api/admin/payments', adminPaymentsQrRoutes);
 app.use('/api/admin/email', adminEmailRoutes);
 app.use('/api/admin/audit', adminAuditRoutes);
+app.use('/api/admin/webhooks', adminWebhooksRoutes);
 app.use('/api/admin', adminFraudRoutes);
 app.use('/api/admin/graphs', graphRoutes);
 app.use('/api/admin/ml', mlRoutes);
@@ -259,15 +294,22 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
-// Global error handler
-app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Unhandled error:', err);
-  const status = err.statusCode || err.status || 500;
-  if (sentryEnabled) {
-    Sentry.captureException(err);
-  }
-  res.status(status).json({ success: false, error: err.message || 'Internal server error' });
-});
+// Global error handler — P0-06: sanitizes all 5xx errors, never leaks
+// err.message / err.stack to clients in production. See
+// ./middleware/error-handler.ts for the full classification rules.
+if (sentryEnabled && Sentry?.captureException) {
+  setSentryCapture((err, ctx) => {
+    Sentry.captureException(err, { extra: ctx });
+  });
+}
+app.use(rateLimitErrorMiddleware);
+app.use(errorHandler);
+
+// P2-15 — Translate rate-limiter Redis failures to HTTP 503 when
+// RATE_LIMIT_FAIL_MODE=closed. Mounted BEFORE errorHandler so it
+// runs first; the 503 wins over the generic 500 from errorHandler.
+// For non-rate-limiter errors, rateLimitErrorMiddleware delegates
+// via next(err) so the global handler still runs.
 
 // ─── Socket.io ──────────────────────────────────────────────
 setupSocketHandlers(io);

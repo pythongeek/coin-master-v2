@@ -14,7 +14,7 @@
 
 import { Router, Request, Response } from 'express';
 import { authMiddleware, AuthPayload } from '../middleware/auth';
-import { apiLimiter } from '../middleware/rate-limit';
+import { apiLimiter } from '../middleware/rate-limiter';
 import { listProviders } from '../services/payment-gateways';
 import { PaymentGateway } from '../services/payment-gateways/types';
 import { createPaymentOrder, listPaymentOrders } from '../services/payment';

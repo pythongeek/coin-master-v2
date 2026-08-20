@@ -134,6 +134,9 @@ HMAC-SHA256(serverSeed, clientSeed + ":" + nonce)
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Ubuntu VPS-এ সম্পূর্ণ ডেপ্লয়মেন্ট গাইড |
 | [`docs/CLOUDFLARE_SETUP.md`](docs/CLOUDFLARE_SETUP.md) | DDoS প্রোটেকশন সেটআপ |
 | [`docs/GITHUB_SETUP.md`](docs/GITHUB_SETUP.md) | GitHub-এ আপলোডের ধাপ |
+| [`docs/DISASTER_RECOVERY.md`](docs/DISASTER_RECOVERY.md) | Disaster-recovery playbook (backup contract, `pgmigrations` rule, restoration procedure) |
+| [`docs/MIGRATION_ROLLBACK_RUNBOOK.md`](docs/MIGRATION_ROLLBACK_RUNBOOK.md) | Step-by-step incident response for rolling back a migration in production |
+| [`docs/MIGRATIONS_CONVENTIONS.md`](docs/MIGRATIONS_CONVENTIONS.md) | Migration naming convention, duplicate-prefix guard, phase grouping |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | অবদান রাখার নিয়মাবলী |
 | [`SECURITY.md`](SECURITY.md) | নিরাপত্তা নীতি |
 

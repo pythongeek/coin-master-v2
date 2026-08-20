@@ -28,6 +28,9 @@ const envSchema = z.object({
   TRON_FULL_NODE: z.string().default('https://api.trongrid.io'),
   TRON_MCP_ENDPOINT: z.string().default('https://mcp.trongrid.io/mcp'),
   TRON_MCP_MAX_RPS: z.string().default('10'),
+  // P2-18 — bounded queue depth for the TronGrid MCP rate-limit
+  // loop. Throws TronMcpQueueFullError when exceeded.
+  TRON_MCP_MAX_QUEUE: z.coerce.number().int().positive().default(100),
   TRON_API_KEY: z.string().optional(),
   USDT_CONTRACT: z.string().default('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'),
   HOT_WALLET_ADDRESS: z.string().min(34).startsWith('T').optional(),
@@ -36,6 +39,16 @@ const envSchema = z.object({
   HOT_WALLET_DAILY_WITHDRAWAL_LIMIT: z.coerce.number().positive().default(100000),
   HOT_WALLET_MIN_BALANCE_USDT: z.coerce.number().positive().default(1000),
   DEPOSIT_ADDRESS_DERIVATION: z.enum(['static', 'per_user']).default('static'),
+
+  // P1-13 — TronGrid endpoint failover. Operators can override
+  // primary/fallback/testnet via env (all optional). The testnet
+  // endpoint is omitted from the production rotation by default to
+  // prevent a stale testnet config from being used as a last-resort
+  // fallback. Set TRONGRID_ALLOW_TESTNET=true to include it.
+  TRONGRID_PRIMARY_ENDPOINT: z.string().default('https://mcp.trongrid.io/mcp'),
+  TRONGRID_FALLBACK_ENDPOINT: z.string().default('https://api.trongrid.io/mcp'),
+  TRONGRID_TESTNET_ENDPOINT: z.string().default('https://api.shasta.trongrid.io/mcp'),
+  TRONGRID_ALLOW_TESTNET: z.coerce.boolean().default(false),
 
   // Rate / deposit settings
   DEFAULT_BUY_SPREAD: z.string().default('0.005'),

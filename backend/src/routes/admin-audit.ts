@@ -1,3 +1,4 @@
+import { NextFunction } from 'express';
 /**
  * =============================================================
  *  ADMIN AUDIT ROUTES - searchable audit log viewer
@@ -124,7 +125,7 @@ function buildWhereClause(f: AuditFilters): { sql: string; params: any[] } {
 //  GET /logs - paginated list
 // =============================================================
 
-router.get('/logs', async (req: Request, res: Response) => {
+router.get('/logs', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = parseFilters(req);
     const where = buildWhereClause(filters);
@@ -166,8 +167,7 @@ router.get('/logs', async (req: Request, res: Response) => {
       },
       logs: dataResult.rows,
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -175,7 +175,7 @@ router.get('/logs', async (req: Request, res: Response) => {
 //  GET /logs/:id - single log detail
 // =============================================================
 
-router.get('/logs/:id', async (req: Request, res: Response) => {
+router.get('/logs/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = String(req.params.id);
     const r = await query(
@@ -190,8 +190,7 @@ router.get('/logs/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Audit log not found' });
     }
     res.json({ success: true, log: r.rows[0] });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -199,7 +198,7 @@ router.get('/logs/:id', async (req: Request, res: Response) => {
 //  POST /logs/:id/notes - admin adds a note (compliance annotation)
 // =============================================================
 
-router.post('/logs/:id/notes', async (req: Request, res: Response) => {
+router.post('/logs/:id/notes', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const id = String(req.params.id);
     const admin = (req as any).user;
@@ -220,8 +219,7 @@ router.post('/logs/:id/notes', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Audit log not found' });
     }
     res.json({ success: true, log: r.rows[0] });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -229,7 +227,7 @@ router.post('/logs/:id/notes', async (req: Request, res: Response) => {
 //  GET /stats - aggregations
 // =============================================================
 
-router.get('/stats', async (req: Request, res: Response) => {
+router.get('/stats', async (req: Request, res: Response, next: NextFunction) => {
   try {
     // Limit stats to "since" param if provided (default last 7d for dashboard view)
     const since = String(req.query.since || '').trim() ||
@@ -279,8 +277,7 @@ router.get('/stats', async (req: Request, res: Response) => {
       topUsers: topUsers.rows,
       timeline: timeline.rows,
     });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -288,7 +285,7 @@ router.get('/stats', async (req: Request, res: Response) => {
 //  GET /users - distinct users for filter dropdowns
 // =============================================================
 
-router.get('/users', async (_req: Request, res: Response) => {
+router.get('/users', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const r = await query(
       `SELECT u.id, u.username, u.email, COUNT(*)::int AS log_count, MAX(a.created_at) AS last_log_at
@@ -299,8 +296,7 @@ router.get('/users', async (_req: Request, res: Response) => {
        ORDER BY log_count DESC LIMIT 200`
     );
     res.json({ success: true, users: r.rows });
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 
@@ -318,7 +314,7 @@ function csvEscape(val: any): string {
   return s;
 }
 
-router.get('/export', async (req: Request, res: Response) => {
+router.get('/export', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const filters = parseFilters(req);
     filters.limit = 10000;  // Hard cap for export
@@ -367,8 +363,7 @@ router.get('/export', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csv);
-  } catch (err: unknown) {
-    res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+  } catch (err: unknown) { next(err);
   }
 });
 

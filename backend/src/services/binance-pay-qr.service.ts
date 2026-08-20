@@ -38,6 +38,12 @@ import { query, withTransaction } from '../config/database';
 import { emitPaymentUpdate } from './payment-socket.service';
 import { coinsToCurrency } from './rate-fetcher';
 import { getChainByKey, loadChainConfigs } from './chain-config.service';
+import { chainKeyEnum } from '../schemas';
+import {
+  QR_ORDER_STATUS,
+  type QrOrderStatus,
+  type QrOrderStatusResponse,
+} from '../constants/deposit';
 
 // ── Config (read at boot, env-overridable) ─────────────────────
 // Config (read at boot, env-overridable)
@@ -100,29 +106,32 @@ export interface InitiateQrDepositResult {
   expiresInSec: number;
 }
 
-export interface QrOrderStatus {
-  orderId: string;
-  status: 'awaiting_payment' | 'detected' | 'verifying' | 'paid' | 'failed' | 'expired';
-  amountUsdt: number;
-  amountCoins: number;
-  memo: string | null;        // null for chains without memo support (TRC20)
-  depositAddress: string;
-  expiresAt: Date;
-  detectedAt?: Date;
-  paidAt?: Date;
-  llmVerdict?: string;
-  llmConfidence?: number;
-  llmReason?: string;
-  binanceLedgerEntry?: unknown;
-  receiptUploaded?: boolean;
-}
+// QrOrderStatus (status union) and QrOrderStatusResponse (full record shape)
+// are now exported from constants/deposit.ts (P2-11).
 
 // ── Initiate QR deposit ────────────────────────────────────────
 export async function initiateQrDeposit(
   input: InitiateQrDepositInput
 ): Promise<InitiateQrDepositResult> {
-  // 1) Resolve chain config (BSC default)
-  const requestedKey = (input.chainKey || 'BSC').toUpperCase();
+  // 1) Resolve chain config (BSC default).
+  //
+  // P2-10 defense-in-depth: validate chainKey against the Zod enum
+  // BEFORE doing any DB work. The route handler already validates
+  // via `validateBody(initiateQrDepositSchema)`, but a future internal
+  // caller could bypass the route and call this service directly.
+  // Validating here ensures the service is safe by construction.
+  //
+  // We normalize the input to uppercase before validating because the
+  // live DB stores BSC, ERC20, TRC20 (uppercase) but the previous code
+  // accepted lowercase inputs and silently matched them.
+  const normalizedChainKey = (input.chainKey ?? 'BSC').toUpperCase();
+  const chainKeyParse = chainKeyEnum.safeParse(normalizedChainKey);
+  if (!chainKeyParse.success) {
+    throw new Error(
+      `Invalid chainKey '${input.chainKey}'. Must be one of BSC, TRC20, ERC20 (case-insensitive).`,
+    );
+  }
+  const requestedKey = chainKeyParse.data;
   const chain = await getChainByKey(requestedKey);
   if (!chain) {
     throw new Error(`Chain '${requestedKey}' is not enabled. Available chains: BSC, TRC20, ERC20 (contact admin to enable).`);
@@ -156,7 +165,7 @@ export async function initiateQrDeposit(
      FROM payment_orders
      WHERE user_id = $1 AND gateway = 'binance_pay_qr'
        AND created_at > NOW() - INTERVAL '24 hours'
-       AND status IN ('awaiting_payment', 'detected', 'verifying', 'paid')`,
+       AND status IN ('${QR_ORDER_STATUS.AWAITING_PAYMENT}', '${QR_ORDER_STATUS.DETECTED}', '${QR_ORDER_STATUS.VERIFYING}', '${QR_ORDER_STATUS.PAID}')`,
     [input.userId]
   );
   const already = dailyTotal.rows[0]?.total || 0;
@@ -230,7 +239,7 @@ export async function initiateQrDeposit(
          ip_address, user_agent, metadata)
        VALUES ($1, 'binance_pay_qr', $2, $2, $3, $4, $5, $6,
                $7, $8, $9, $10, $11,
-               $12, $13, $14, 'awaiting_payment',
+               $12, $13, $14, '${QR_ORDER_STATUS.AWAITING_PAYMENT}',
                $17, $18,
                $15::inet, $16, '{}'::jsonb)`,
       [
@@ -266,7 +275,7 @@ export async function initiateQrDeposit(
   emitPaymentUpdate(input.userId, {
     orderId: merchantOrderId,
     userId: input.userId,
-    status: 'awaiting_payment',
+    status: QR_ORDER_STATUS.AWAITING_PAYMENT,
     amountUsdt: input.amountUsdt,
     amountCoins,
     reason: 'qr_initiated',
@@ -320,7 +329,7 @@ export async function initiateQrDeposit(
 export async function getQrOrderStatus(
   orderId: string,
   userId: string
-): Promise<QrOrderStatus | null> {
+): Promise<QrOrderStatusResponse | null> {
   const r = await query(
     `SELECT merchant_order_id, status, amount_crypto::float8 AS amount_usdt,
             amount_coins::float8 AS amount_coins, qr_memo, receive_address,
@@ -337,16 +346,16 @@ export async function getQrOrderStatus(
 
   // Auto-expire if past expiry and still pending
   if (
-    row.status === 'awaiting_payment' &&
+    row.status === QR_ORDER_STATUS.AWAITING_PAYMENT &&
     new Date(row.expires_at).getTime() < Date.now()
   ) {
     await query(
-      `UPDATE payment_orders SET status = 'expired', status_message = '30-minute QR timer elapsed',
+      `UPDATE payment_orders SET status = '${QR_ORDER_STATUS.EXPIRED}', status_message = '30-minute QR timer elapsed',
               updated_at = NOW()
-       WHERE merchant_order_id = $1 AND status = 'awaiting_payment'`,
+       WHERE merchant_order_id = $1 AND status = '${QR_ORDER_STATUS.AWAITING_PAYMENT}'`,
       [orderId]
     );
-    row.status = 'expired';
+    row.status = QR_ORDER_STATUS.EXPIRED;
   }
 
   return {
@@ -388,10 +397,10 @@ export async function attachReceipt(
   if (orderCheck.rows.length === 0) {
     throw new Error('Order not found');
   }
-  if (orderCheck.rows[0].status === 'paid') {
+  if (orderCheck.rows[0].status === QR_ORDER_STATUS.PAID) {
     throw new Error('Order already credited — receipt not needed');
   }
-  if (orderCheck.rows[0].status === 'expired' || orderCheck.rows[0].status === 'failed') {
+  if (orderCheck.rows[0].status === QR_ORDER_STATUS.EXPIRED || orderCheck.rows[0].status === QR_ORDER_STATUS.FAILED) {
     throw new Error(`Order is ${orderCheck.rows[0].status} — receipt not accepted`);
   }
 
@@ -432,10 +441,10 @@ export async function attachReceipt(
 export async function expireStaleQrOrders(): Promise<number> {
   const r = await query(
     `UPDATE payment_orders
-     SET status = 'expired', status_message = 'QR expired without payment',
+     SET status = '${QR_ORDER_STATUS.EXPIRED}', status_message = 'QR expired without payment',
          updated_at = NOW()
      WHERE gateway = 'binance_pay_qr'
-       AND status = 'awaiting_payment'
+       AND status = '${QR_ORDER_STATUS.AWAITING_PAYMENT}'
        AND expires_at < NOW()
      RETURNING merchant_order_id`
   );
@@ -488,13 +497,13 @@ export async function cancelQrOrder(
 ): Promise<{ cancelled: boolean; reason?: string }> {
   const r = await query(
     `UPDATE payment_orders
-     SET status = 'cancelled',
+     SET status = '${QR_ORDER_STATUS.CANCELLED}',
          status_message = 'Cancelled by user',
          updated_at = NOW()
      WHERE merchant_order_id = $1
        AND user_id = $2
        AND gateway = 'binance_pay_qr'
-       AND status = 'awaiting_payment'
+       AND status = '${QR_ORDER_STATUS.AWAITING_PAYMENT}'
      RETURNING merchant_order_id`,
     [merchantOrderId, userId]
   );

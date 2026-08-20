@@ -9,7 +9,7 @@ on:
 jobs:
   # ─── BACKEND ─────────────────────────────────────────────────
   backend:
-    name: Backend (lint + typecheck + build + test)
+    name: Backend (migrations lint + lint + typecheck + build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -22,13 +22,129 @@ jobs:
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      # P2-01: migration filename linter — fails the build if any two
+      # .sql files share a numeric prefix. Runs BEFORE the build so a
+      # bad PR is rejected at the cheapest possible step.
+      - name: Migration prefix lint
+        run: npm run lint:migrations
+      # P2-03: dependency security audit — fails the build on
+      # vulnerabilities at high severity or worse. `audit-level=high`
+      # mirrors the production `.npmrc` setting.
+      - name: npm audit (high+ severity)
+        run: npm audit --audit-level=high
       - name: Lint
         run: npm run lint
         continue-on-error: true
-      - name: TypeScript
+      # P2-02: strict TypeScript gate. The `tsconfig.json` has
+      # `noEmitOnError: true`, so any type error fails the build.
+      - name: TypeScript (strict, noEmitOnError)
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
+
+  # ─── MIGRATIONS ─────────────────────────────────────────────
+  #
+  # P2-19: apply every migration to a fresh Postgres from scratch.
+  #
+  # Catches the bugs that the prefix-linter and TypeScript gate
+  # cannot:
+  #   - SQL parse errors (typo in a CREATE / ALTER statement)
+  #   - Dependency on a previous migration (e.g. migration N
+  #     references a column added by migration M, but M was renamed
+  #     in PR review and the rename broke the chain)
+  #   - Constraint violations (unique index conflict, FK target
+  #     missing, CHECK clause too strict)
+  #
+  # Strategy: spin up a fresh postgres:16-alpine container, build
+  # the bootstrap SQL (schema.sql + legacy migrations), apply it
+  # via psql (we cannot mount volumes into the GH Actions services
+  # container — see runner-images issue #4445), then run a dry-run,
+  # a real apply, and a second apply (idempotency check).
+  #
+  # The bootstrap script concatenates:
+  #   1. backend/src/db/schema.sql (base tables: users, bets, etc.)
+  #   2. backend/src/db/migrations.sql (audit_log singular,
+  #      fraud_signals)
+  #   3. backend/src/db/migrations-2.3.sql (server_seeds)
+  #   4. backend/src/db/migrations-2.4.sql (wallet_settings,
+  #      rate_cache)
+  #   5. backend/src/db/migrations-binance-redot.sql (payment_*)
+  #   6. backend/src/db/migrations-2.7-bonus-wagering.sql
+  #   7. backend/src/db/migrations-bonus-campaigns.sql
+  #   8. backend/src/db/migrations-reconcile-backfill.sql
+  #
+  # This faithfully recreates the pre-node-pg-migrate state of the
+  # live production DB. Live prod only mounts schema.sql (the
+  # legacy files were applied historically by hand before the
+  # migration CLI existed); for a fresh CI DB we need them all.
+  #
+  # Push a branch with a deliberately-broken migration to verify
+  # the gate fires: e.g. add a `049_broken.sql` with `ALTER TABLE
+  # nonexistent_table ADD COLUMN foo INT;` and the job will fail.
+  migrations:
+    name: Migrations (dry-run + apply on fresh Postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cryptoflip
+          POSTGRES_PASSWORD: cryptoflip
+          POSTGRES_DB: cryptoflip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cryptoflip"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://cryptoflip:***@localhost:5432/cryptoflip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # Build the bootstrap SQL (schema.sql + legacy migrations)
+      # and write it to /tmp/ci-bootstrap.sql.
+      - name: Build CI bootstrap SQL
+        run: bash scripts/build-ci-bootstrap.sh > /tmp/ci-bootstrap.sql
+      # Drop the default empty DB and recreate it from the
+      # bootstrap. GH Actions services don't let us mount a volume
+      # into a service container, so we apply the SQL directly
+      # instead of relying on /docker-entrypoint-initdb.d/.
+      - name: Apply bootstrap SQL
+        run: |
+          PGPASSWORD=*** psql -h localhost -U cryptoflip -d postgres             -c "DROP DATABASE IF EXISTS cryptoflip;"
+          PGPASSWORD=*** psql -h localhost -U cryptoflip -d postgres             -c "CREATE DATABASE cryptoflip OWNER cryptoflip;"
+          PGPASSWORD=*** psql -h localhost -U cryptoflip -d cryptoflip             -v ON_ERROR_STOP=1 -f /tmp/ci-bootstrap.sql
+      # Sanity check: confirm the bootstrap SQL loaded correctly.
+      # If the bootstrap was incomplete, some later table like
+      # 'server_seeds' will be missing and the dry-run below will
+      # show what reference fails.
+      - name: Verify base tables exist after bootstrap
+        run: |
+          PGPASSWORD=*** psql -h localhost -U cryptoflip -d cryptoflip -tAc             "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','audit_log','server_seeds','wallet_settings','rate_cache');"
+      # Dry-run: parses every SQL file and prints the would-be
+      # statements without executing. Cheap first line of defense.
+      - name: node-pg-migrate up --dry-run
+        run: npm run migrate:dry-run
+      # Real apply: runs every migration against the fresh DB.
+      # Catches issues that only surface on execution (constraint
+      # enforcement, sequence creation, transaction semantics).
+      - name: node-pg-migrate up
+        run: npm run migrate
+      # Idempotency check: re-running should be a no-op (every
+      # migration is already applied). Catches bugs where a
+      # migration accidentally re-runs (no IF NOT EXISTS guard).
+      - name: node-pg-migrate up (idempotency)
+        run: npm run migrate
 
   # ─── FRONTEND ────────────────────────────────────────────────
   frontend:

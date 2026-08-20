@@ -23,7 +23,9 @@ import { query, withTransaction } from '../config/database';
 import { createToken, authMiddleware, AuthPayload, JWT_SECRET } from '../middleware/auth';
 import { getAdminSettingBool } from '../services/admin-settings.service';
 import { validateBody } from '../middleware/validation';
-import { authLimiter } from '../middleware/rate-limiter';
+import { authLimiter, registerStrictLimiter } from '../middleware/rate-limiter';
+import { hcaptchaMiddleware } from '../middleware/hcaptcha';
+import { redis } from '../config/redis';
 import {
   registerSchema,
   loginSchema,
@@ -35,6 +37,7 @@ import { isIpWhitelisted } from '../services/ip-whitelist';
 import { isBlockedEmailDomain } from '../config/blocked-email-domains';
 import { getAdminSettingNumber as getAdminSettingInt } from '../services/admin-settings.service';
 import { recordDeviceUse } from '../services/device-fingerprint';
+import { checkFingerprintRegistrationCap } from '../services/fingerprint-fraud-cap';
 import { detectSelfReferral, recordSelfReferralVerdict, SelfReferralCheck } from '../services/affiliate-guard';
 import { alertDeviceCluster, alertSelfReferral } from '../services/fraud-alerts';
 import { recalculateRisk } from '../services/ai-risk-engine';
@@ -44,7 +47,22 @@ const router = Router();
 // ══════════════════════════════════════════════════════════════
 //  POST /api/auth/register — নতুন অ্যাকাউন্ট তৈরি
 // ══════════════════════════════════════════════════════════════
-router.post('/register', authLimiter, validateBody(registerSchema), async (req: Request, res: Response) => {
+//
+//  P1-12 layered defense against automated signup + bonus abuse:
+//   1. `registerStrictLimiter` (3/min/IP) — tight burst limit (Redis Lua bucket).
+//   2. `hcaptchaMiddleware` — fails closed only when HCAPTCHA_SECRET is
+//      set in env; bypasses in dev/test so unit tests can run.
+//   3. `checkFingerprintRegistrationCap` — fails with HTTP 429 when
+//      the device fingerprint already has `cap` accounts in the
+//      last 24h. Caps work per device, complementing the per-IP
+//      `fraud_max_accounts_per_ip_24h` cap already in this handler.
+//
+router.post(
+  '/register',
+  registerStrictLimiter,
+  validateBody(registerSchema),
+  hcaptchaMiddleware,
+  async (req: Request, res: Response) => {
   try {
     const { username, email, password, referralCode, fingerprint } = req.body;
     const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
@@ -163,6 +181,29 @@ router.post('/register', authLimiter, validateBody(registerSchema), async (req: 
         shouldFlag = true;
         fraudDetails.push(`একই আইপি (${ipAddress}) থেকে ২৪ ঘণ্টায় ${ipCount}টি অ্যাকাউন্ট তৈরি করা হয়েছে (ক্যাপ ${ipCap}) — নজরে রাখা হচ্ছে।`);
       }
+    }
+
+    // 3. P1-12 — Per-device fingerprint cap (24h).
+    //    Independent of the IP cap: a botnet rotating IPs still has
+    //    the same browser/device fingerprint, so this caps signup
+    //    regardless of network identity. Admin-tunable via
+    //    admin_settings.fraud_max_accounts_per_fingerprint_24h (default 3).
+    const fpCap = await checkFingerprintRegistrationCap(fingerprint, ipAddress);
+    if (!fpCap.allowed) {
+      await query(
+        `INSERT INTO audit_log (category, action, severity, details)
+         VALUES ('fraud', 'signup.blocked.fingerprint_rate_limit', 'error', $1)`,
+        [JSON.stringify({
+          ip: ipAddress,
+          fingerprint_hash: fpCap.fingerprintHash,
+          count_24h: fpCap.countInLast24h,
+          cap: fpCap.cap,
+        })],
+      );
+      return res.status(429).json({
+        success: false,
+        error: `Too many accounts created from this device recently (${fpCap.countInLast24h} in last 24h, cap ${fpCap.cap}). Please try again later.`,
+      });
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
@@ -372,15 +413,94 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
 });
 
 // ══════════════════════════════════════════════════════════════
-//  POST /api/auth/wallet — MetaMask ওয়ালেট দিয়ে লগইন
+//  GET /api/auth/wallet/challenge — server-issued nonce for wallet login
+// ══════════════════════════════════════════════════════════════
+//
+// P2-22: the previous wallet-login flow had no nonce and the timestamp
+// mismatch meant every signature verification failed. This endpoint
+// issues a single-use nonce that the client must include in the signed
+// message posted to /api/auth/wallet. The nonce is stored in Redis with
+// a 5-minute TTL and is atomically consumed via GETDEL on the login
+// route.
+//
+// Response: { success, nonce, timestamp, expiresInSeconds, messageFormat }
+//
+// `timestamp` is the ISO-8601 string the client MUST embed in the
+// signed message (the buildSignMessage helper on the client uses this).
+// The exact message format is documented in `messageFormat`; the client
+// MUST sign that exact string for the signature to verify.
+const WALLET_CHALLENGE_TTL_SECONDS = 300; // 5 minutes
+
+function generateWalletNonce(): string {
+  // 32 hex chars = 128 bits of entropy. Plenty for a 5-min single-use nonce.
+  return crypto.randomBytes(16).toString('hex');
+}
+
+router.get('/wallet/challenge', authLimiter, async (_req: Request, res: Response) => {
+  try {
+    const nonce = generateWalletNonce();
+    const timestamp = new Date().toISOString();
+    const key = `wallet_challenge:${nonce}`;
+    const ok = await redis.set(key, '1', 'EX', WALLET_CHALLENGE_TTL_SECONDS, 'NX');
+    if (ok !== 'OK') {
+      // crypto.randomBytes collided — astronomically unlikely. Retry once.
+      const retryNonce = generateWalletNonce();
+      await redis.set(`wallet_challenge:${retryNonce}`, '1', 'EX', WALLET_CHALLENGE_TTL_SECONDS, 'NX');
+      return res.json({
+        success: true,
+        nonce: retryNonce,
+        timestamp,
+        expiresInSeconds: WALLET_CHALLENGE_TTL_SECONDS,
+        messageFormat: 'CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: <walletAddress>\nসময়: <timestamp>\nননস: <nonce>',
+      });
+    }
+    return res.json({
+      success: true,
+      nonce,
+      timestamp,
+      expiresInSeconds: WALLET_CHALLENGE_TTL_SECONDS,
+      messageFormat: 'CryptoFlip-এ লগইন করছেন।\n\nওয়ালেট: <walletAddress>\nসময়: <timestamp>\nননস: <nonce>',
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ success: false, error: message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+//  POST /api/auth/wallet — MetaMask/Phantom ওয়ালেট দিয়ে লগইন
 // ══════════════════════════════════════════════════════════════
 router.post('/wallet', authLimiter, validateBody(walletAuthSchema), async (req: Request, res: Response) => {
   try {
-    const { walletAddress, signature, fingerprint } = req.body;
+    const { walletAddress, signature, fingerprint, timestamp, nonce } = req.body;
     const ipAddress = (req.headers?.['x-forwarded-for'] as string || req.ip || '').split(',')[0].trim();
 
+    // P2-22: enforce a 5-minute freshness window on the timestamp. Even
+    // if the nonce itself is valid, a stale timestamp lets attackers
+    // hold onto a captured nonce for longer than intended.
+    const tsMs = Date.parse(timestamp);
+    if (!Number.isFinite(tsMs)) {
+      return res.status(400).json({ success: false, error: 'সময় অবৈধ।' });
+    }
+    const ageMs = Date.now() - tsMs;
+    if (ageMs < -5_000 || ageMs > WALLET_CHALLENGE_TTL_SECONDS * 1000) {
+      return res.status(401).json({ success: false, error: 'সময়সীমা শেষ। আবার চেষ্টা করুন।' });
+    }
+
+    // P2-22: atomically consume the nonce. GETDEL returns the value
+    // and removes the key in one round-trip, so two parallel requests
+    // with the same nonce cannot both succeed.
+    const nonceKey = `wallet_challenge:${nonce}`;
+    const consumed = await redis.getdel(nonceKey);
+    if (consumed === null) {
+      return res.status(401).json({
+        success: false,
+        error: 'ননস অবৈধ বা মেয়াদোত্তীর্ণ। challenge আবার নিন।',
+      });
+    }
+
     const walletType = detectWalletType(walletAddress);
-    const expectedMessage = buildSignMessage(walletAddress);
+    const expectedMessage = buildSignMessage(walletAddress, timestamp, nonce);
 
     if (!verifyWalletSignature(walletAddress, signature, expectedMessage)) {
       return res.status(401).json({ success: false, error: 'ওয়ালেট স্বাক্ষর যাচাই ব্যর্থ হয়েছে।' });

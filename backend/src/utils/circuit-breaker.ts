@@ -129,6 +129,27 @@ export class CircuitBreaker {
     }
   }
 
+  /**
+   * Record an externally-observed success against this circuit.
+   * Public method so callers that have a multi-stage pipeline
+   * (e.g. TronGrid failover) can update the rolling window without
+   * running an action through `execute()`.
+   */
+  public recordSuccessExternal(): void {
+    this.recordSuccess();
+  }
+
+  /**
+   * Record an externally-observed failure against this circuit.
+   * Public counterpart to `recordSuccessExternal()`. Useful when
+   * the caller knows the request failed for a reason the breaker
+   * can't observe directly (e.g. a different layer did the
+   * network call).
+   */
+  public recordFailureExternal(): void {
+    this.recordFailure();
+  }
+
   private cleanRollingWindow(now: number): void {
     this.requests = this.requests.filter(r => now - r.timestamp <= this.rollingWindow);
   }

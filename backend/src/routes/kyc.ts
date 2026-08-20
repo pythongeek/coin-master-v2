@@ -4,25 +4,13 @@ import { query } from '../config/database';
 import { submitKycVerification, getLatestKycSession, listKycSessions, reviewKycSession } from '../services/kyc-session';
 import { getKycSettings, setKycApiKey, setKycSettings, KycSettings } from '../services/kyc-settings';
 import { validateMiniMaxApiKey } from '../services/minimax-client';
-import rateLimit from 'express-rate-limit';
+import { kycVerifyLimiter } from '../middleware/rate-limiter';
 
 const router = Router();
 
 export interface AuthRequest extends Request {
   user?: AuthPayload;
 }
-
-// ═══════════════════════════════════════════════════════════════
-//  Rate limiters
-// ═══════════════════════════════════════════════════════════════
-const verifyLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req: Request) => (req as AuthRequest).user?.userId || req.ip || 'anonymous',
-  handler: (_req, res) => res.status(429).json({ success: false, error: 'Too many KYC attempts. Try again in 1 hour.' }),
-});
 
 // ═══════════════════════════════════════════════════════════════
 //  GET /api/kyc/status — Current user KYC status
@@ -80,7 +68,7 @@ router.get('/status', authMiddleware, async (req: AuthRequest, res: Response) =>
 // ═══════════════════════════════════════════════════════════════
 //  POST /api/kyc/verify — Submit document + selfie for verification
 // ═══════════════════════════════════════════════════════════════
-router.post('/verify', authMiddleware, verifyLimiter, async (req: AuthRequest, res: Response) => {
+router.post('/verify', authMiddleware, kycVerifyLimiter, async (req: AuthRequest, res: Response) => {
   try {
     const userId = req.user?.userId;
     if (!userId) {

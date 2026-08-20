@@ -38,6 +38,40 @@ const RECV_WINDOW_MS = 5000;
 const POLL_INTERVAL_MS = parseInt(process.env.BINANCE_LEDGER_POLL_INTERVAL_MS || '15000', 10);
 const ORDER_LOOKBACK_MS = 24 * 60 * 60 * 1000; // 24h
 
+
+/**
+ * P2-17 — Deposit operating mode.
+ *
+ * Three modes are supported:
+ *   - `binance_api` (default): poll the Binance API for deposit
+ *     matches. Requires `BINANCE_API_KEY` + `BINANCE_API_SECRET`.
+ *   - `receipt_upload`: only the user-supplied receipt upload path
+ *     is accepted; no Binance polling. This is the manual/QA mode.
+ *   - `both`: both polling and receipt upload work in parallel.
+ *
+ * The mode is selected at boot via the `DEPOSIT_MODE` env var. The
+ * monitor logs the active mode on startup. If keys are missing but
+ * the mode requires them, polling is silently disabled (no spam
+ * retries) and the admin health endpoint reports `binance: 'disabled'`.
+ */
+export type DepositMode = 'binance_api' | 'receipt_upload' | 'both';
+
+export const DEPOSIT_MODE: DepositMode = ((): DepositMode => {
+  const raw = (process.env['DEPOSIT_MODE'] || 'binance_api').toLowerCase();
+  if (raw === 'receipt_upload' || raw === 'both') return raw;
+  return 'binance_api';
+})();
+
+export const BINANCE_KEYS_CONFIGURED: boolean = Boolean(
+  BINANCE_API_KEY && BINANCE_API_SECRET,
+);
+
+// Log the active mode once at module load.
+// eslint-disable-next-line no-console
+console.log(
+  `[binance-ledger-monitor] DEPOSIT_MODE=${DEPOSIT_MODE} binance_keys=${BINANCE_KEYS_CONFIGURED ? 'configured' : 'missing'}`,
+);
+
 // Chain cache loaded at boot and refreshed every 5 min
 let chainCache: { configs: Map<string, ChainConfig>; loadedAt: number } | null = null;
 const CHAIN_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -567,3 +601,47 @@ export function stopLedgerMonitorLoop(): void {
     console.log('[binance-ledger-monitor] loop stopped');
   }
 }
+
+
+/**
+ * P2-17 — Health snapshot exposed to `/api/admin/health`.
+ *
+ * Returns:
+ *   - `mode`: the active DEPOSIT_MODE
+ *   - `keysConfigured`: whether BINANCE_API_KEY + SECRET are set
+ *   - `polling`: whether the polling loop is actually running
+ *   - `status`: 'enabled' | 'disabled' | 'misconfigured'
+ *
+ * Operators call this to confirm the deposit pipeline is healthy.
+ * The `status` field collapses the 3 boolean states into a single
+ * value the UI can render as a colored badge.
+ */
+export interface BinanceHealthSnapshot {
+  mode: DepositMode;
+  keysConfigured: boolean;
+  polling: boolean;
+  status: 'enabled' | 'disabled' | 'misconfigured';
+}
+
+export function getBinanceHealth(): BinanceHealthSnapshot {
+  const polling = loopHandle !== null;
+  if (DEPOSIT_MODE === 'binance_api' || DEPOSIT_MODE === 'both') {
+    if (!BINANCE_KEYS_CONFIGURED) {
+      return {
+        mode: DEPOSIT_MODE,
+        keysConfigured: false,
+        polling,
+        status: 'misconfigured',
+      };
+    }
+    return { mode: DEPOSIT_MODE, keysConfigured: true, polling, status: 'enabled' };
+  }
+  // mode === 'receipt_upload' — polling is intentionally off.
+  return {
+    mode: DEPOSIT_MODE,
+    keysConfigured: BINANCE_KEYS_CONFIGURED,
+    polling: false,
+    status: 'disabled',
+  };
+}
+

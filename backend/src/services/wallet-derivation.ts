@@ -4,7 +4,6 @@ import { derivePath } from 'ed25519-hd-key';
 import { Keypair } from '@solana/web3.js';
 import { TronWeb } from 'tronweb';
 import { query } from '../config/database';
-import { redis } from '../config/redis';
 
 // Standard BIP44 derivation paths
 // EVM: m/44'/60'/0'/0/index
@@ -133,11 +132,72 @@ export function deriveTronWallet(mnemonic: string, index: number): DerivedWallet
 }
 
 /**
+ * P1-03: Allocate the next deposit-address index for a given chain
+ * from the persistent Postgres sequence. Returns a positive integer.
+ *
+ * The sequence lives in pg_catalog (created by migration 048), so it
+ * survives:
+ *   - Redis FLUSHALL
+ *   - Backend restarts (sequence state is on disk)
+ *   - Multi-pod concurrent derives (Postgres sequences are atomic
+ *     across the cluster via the WAL)
+ *   - Postgres restart with WAL replay
+ *
+ * Each chain has its own sequence (wallet_address_index_ethereum,
+ * wallet_address_index_solana, wallet_address_index_tron) so the
+ * index spaces are independent.
+ */
+async function allocateAddressIndex(chain: 'ethereum' | 'solana' | 'tron'): Promise<number> {
+  const sequenceName = `wallet_address_index_${chain}`;
+  const result = await query<{ nextval: string }>(
+    `SELECT nextval($1) AS nextval`,
+    [sequenceName],
+  );
+  const n = parseInt(result.rows[0].nextval, 10);
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error(
+      `FATAL: Postgres sequence ${sequenceName} returned an invalid value: ${result.rows[0].nextval}`,
+    );
+  }
+  return n;
+}
+
+/**
+ * P1-03: Pre-flight collision check. Even with a Postgres sequence,
+ *   a defensive SELECT confirms the derived address is not already
+ *   assigned to another user before we INSERT it. The wallets table
+ *   also has a UNIQUE (deposit_address) constraint as a final
+ *   defense-in-depth at the DB layer.
+ *
+ * Returns true if the address is safe to assign, false if a collision
+ * is detected.
+ */
+async function isAddressAvailable(depositAddress: string): Promise<boolean> {
+  const result = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM wallets WHERE deposit_address = $1`,
+    [depositAddress],
+  );
+  return parseInt(result.rows[0].count, 10) === 0;
+}
+
+/**
  * Get or derive a deposit wallet address for a user on a specific chain.
  *
  * Fails closed (throws) on first call if MNEMONIC is unset, empty, or
  * equal to the well-known test mnemonic. Subsequent calls succeed once
  * the mnemonic has been validated once.
+ *
+ * P1-03 contract:
+ *   - The next address index comes from a Postgres sequence
+ *     (`wallet_address_index_<chain>`), NOT a volatile Redis counter.
+ *   - The derived address is verified to not already exist in
+ *     `wallets.deposit_address` before INSERT (collision check).
+ *   - The `wallets_user_id_chain_token_address_key` UNIQUE constraint
+ *     prevents duplicate (user, chain, token) rows.
+ *   - The `wallets_deposit_address_key` UNIQUE constraint prevents
+ *     duplicate addresses across users (DB-level safety net).
+ *   - `wallets.deposit_address_index` is NOT NULL going forward; the
+ *     sequence ensures every new wallet has a deterministic index.
  */
 export async function getOrCreateUserWallet(userId: string, chain: 'ethereum' | 'solana' | 'tron'): Promise<DerivedWallet> {
   // Resolve and validate the operator-supplied mnemonic before doing any
@@ -158,21 +218,49 @@ export async function getOrCreateUserWallet(userId: string, chain: 'ethereum' | 
     };
   }
 
-  // 2. Derive new address
-  // Use Redis to safely increment the address index for this chain to prevent collision
-  const redisKey = `address_index:${chain}`;
-  const index = await redis.incr(redisKey);
+  // 2. Allocate the next index from the persistent Postgres sequence
+  //    (P1-03 — replaces the previous Redis-based counter). Up to
+  //    MAX_COLLISION_RETRIES attempts if the derived address collides
+  //    with an existing wallet (extremely unlikely given the
+  //    2^160 EVM address space, but defense-in-depth).
+  const MAX_COLLISION_RETRIES = 8;
+  let derived: DerivedWallet | null = null;
+  for (let attempt = 0; attempt < MAX_COLLISION_RETRIES; attempt++) {
+    const index = await allocateAddressIndex(chain);
 
-  let derived: DerivedWallet;
-  if (chain === 'ethereum') {
-    derived = deriveEVMWallet(MNEMONIC, index);
-  } else if (chain === 'solana') {
-    derived = await deriveSolanaWallet(MNEMONIC, index);
-  } else if (chain === 'tron') {
-    derived = deriveTronWallet(MNEMONIC, index);
-  } else {
-    throw new Error(`Unsupported chain: ${chain}`);
+    let candidate: DerivedWallet;
+    if (chain === 'ethereum') {
+      candidate = deriveEVMWallet(MNEMONIC, index);
+    } else if (chain === 'solana') {
+      candidate = await deriveSolanaWallet(MNEMONIC, index);
+    } else if (chain === 'tron') {
+      candidate = deriveTronWallet(MNEMONIC, index);
+    } else {
+      throw new Error(`Unsupported chain: ${chain}`);
+    }
+
+    // Pre-flight collision check before INSERT. The DB has a UNIQUE
+    // constraint too, but catching it here lets us retry with a new
+    // index instead of failing the user's wallet creation.
+    const available = await isAddressAvailable(candidate.address);
+    if (available) {
+      derived = candidate;
+      break;
+    }
+
+    // Collision detected — log and retry with the next sequence value.
+    console.warn(
+      `[wallet-derivation] address collision on chain=${chain} index=${index} ` +
+      `address=${candidate.address} — retrying with next sequence value`,
+    );
   }
+  if (!derived) {
+    throw new Error(
+      `FATAL: ${MAX_COLLISION_RETRIES} consecutive address collisions on chain=${chain}. ` +
+      `Investigate wallets.deposit_address uniqueness.`,
+    );
+  }
+  const finalDerived = derived as DerivedWallet;
 
   // 3. Save native and stablecoin wallets to database
   if (chain === 'ethereum') {
@@ -181,21 +269,21 @@ export async function getOrCreateUserWallet(userId: string, chain: 'ethereum' | 
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'ETH', $3, $4, NULL)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index]
+      [userId, chain, finalDerived.address, finalDerived.index]
     );
     // ERC20 USDT
     await query(
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'USDT', $3, $4, $5)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index, USDT_CONTRACT_EVM]
+      [userId, chain, finalDerived.address, finalDerived.index, USDT_CONTRACT_EVM]
     );
     // ERC20 USDC
     await query(
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'USDC', $3, $4, $5)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index, USDC_CONTRACT_EVM]
+      [userId, chain, finalDerived.address, finalDerived.index, USDC_CONTRACT_EVM]
     );
   } else if (chain === 'solana') {
     // Native SOL
@@ -203,21 +291,21 @@ export async function getOrCreateUserWallet(userId: string, chain: 'ethereum' | 
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'SOL', $3, $4, NULL)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index]
+      [userId, chain, finalDerived.address, finalDerived.index]
     );
     // SPL USDT
     await query(
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'USDT', $3, $4, $5)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index, USDT_MINT_SOLANA]
+      [userId, chain, finalDerived.address, finalDerived.index, USDT_MINT_SOLANA]
     );
     // SPL USDC
     await query(
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'USDC', $3, $4, $5)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index, USDC_MINT_SOLANA]
+      [userId, chain, finalDerived.address, finalDerived.index, USDC_MINT_SOLANA]
     );
   } else if (chain === 'tron') {
     // Native TRX
@@ -225,16 +313,16 @@ export async function getOrCreateUserWallet(userId: string, chain: 'ethereum' | 
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'TRX', $3, $4, NULL)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index]
+      [userId, chain, finalDerived.address, finalDerived.index]
     );
     // TRC20 USDT
     await query(
       `INSERT INTO wallets (user_id, chain, token_symbol, deposit_address, deposit_address_index, token_address)
        VALUES ($1, $2, 'USDT', $3, $4, $5)
        ON CONFLICT (user_id, chain, token_address) DO UPDATE SET deposit_address = $3`,
-      [userId, chain, derived.address, derived.index, USDT_CONTRACT_TRON]
+      [userId, chain, finalDerived.address, finalDerived.index, USDT_CONTRACT_TRON]
     );
   }
 
-  return derived;
+  return finalDerived;
 }

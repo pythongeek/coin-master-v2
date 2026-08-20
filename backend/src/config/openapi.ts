@@ -1,23 +1,57 @@
 /**
- * OpenAPI 3.1 spec for the CryptoFlip public API.
+ * OpenAPI 3.1 spec for the CryptoFlip API.
  *
- * The spec is intentionally hand-curated and grouped by route file so
- * any future endpoint addition is obvious. `swagger-ui-express` reads
- * the JSON and renders the docs at /api/docs.
+ * P2-07 — Two spec exports:
+ *   - `publicOpenApiSpec` — served at `/api/docs` and `/api/openapi.json`.
+ *     Excludes every path tagged with an admin tag so a partner
+ *     integrator (or an attacker scraping the public docs) cannot
+ *     enumerate operator endpoints. Admin endpoints are still REAL
+ *     (gated by the secret-path gateway per P1-10) — they are just
+ *     not advertised in the public spec.
+ *   - `adminOpenApiSpec` — served at `/api/admin/docs` behind admin
+ *     JWT authentication. Contains the FULL spec (every path + every
+ *     tag) for operator reference and CI contract testing.
+ *
+ * Implementation
+ * ───────────────
+ * The single source of truth is the `rawSpec` object below. Filtering
+ * is done at module-load by:
+ *   1. Identifying operations whose `tags` array contains an admin
+ *      tag (Admin, Admin — Withdrawals, Admin — Health, Admin — Bonuses).
+ *   2. Removing those operations from the public spec's `paths`.
+ *   3. Removing those tags from the public spec's `tags` array.
+ *
+ * The admin spec is the raw spec unchanged.
+ *
+ * Adding a new path that should be admin-only:
+ *   1. Add the path to `rawSpec.paths` with one of the admin tags.
+ *   2. Done — the path is automatically excluded from publicOpenApiSpec.
+ *
+ * Adding a new public path:
+ *   1. Add the path to `rawSpec.paths` with a non-admin tag.
+ *   2. Done.
+ *
+ * Adding a new admin tag:
+ *   1. Add the tag to `rawSpec.tags` AND to `ADMIN_TAGS` below.
+ *   2. Add a comment in `BACKEND_PROD_READINESS.md` P2-07.
  */
 
 const PUBLIC_APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://crazycoin.duckdns.org';
 
-export const openApiSpec = {
+/**
+ * The complete OpenAPI 3.1 spec. Source of truth for both the public
+ * and admin exports. The `as const` ensures the deep type survives
+ * compilation so downstream `tsc` callers see literal types.
+ */
+const rawSpec = {
   openapi: '3.1.0',
   info: {
     title: 'CryptoFlip API',
     version: '1.0.0',
     description:
-      'Public HTTP API for the CryptoFlip provably-fair coin-flip platform. ' +
-      'All `/api/admin/*` and `/api/admin/withdrawals/*` routes require an ' +
-      'authenticated user with the matching admin role and 2FA enabled. ' +
-      'Most mutations are rate-limited (see per-route headers).',
+      'HTTP API for the CryptoFlip provably-fair coin-flip platform. ' +
+      'This is the operator-facing full spec. The public spec at ' +
+      '`/api/openapi.json` excludes every `/api/admin/*` path.',
     contact: { name: 'CryptoFlip', url: PUBLIC_APP_URL },
     license: { name: 'Proprietary' },
   },
@@ -522,3 +556,114 @@ export const openApiSpec = {
     },
   },
 } as const;
+
+/**
+ * Tags whose operations are filtered out of the public spec.
+ * Adding a new admin tag requires both this list AND the `tags`
+ * entry in `rawSpec` to be updated.
+ */
+export const ADMIN_TAGS: ReadonlyArray<string> = [
+  'Admin',
+  'Admin — Withdrawals',
+  'Admin — Health',
+  'Admin — Bonuses',
+];
+
+const ADMIN_TAGS_SET: Set<string> = new Set(ADMIN_TAGS);
+
+/**
+ * Helper: does an operation object (e.g. rawSpec.paths['/x'].get) have
+ * any admin tag?
+ */
+function isAdminOperation(op: any): boolean {
+  if (!op || typeof op !== 'object') return false;
+  const tags = op.tags;
+  if (!Array.isArray(tags)) return false;
+  return tags.some((t) => ADMIN_TAGS_SET.has(t));
+}
+
+/**
+ * Build the public OpenAPI spec by filtering out admin paths and
+ * admin tags. Used at module-load time. The deep clone via JSON
+ * round-trip is intentional: we MUST NOT mutate `rawSpec` (the
+ * `adminOpenApiSpec` export shares it).
+ */
+function buildPublicSpec(): any {
+  const spec = JSON.parse(JSON.stringify(rawSpec));
+
+  // Filter out admin paths.
+  for (const path of Object.keys(spec.paths)) {
+    const pathObj = spec.paths[path];
+    if (!pathObj || typeof pathObj !== 'object') continue;
+    for (const method of Object.keys(pathObj)) {
+      // Standard OpenAPI methods.
+      if (
+        method === 'get' ||
+        method === 'post' ||
+        method === 'put' ||
+        method === 'patch' ||
+        method === 'delete' ||
+        method === 'head' ||
+        method === 'options'
+      ) {
+        if (isAdminOperation(pathObj[method])) {
+          delete pathObj[method];
+        }
+      }
+    }
+    // If the path has no methods left, drop the path entirely.
+    if (Object.keys(pathObj).length === 0) {
+      delete spec.paths[path];
+    }
+  }
+
+  // Filter out admin tags.
+  if (Array.isArray(spec.tags)) {
+    spec.tags = spec.tags.filter(
+      (t: { name?: string }) => !t.name || !ADMIN_TAGS_SET.has(t.name),
+    );
+  }
+
+  // Update the info.description to reflect the public subset.
+  spec.info = {
+    ...spec.info,
+    description:
+      'Public HTTP API for the CryptoFlip provably-fair coin-flip platform. ' +
+      'This is the PARTNER-FACING public spec — admin endpoints are ' +
+      'intentionally excluded. Operators can see the full spec at ' +
+      '`/api/admin/docs` (JWT-gated). All mutations are rate-limited.',
+  };
+
+  return spec;
+}
+
+/**
+ * Public spec — served at `/api/docs` and `/api/openapi.json`.
+ * Excludes every path tagged with an admin tag.
+ */
+export const publicOpenApiSpec = buildPublicSpec();
+
+/**
+ * Admin spec — served at `/api/admin/docs` behind admin JWT
+ * authentication. Contains every path and every tag.
+ */
+export const adminOpenApiSpec = JSON.parse(JSON.stringify(rawSpec));
+
+/**
+ * @deprecated Use `publicOpenApiSpec` for the public endpoint and
+ * `adminOpenApiSpec` for the admin endpoint. The single-spec
+ * `openApiSpec` export is kept for backward compatibility with the
+ * existing /api/docs mount; it is the public subset.
+ */
+export const openApiSpec = publicOpenApiSpec;
+
+/**
+ * Helper exposed for tests: how many admin paths are filtered out?
+ * Used by the test in `backend/src/test/openapi-filter.test.ts` to
+ * verify the public spec excludes every admin-tagged path.
+ */
+export function isAdminPath(path: string): boolean {
+  const pathObj = (rawSpec.paths as any)[path];
+  if (!pathObj) return false;
+  return Object.values(pathObj).some((op: any) => isAdminOperation(op));
+}

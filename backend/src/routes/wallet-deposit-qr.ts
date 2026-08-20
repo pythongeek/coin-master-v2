@@ -21,7 +21,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { existsSync, createReadStream } from 'fs';
 import { authMiddleware, AuthPayload } from '../middleware/auth';
-import { apiLimiter } from '../middleware/rate-limit';
+import { apiLimiter } from '../middleware/rate-limiter';
 import { validateBody } from '../middleware/validation';
 import { initiateQrDepositSchema, qrReceiptUploadSchema } from '../schemas';
 import {

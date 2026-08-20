@@ -1,3 +1,17 @@
+# P1-06: The /metrics endpoint is IP-allowlisted (see
+# METRICS_IP_ALLOWLIST in .env). The default allowlist is
+# loopback + RFC1918 private ranges. The Prometheus scraper
+# runs in the same Docker network as the backend, so the
+# source IP of scrape requests is in 172.17.0.0/16 (docker
+# bridge default). Add 172.17.0.0/16 (or a more specific
+# scraper IP) to METRICS_IP_ALLOWLIST to allow scraping.
+#
+# If the operator wants to scrape from outside the Docker
+# network, the operator must add that source IP to
+# METRICS_IP_ALLOWLIST. The backend returns 404 for all
+# unauthorized scrapes (deliberately indistinguishable
+# from a missing endpoint).
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s

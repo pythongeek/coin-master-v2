@@ -1,429 +1,152 @@
 /**
  * ═══════════════════════════════════════════════════════════════
- *  ADMIN CONFIG SERVICE — এডমিনের সম্পূর্ণ কন্ট্রোল প্যানেল
- * ═══════════════════════════════════════════════════════════════
+ *  ADMIN CONFIG — barrel re-exporter for the 4 domain modules
+ *  (P1-11 refactor).
  *
- *  এখানে গেমের সব গুরুত্বপূর্ণ সেটিং এডমিন লাইভ পরিবর্তন করতে পারবে।
- *  পরিবর্তন হলে সাথে সাথে সব নতুন গেমে প্রভাব পড়বে।
+ *  Before P1-11 this file was a 547-line monolith. It has been
+ *  split into 4 domain modules for maintainability:
  *
- *  ডিফল্ট সেটিং:
- *  ──────────────────────────────────────────────────────────────
- *  হাউজ এজ: ২% (শিল্পের স্ট্যান্ডার্ড, ইউজারবান্ধব)
- *  মিন বেট: $০.০১ (যেকেউ খেলতে পারে)
- *  ম্যাক্স বেট: $১০০০ (রিস্ক কন্ট্রোল)
- *  ক্রিপ্টো রেইন ট্রিগার: ৫ জয়ের ধারাবাহিকতায়
+ *    - admin-game-config.ts    — game core, betting limits, jackpot,
+ *                                payout math, `getPayoutMultiplier`,
+ *                                `validateBetAmount`
+ *    - admin-bonus-config.ts   — bonus, scatter, streak, lightning,
+ *                                daily wheel, leaderboard, rakeback,
+ *                                challenges
+ *    - admin-fraud-config.ts   — generic KYC/risk threshold
+ *                                persistence (`getRawSetting`,
+ *                                `setRawSetting`)
+ *    - admin-payments-config.ts — withdrawal limits
+ *
+ *  This barrel file:
+ *    1. Re-exports the `GameConfig` interface and the per-domain
+ *       helpers from each module.
+ *    2. Composes `DEFAULT_CONFIG` by merging the per-domain default
+ *       slices — order: GAME → BONUS → PAYMENTS, with later slices
+ *       winning (none overlap in practice).
+ *    3. Composes `CONFIG_LABELS` by merging the per-domain label
+ *       slices.
+ *    4. Hosts the DB I/O functions: `getConfig`, `updateConfig`,
+ *       `updateAllConfig`, `resetToDefaults`.
+ *
+ *  Backward compatibility: every public symbol that the original
+ *  monolith exported is still exported from this file with the
+ *  same name. The 17 importers (1 wildcard + 16 named) continue to
+ *  work without changes.
+ *
+ *  See `BACKEND_PROD_READINESS.md` [P1-11] for the full audit
+ *  history and the per-module line-count breakdown.
  * ═══════════════════════════════════════════════════════════════
  */
 
 import { query } from '../config/database';
 
-// ── সব সেটিংয়ের ধরন নির্ধারণ ─────────────────────────────────
-export interface GameConfig {
-  // ── হাউজ এজ সেটিং ──────────────────────────────────────────
-  /** হাউজ এজ পার্সেন্ট (০.০১% - ৫০%)
-   *  উদাহরণ: ২ = ২% → ইউজার ১০০ বেট করলে জিতলে ১৯৬ পাবে (লাভ ৯৬) */
-  houseEdgePercent: number;
-  /** সর্বোচ্চ জয়ের সীমা প্রতি বেট */
-  maxWinAmount: number;
+import {
+  GameConfig,
+  GAME_CONFIG_LABELS,
+  GAME_DEFAULT_CONFIG,
+  getPayoutMultiplier,
+  validateBetAmount,
+} from './admin-game-config';
 
-  // ── বেট লিমিট সেটিং ─────────────────────────────────────────
-  /** সর্বনিম্ন বেট পরিমাণ */
-  minBetAmount: number;
-  /** সর্বোচ্চ বেট পরিমাণ (রিস্ক কন্ট্রোলের জন্য) */
-  maxBetAmount: number;
-  /** একজন ইউজার একসাথে কতটি বেট রাখতে পারবে */
-  maxConcurrentBets: number;
+import {
+  BONUS_CONFIG_LABELS,
+  BONUS_DEFAULT_CONFIG,
+} from './admin-bonus-config';
 
-  // ── ক্রিপ্টো রেইন সেটিং ──────────────────────────────────────
-  /** কতটি টানা জয়ের পর রেইন ট্রিগার হবে */
-  rainTriggerStreak: number;
-  /** প্রতিদিন সর্বোচ্চ কত ডলার রেইন হিসেবে বিতরণ হবে */
-  rainBudgetDailyUsd: number;
-  /** একজন ইউজার রেইন থেকে সর্বোচ্চ কত ডলার ক্লেইম করতে পারবে */
-  rainClaimPerUserUsd: number;
-  /** রেইন ইভেন্ট কত সেকেন্ড স্থায়ী হবে */
-  rainDurationSeconds: number;
-  /** রেইন একটিভ আছে কিনা (এডমিন বন্ধ করতে পারবে) */
-  rainEnabled: boolean;
+import {
+  getRawSetting,
+  setRawSetting,
+} from './admin-fraud-config';
 
-  // ── স্কোয়াড ফ্লিপ সেটিং ──────────────────────────────────────
-  /** স্কোয়াডে সর্বোচ্চ কতজন সদস্য */
-  maxSquadSize: number;
-  /** স্কোয়াড ফিচার একটিভ আছে কিনা */
-  squadEnabled: boolean;
-  /** স্কোয়াড বেটের জন্য আলাদা হাউজ এজ (%) */
-  squadHouseEdgePercent: number;
+import {
+  PAYMENTS_CONFIG_LABELS,
+  PAYMENTS_DEFAULT_CONFIG,
+} from './admin-payments-config';
 
-  // ── গেম স্পিড সেটিং ─────────────────────────────────────────
-  /** কয়েন স্পিন অ্যানিমেশনের সময় (মিলিসেকেন্ড) */
-  coinSpinDurationMs: number;
-  /** দুটি গেমের মধ্যে বিরতি (মিলিসেকেন্ড) */
-  cooldownBetweenGamesMs: number;
+// Re-export all per-domain symbols so that `import { getConfig } from
+// '../services/admin-config'` continues to resolve exactly as it did
+// before the refactor. The wildcard import in `test/leaderboards.test.ts`
+// relies on this — `(adminConfigModule as any).getConfig = async () => …`
+// must still work.
+export {
+  GameConfig,
+  getPayoutMultiplier,
+  validateBetAmount,
+  getRawSetting,
+  setRawSetting,
+};
 
-  // ── সিড রোটেশন সেটিং ──────────────────────────────────────────
-  /** কত গেমের পর সার্ভার সিড স্বয়ংক্রিয়ভাবে পরিবর্তন হবে */
-  seedRotationAfterGames: number;
-
-  maintenanceMode: boolean;
-  /** বন্ধ থাকলে ইউজারদের কী বার্তা দেখাবে */
-  maintenanceMessage: string;
-
-  // ── প্রোগ্রেসিভ জ্যাকপট সেটিং ──────────────────────────────
-  /** প্রোগ্রেসিভ জ্যাকপট চালু আছে কিনা */
-  jackpotEnabled: boolean;
-  /** জ্যাকপটের জন্য সর্বনিম্ন বেট পরিমাণ */
-  jackpotMinBet: number;
-  /** বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে */
-  jackpotContributionPercent: number;
-  /** জ্যাকপট জয়ের সম্ভাবনা (১/X) */
-  jackpotHitChance: number;
-  /** জ্যাকপট শুরুর পুলের পরিমাণ */
-  jackpotStartPool: number;
-  /** জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থ */
-  jackpotPool: number;
-
-  // ── বোনাস ও wagering সেটিং ─────────────────────────────────
-  /** স্বাগতম বোনাসের পরিমাণ (কয়েন) — এডমিন যেকোনো সময় বদলাতে পারবে */
-  bonusWelcomeAmount: number;
-  /** বোনাস wagering multiplier (বোনাস × N = wagering required) */
-  bonusWagerMultiplier: number;
-  /** বোনাস উইথড্র সর্বোচ্চ (বোনাস × N) */
-  bonusMaxWithdrawalMultiplier: number;
-  /** বোনাস expire হতে কত দিন */
-  bonusExpiryDays: number;
-  /** উইথড্র করতে বোনাসের শতকরা কত % deposit করতে হবে */
-  bonusMinDepositToWithdrawPct: number;
-  /** বোনাস পাওয়ার পর কত ঘণ্টা cooldown */
-  bonusCooldownHours: number;
-  /** Deposit match bonus (% of deposit, 0 = disabled) */
-  bonusDepositMatchPct: number;
-  /** Max deposit match bonus per deposit (coins) */
-  bonusDepositMatchCap: number;
-  /** Default cashback % of net losses */
-  bonusCashbackPct: number;
-  /** Default monthly VIP tier bonus amount */
-  bonusVipMonthlyAmount: number;
-  /** Default number of free spins per welcome campaign */
-  bonusFreeSpinCount: number;
-  /** Default bet value per free spin (coins) */
-  bonusFreeSpinValue: number;
-
-  // ── স্ক্যাটার বোনাস সেটিং ─────────────────────────────────────
-  /** স্ক্যাটার বোনাস ফিচার চালু আছে কিনা */
-  scatterEnabled: boolean;
-  /** স্ক্যাটার জয়ের সম্ভাবনা (১/X) */
-  scatterChance: number;
-  /** স্ক্যাটার পেআউটের সর্বনিম্ন মাল্টিপ্লায়ার */
-  scatterMinMultiplier: number;
-  /** স্ক্যাটার পেআউটের সর্বোচ্চ মাল্টিপ্লায়ার */
-  scatterMaxMultiplier: number;
-  /** স্ক্যাটার বোনাসের স্থির বেট মান */
-  scatterStakeUsd: number;
-
-  // ── স্ট্রিক ল্যাডার বোনাস সেটিং ─────────────────────────────
-  /** স্ট্রিক ল্যাডার বোনাস ফিচার চালু আছে কিনা */
-  streakEnabled: boolean;
-  /** স্ট্রিক বোনাসের দৈনিক বাজেট */
-  streakBudgetDailyUsd: number;
-  /** রাঙ ১-এ জয়ের সংখ্যা */
-  streakRung1Wins: number;
-  /** রাঙ ১-এ মাল্টিপ্লায়ার */
-  streakRung1Multiplier: number;
-  /** রাঙ ২-এ জয়ের সংখ্যা */
-  streakRung2Wins: number;
-  /** রাঙ ২-এ মাল্টিপ্লায়ার */
-  streakRung2Multiplier: number;
-  /** রাঙ ৩-এ জয়ের সংখ্যা */
-  streakRung3Wins: number;
-  /** রাঙ ৩-এ মাল্টিপ্লায়ার */
-  streakRung3Multiplier: number;
-  /** রাঙ ৪-এ জয়ের সংখ্যা */
-  streakRung4Wins: number;
-  /** রাঙ ৪-এ মাল্টিপ্লায়ার */
-  streakRung4Multiplier: number;
-  /** রাঙ ৫-এ জয়ের সংখ্যা */
-  streakRung5Wins: number;
-  /** রাঙ ৫-এ মাল্টিপ্লায়ার */
-  streakRung5Multiplier: number;
-
-  /** Min withdrawal amount (coins) */
-  withdrawalMinCoins: number;
-  /** Max withdrawal amount per request (coins) */
-  withdrawalMaxCoins: number;
-  /** Auto-approve withdrawals below this (0 = always manual) */
-  withdrawalAutoApproveThreshold: number;
-  /** Daily withdrawal limit per user (coins) */
-  dailyWithdrawalLimitCoins: number;
-
-  // লাইটনিং / মিস্টারি মাল্টিপ্লায়ার
-  lightningEnabled: boolean;
-  lightningChance: number;
-  lightningMinMultiplier: number;
-  lightningMaxMultiplier: number;
-  lightningDurationSeconds: number;
-  lightningBudgetDailyUsd: number;
-
-  // দৈনিক লগইন হুইল
-  dailyWheelEnabled: boolean;
-  dailyWheelPrizes: { label: string; value: number; type: 'coins'; weight: number }[];
-  dailyWheelCooldownHours: number;
-
-  // লিডারবোর্ড / টুর্নামেন্ট
-  leaderboardEnabled: boolean;
-  leaderboardPrizePool: number;
-  leaderboardPrizes: { rank: number; prize: number }[];
-  leaderboardResetHours: number;
-
-  // রেকব্যাক / ক্যাশব্যাক
-  rakebackEnabled: boolean;
-  rakebackPercent: number;           // percentage of total wager returned
-  rakebackMinClaimCoins: number;    // min claimable amount
-  rakebackVipMultiplier: number;    // VIP multiplier on base rakeback
-
-  // চ্যালেঞ্জ / মিশন
-  challengesEnabled: boolean;
-  dailyChallenges: { id: string; label: string; target: number; reward: number; metric: 'wager' | 'wins' | 'bets' | 'streak' }[];
-}
-
-
-// ═══════════════════════════════════════════════════════════════
-//  DEFAULT CONFIG — কারখানা থেকে বের হওয়া ডিফল্ট সেটিং
-//  এডমিন না বদলালে এই মানগুলোই ব্যবহার হবে
-// ═══════════════════════════════════════════════════════════════
+// ── Composed `DEFAULT_CONFIG` ──────────────────────────────────
+/**
+ * Single source of truth for the default admin configuration.
+ * Composed by merging GAME + BONUS + PAYMENTS default slices. Each
+ * slice is `Partial<GameConfig>` so TypeScript enforces that no key
+ * is misspelled; the runtime merge produces a fully-typed
+ * `GameConfig` object.
+ *
+ * The spread order matters only for the rare case of an overlapping
+ * key (none today). We put GAME first because it's the largest
+ * slice; later spreads win.
+ */
 export const DEFAULT_CONFIG: GameConfig = {
-  // হাউজ এজ: ২% — শিল্পের সাথে প্রতিযোগিতামূলক
-  houseEdgePercent: 2.0,
+  ...(GAME_DEFAULT_CONFIG as GameConfig),
+  ...(BONUS_DEFAULT_CONFIG as GameConfig),
+  ...(PAYMENTS_DEFAULT_CONFIG as GameConfig),
+} as GameConfig;
 
-  // বেট লিমিট
-  minBetAmount: 0.01,
-  maxBetAmount: 1000.0,
-  maxWinAmount: 50000.0,
-  maxConcurrentBets: 1,
+// ── Composed `CONFIG_LABELS` ───────────────────────────────────
+/**
+ * UI label / description / type metadata for every `GameConfig` key.
+ * Composed by merging the per-domain label slices. Keys are unique
+ * across slices; the merge is safe.
+ */
+export const CONFIG_LABELS: Record<keyof GameConfig, {
+  label: string;
+  description: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  type: 'number' | 'boolean' | 'string';
+  category: string;
+}> = {
+  ...(GAME_CONFIG_LABELS as Record<keyof GameConfig, {
+    label: string;
+    description: string;
+    unit?: string;
+    min?: number;
+    max?: number;
+    type: 'number' | 'boolean' | 'string';
+    category: string;
+  }>),
+  ...(BONUS_CONFIG_LABELS as Record<keyof GameConfig, {
+    label: string;
+    description: string;
+    unit?: string;
+    min?: number;
+    max?: number;
+    type: 'number' | 'boolean' | 'string';
+    category: string;
+  }>),
+  ...(PAYMENTS_CONFIG_LABELS as Record<keyof GameConfig, {
+    label: string;
+    description: string;
+    unit?: string;
+    min?: number;
+    max?: number;
+    type: 'number' | 'boolean' | 'string';
+    category: string;
+  }>),
+} as Record<keyof GameConfig, {
+  label: string;
+  description: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  type: 'number' | 'boolean' | 'string';
+  category: string;
+}>;
 
-  // ক্রিপ্টো রেইন
-  rainTriggerStreak: 5,
-  rainBudgetDailyUsd: 50.0,
-  rainClaimPerUserUsd: 0.10,
-  rainDurationSeconds: 60,
-  rainEnabled: true,
-
-  // স্কোয়াড ফ্লিপ
-  maxSquadSize: 5,
-  squadEnabled: true,
-  squadHouseEdgePercent: 1.0,  // স্কোয়াডে কম ফি — ইউজার আকর্ষণের জন্য
-
-  // গেম স্পিড
-  coinSpinDurationMs: 3000,     // ৩ সেকেন্ড স্পিন — টেনশন বিল্ড-আপ
-  cooldownBetweenGamesMs: 1500, // ১.৫ সেকেন্ড বিরতি
-
-  // সিড রোটেশন
-  seedRotationAfterGames: 100,  // ১০০ গেমের পর নতুন সিড
-
-  // মেইনটেন্যান্স
-  maintenanceMode: false,
-  maintenanceMessage: 'সাইটটি আপগ্রেডের জন্য সাময়িকভাবে বন্ধ আছে। শীঘ্রই আসছে!',
-
-  // প্রোগ্রেসিভ জ্যাকপট
-  jackpotEnabled: true,
-  jackpotMinBet: 1.0,
-  jackpotContributionPercent: 1.0,
-  jackpotHitChance: 10000,
-  jackpotStartPool: 10.0,
-  jackpotPool: 10.0,
-
-  // বোনাস ও wagering — এডমিন PATCH /api/admin/config দিয়ে লাইভ বদলাতে পারবে
-  bonusWelcomeAmount: 10.0,
-  bonusWagerMultiplier: 30.0,
-  bonusMaxWithdrawalMultiplier: 3.0,
-  bonusExpiryDays: 7.0,
-  bonusMinDepositToWithdrawPct: 50.0,
-  bonusCooldownHours: 24.0,
-  bonusDepositMatchPct: 50.0,
-  bonusDepositMatchCap: 100.0,
-  bonusCashbackPct: 10.0,
-  bonusVipMonthlyAmount: 25.0,
-  bonusFreeSpinCount: 5.0,
-  bonusFreeSpinValue: 1.0,
-
-  // স্ক্যাটার বোনাস
-  scatterEnabled: false,
-  scatterChance: 500,
-  scatterMinMultiplier: 0.5,
-  scatterMaxMultiplier: 20,
-  scatterStakeUsd: 1.0,
-
-  // স্ট্রিক ল্যাডার বোনাস
-  streakEnabled: false,
-  streakBudgetDailyUsd: 100.0,
-  streakRung1Wins: 1,
-  streakRung1Multiplier: 1.2,
-  streakRung2Wins: 2,
-  streakRung2Multiplier: 1.5,
-  streakRung3Wins: 3,
-  streakRung3Multiplier: 2.0,
-  streakRung4Wins: 4,
-  streakRung4Multiplier: 3.0,
-  streakRung5Wins: 5,
-  streakRung5Multiplier: 5.0,
-
-  // লাইটনিং / মিস্টারি মাল্টিপ্লায়ার রাউন্ড
-  lightningEnabled: false,
-  lightningChance: 50,
-  lightningMinMultiplier: 2.0,
-  lightningMaxMultiplier: 10.0,
-  lightningDurationSeconds: 5.0,
-  lightningBudgetDailyUsd: 100.0,
-
-  // দৈনিক লগইন হুইল
-  dailyWheelEnabled: true,
-  dailyWheelPrizes: [
-    { label: '0.5 Coins', value: 0.5, type: 'coins', weight: 35 },
-    { label: '1 Coin', value: 1, type: 'coins', weight: 25 },
-    { label: '2 Coins', value: 2, type: 'coins', weight: 15 },
-    { label: '3 Coins', value: 3, type: 'coins', weight: 10 },
-    { label: '5 Coins', value: 5, type: 'coins', weight: 8 },
-    { label: '10 Coins', value: 10, type: 'coins', weight: 5 },
-    { label: '25 Coins', value: 25, type: 'coins', weight: 1.5 },
-    { label: '50 Coins', value: 50, type: 'coins', weight: 0.5 },
-  ],
-  dailyWheelCooldownHours: 24,
-
-  // লিডারবোর্ড / টুর্নামেন্ট
-  leaderboardEnabled: true,
-  leaderboardPrizePool: 100,
-  leaderboardPrizes: [
-    { rank: 1, prize: 30 },
-    { rank: 2, prize: 20 },
-    { rank: 3, prize: 15 },
-    { rank: 4, prize: 10 },
-    { rank: 5, prize: 5 },
-    { rank: 6, prize: 5 },
-    { rank: 7, prize: 5 },
-    { rank: 8, prize: 5 },
-    { rank: 9, prize: 5 },
-    { rank: 10, prize: 10 },
-  ],
-  leaderboardResetHours: 24,
-
-  // রেকব্যাক / ক্যাশব্যাক
-  rakebackEnabled: true,
-  rakebackPercent: 0.5,
-  rakebackMinClaimCoins: 1.0,
-  rakebackVipMultiplier: 1.5,
-
-  // চ্যালেঞ্জ / মিশন
-  challengesEnabled: true,
-  dailyChallenges: [
-    { id: 'wager_50', label: 'Wager $50', target: 50, reward: 5, metric: 'wager' },
-    { id: 'win_5', label: 'Win 5 flips', target: 5, reward: 3, metric: 'wins' },
-    { id: 'bet_20', label: 'Place 20 bets', target: 20, reward: 2, metric: 'bets' },
-    { id: 'streak_3', label: '3-win streak', target: 3, reward: 5, metric: 'streak' },
-  ],
-
-  withdrawalMinCoins: 1.0,
-  withdrawalMaxCoins: 10000.0,
-  withdrawalAutoApproveThreshold: 0.0,
-  dailyWithdrawalLimitCoins: 5000.0,
-};
-
-// ── কনফিগ কী → বাংলা লেবেল ম্যাপিং (UI-র জন্য) ───────────────
-export const CONFIG_LABELS: Record<keyof GameConfig, { label: string; description: string; unit?: string; min?: number; max?: number; type: 'number' | 'boolean' | 'string'; category: string }> = {
-  houseEdgePercent:       { label: 'হাউজ এজ', description: 'প্ল্যাটফর্মের লাভের পার্সেন্ট। ২% মানে ইউজার ১০০ বেটে জিতলে ১৯৬ পাবে।', unit: '%', min: 0.1, max: 10, type: 'number', category: 'বেটিং' },
-  minBetAmount:           { label: 'সর্বনিম্ন বেট', description: 'একটি বেটে সর্বনিম্ন পরিমাণ।', unit: '$', min: 0.01, max: 10, type: 'number', category: 'বেটিং' },
-  maxBetAmount:           { label: 'সর্বোচ্চ বেট', description: 'একটি বেটে সর্বোচ্চ পরিমাণ। রিস্ক কন্ট্রোলের জন্য গুরুত্বপূর্ণ।', unit: '$', min: 10, max: 100000, type: 'number', category: 'বেটিং' },
-  maxWinAmount:           { label: 'সর্বোচ্চ জয়ের সীমা', description: 'প্রতি বেটে সর্বোচ্চ জয়ের লিমিট। এর বেশি লাভ করতে পারবে না।', unit: '$', min: 100, max: 1000000, type: 'number', category: 'বেটিং' },
-  maxConcurrentBets:      { label: 'একসাথে বেট সংখ্যা', description: 'একজন ইউজার একসাথে কতটি বেট রাখতে পারবে।', unit: 'টি', min: 1, max: 5, type: 'number', category: 'বেটিং' },
-  rainTriggerStreak:      { label: 'রেইন ট্রিগার স্ট্রিক', description: 'টানা কতটি জয়ের পর Crypto Rain শুরু হবে।', unit: 'বার', min: 3, max: 20, type: 'number', category: 'ক্রিপ্টো রেইন' },
-  rainBudgetDailyUsd:     { label: 'দৈনিক রেইন বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার রেইন হিসেবে দেওয়া হবে।', unit: '$', min: 1, max: 10000, type: 'number', category: 'ক্রিপ্টো রেইন' },
-  rainClaimPerUserUsd:    { label: 'প্রতি ইউজার ক্লেইম', description: 'একজন ইউজার একটি রেইন ইভেন্টে সর্বোচ্চ কত ডলার পাবে।', unit: '$', min: 0.01, max: 10, type: 'number', category: 'ক্রিপ্টো রেইন' },
-  rainDurationSeconds:    { label: 'রেইনের স্থায়িত্ব', description: 'একটি Crypto Rain ইভেন্ট কত সেকেন্ড চলবে।', unit: 'সেকেন্ড', min: 10, max: 300, type: 'number', category: 'ক্রিপ্টো রেইন' },
-  rainEnabled:            { label: 'রেইন ফিচার চালু', description: 'Crypto Rain সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'ক্রিপ্টো রেইন' },
-  maxSquadSize:           { label: 'স্কোয়াড সাইজ', description: 'একটি Squad Flip-এ সর্বোচ্চ কতজন অংশ নিতে পারবে।', unit: 'জন', min: 2, max: 10, type: 'number', category: 'স্কোয়াড' },
-  squadEnabled:           { label: 'স্কোয়াড ফিচার চালু', description: 'Squad Flip ফিচার সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'স্কোয়াড' },
-  squadHouseEdgePercent:  { label: 'স্কোয়াড হাউজ এজ', description: 'Squad Flip-এর জন্য আলাদা হাউজ এজ। কম রাখলে ইউজার আকৃষ্ট হবে।', unit: '%', min: 0.1, max: 5, type: 'number', category: 'স্কোয়াড' },
-  coinSpinDurationMs:     { label: 'কয়েন স্পিন সময়', description: 'কয়েন কত মিলিসেকেন্ড ঘুরবে। বেশি হলে টেনশন বাড়ে।', unit: 'ms', min: 1000, max: 10000, type: 'number', category: 'গেম স্পিড' },
-  cooldownBetweenGamesMs: { label: 'গেমের মধ্যে বিরতি', description: 'দুটি গেমের মধ্যে কত মিলিসেকেন্ড অপেক্ষা করতে হবে।', unit: 'ms', min: 500, max: 10000, type: 'number', category: 'গেম স্পিড' },
-  seedRotationAfterGames: { label: 'সিড রোটেশন', description: 'কত গেমের পর স্বয়ংক্রিয়ভাবে নতুন সার্ভার সিড তৈরি হবে।', unit: 'গেম', min: 10, max: 1000, type: 'number', category: 'নিরাপত্তা' },
-  maintenanceMode:        { label: 'মেইনটেন্যান্স মোড', description: 'চালু করলে ইউজাররা গেম খেলতে পারবে না।', type: 'boolean', category: 'সিস্টেম' },
-  maintenanceMessage:     { label: 'মেইনটেন্যান্স বার্তা', description: 'মেইনটেন্যান্স মোডে ইউজারদের কী বার্তা দেখাবে।', type: 'string', category: 'সিস্টেম' },
-  jackpotEnabled:         { label: 'জ্যাকপট চালু', description: 'প্রোগ্রেসিভ জ্যাকপট সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'জ্যাকপট' },
-  jackpotMinBet:          { label: 'জ্যাকপট সর্বনিম্ন বেট', description: 'জ্যাকপটে অংশ নেওয়ার জন্য সর্বনিম্ন বেট পরিমাণ।', unit: '$', min: 0.01, max: 100, type: 'number', category: 'জ্যাকপট' },
-  jackpotContributionPercent: { label: 'জ্যাকপট কন্ট্রিবিউশন (%)', description: 'প্রতি বেটের শতকরা কত অংশ জ্যাকপট পুলে যোগ হবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'জ্যাকপট' },
-  jackpotHitChance:       { label: 'জ্যাকপট জয়ের সুযোগ (১/X)', description: 'জ্যাকপট জয়ের সম্ভাবনা (১/X chance)। যেমন ১০০০০ দিলে প্রতি ১০,০০০ গেমে গড়ে একবার জিতবে।', unit: 'টি গেম', min: 2, max: 1000000, type: 'number', category: 'জ্যাকপট' },
-  jackpotStartPool:       { label: 'জ্যাকপট শুরুর মান', description: 'জ্যাকপট জয়ের পর পুলটি যে প্রারম্ভিক অ্যামাউন্টে রিসেট হবে।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'জ্যাকপট' },
-  jackpotPool:            { label: 'জ্যাকপট পুল ব্যালেন্স', description: 'জ্যাকপটের বর্তমান পুলে জমাকৃত অর্থের পরিমাণ।', unit: '$', min: 0, max: 1000000, type: 'number', category: 'জ্যাকপট' },
-
-  // বোনাস
-  bonusWelcomeAmount:            { label: 'স্বাগতম বোনাস', description: 'নতুন ইউজারকে প্রথম লগইনে দেওয়া বোনাসের পরিমাণ।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
-  bonusWagerMultiplier:          { label: 'Wagering multiplier', description: 'বোনাস × N = wagering required (বেট করতে হবে)।', unit: '×', min: 0, max: 100, type: 'number', category: 'বোনাস' },
-  bonusMaxWithdrawalMultiplier:  { label: 'Max withdrawal multiplier', description: 'বোনাস × N = সর্বোচ্চ উইথড্র।', unit: '×', min: 0, max: 100, type: 'number', category: 'বোনাস' },
-  bonusExpiryDays:               { label: 'বোনাস expire দিন', description: 'বোনাস কত দিন পর expire হবে।', unit: 'দিন', min: 1, max: 365, type: 'number', category: 'বোনাস' },
-  bonusMinDepositToWithdrawPct:  { label: 'Min deposit %', description: 'বোনাস তুলতে বোনাসের শতকরা কত % deposit করতে হবে।', unit: '%', min: 0, max: 100, type: 'number', category: 'বোনাস' },
-  bonusCooldownHours:            { label: 'Cooldown hours', description: 'বোনাস পাওয়ার পর কত ঘণ্টা cooldown।', unit: 'ঘণ্টা', min: 0, max: 720, type: 'number', category: 'বোনাস' },
-  bonusDepositMatchPct:          { label: 'Deposit match %', description: 'ডিপোজিটের শতকরা কত ভাগ match bonus (0 = disabled)।', unit: '%', min: 0, max: 500, type: 'number', category: 'বোনাস' },
-  bonusDepositMatchCap:          { label: 'Deposit match cap', description: 'প্রতি ডিপোজিটে সর্বোচ্চ match bonus।', unit: 'কয়েন', min: 0, max: 100000, type: 'number', category: 'বোনাস' },
-  bonusCashbackPct:              { label: 'Cashback %', description: 'নেট loss-এর শতকরা কত ভাগ cashback।', unit: '%', min: 0, max: 100, type: 'number', category: 'বোনাস' },
-  bonusVipMonthlyAmount:         { label: 'VIP monthly bonus', description: 'মাসিক VIP tier bonus।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'বোনাস' },
-  bonusFreeSpinCount:            { label: 'Free spin count', description: 'Welcome campaign-এ ফ্রি স্পিন সংখ্যা।', unit: 'টি', min: 0, max: 100, type: 'number', category: 'বোনাস' },
-  bonusFreeSpinValue:            { label: 'Free spin value', description: 'প্রতি free spin-এর বেট মান।', unit: 'কয়েন', min: 0, max: 1000, type: 'number', category: 'বোনাস' },
-  scatterEnabled:                { label: 'স্ক্যাটার বোনাস চালু', description: 'স্ক্যাটার বোনাস ফিচার সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'স্ক্যাটার বোনাস' },
-  scatterChance:                 { label: 'স্ক্যাটার বোনাস সুযোগ (১/X)', description: 'প্রতি বেটে স্ক্যাটার বোনাস জয়ের সম্ভাবনা (১/X)।', unit: 'টি', min: 2, max: 1000000, type: 'number', category: 'স্ক্যাটার বোনাস' },
-  scatterMinMultiplier:          { label: 'সর্বনিম্ন মাল্টিপ্লায়ার', description: 'স্ক্যাটার বোনাসের সর্বনিম্ন মাল্টিপ্লায়ার।', unit: '×', min: 0.1, max: 100, type: 'number', category: 'স্ক্যাটার বোনাস' },
-  scatterMaxMultiplier:          { label: 'সর্বোচ্চ মাল্টিপ্লায়ার', description: 'স্ক্যাটার বোনাসের সর্বোচ্চ মাল্টিপ্লায়ার।', unit: '×', min: 0.1, max: 1000, type: 'number', category: 'স্ক্যাটার বোনাস' },
-  scatterStakeUsd:               { label: 'স্ক্যাটার বোনাস স্টেক', description: 'স্ক্যাটার বোনাসের জন্য ব্যবহৃত স্থির বেট মান।', unit: '$', min: 0.01, max: 1000, type: 'number', category: 'স্ক্যাটার বোনাস' },
-
-  streakEnabled:            { label: 'স্ট্রিক ল্যাডার চালু', description: 'স্ট্রিক ল্যাডার বোনাস ফিচার সম্পূর্ণ বন্ধ বা চালু করুন।', type: 'boolean', category: 'স্ট্রিক ল্যাডার' },
-  streakBudgetDailyUsd:     { label: 'দৈনিক স্ট্রিক বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার স্ট্রিক ল্যাডার বোনাস হিসেবে দেওয়া হবে।', unit: '$', min: 0, max: 10000, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung1Wins:          { label: 'রাঙ ১ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ১ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung1Multiplier:    { label: 'রাঙ ১ মাল্টিপ্লায়ার', description: 'রাঙ ১-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung2Wins:          { label: 'রাঙ ২ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ২ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung2Multiplier:    { label: 'রাঙ ২ মাল্টিপ্লায়ার', description: 'রাঙ ২-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung3Wins:          { label: 'রাঙ ৩ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৩ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung3Multiplier:    { label: 'রাঙ ৩ মাল্টিপ্লায়ার', description: 'রাঙ ৩-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung4Wins:          { label: 'রাঙ ৪ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৪ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung4Multiplier:    { label: 'রাঙ ৪ মাল্টিপ্লায়ার', description: 'রাঙ ৪-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung5Wins:          { label: 'রাঙ ৫ জয়ের সংখ্যা', description: 'কতটি টানা জয়ের পর রাঙ ৫ সক্রিয় হবে।', unit: 'বার', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-  streakRung5Multiplier:    { label: 'রাঙ ৫ মাল্টিপ্লায়ার', description: 'রাঙ ৫-এ বোনাস টপ-আপ মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 50, type: 'number', category: 'স্ট্রিক ল্যাডার' },
-
-  // লাইটনিং / মিস্টারি মাল্টিপ্লায়ার
-  lightningEnabled:                { label: 'লাইটনিং রাউন্ড চালু', description: 'র‍্যান্ডমভাবে নির্দিষ্ট বেশি পেআউট মাল্টিপ্লায়ার দেখাবে।', type: 'boolean', category: 'লাইটনিং রাউন্ড' },
-  lightningChance:                 { label: 'লাইটনিং সম্ভাবনা', description: 'কত বেটে ১টি লাইটনিং রাউন্ড হবে (১/X)।', unit: 'বেট', min: 1, max: 10000, type: 'number', category: 'লাইটনিং রাউন্ড' },
-  lightningMinMultiplier:          { label: 'ন্যূনতম মাল্টিপ্লায়ার', description: 'লাইটনিং রাউন্ডে পেআউট কতগুণ থেকে শুরু হবে।', unit: 'x', min: 1.1, max: 100, type: 'number', category: 'লাইটনিং রাউন্ড' },
-  lightningMaxMultiplier:          { label: 'সর্বোচ্চ মাল্টিপ্লায়ার', description: 'লাইটনিং রাউন্ডে পেআউট কতগুণ পর্যন্ত যেতে পারে।', unit: 'x', min: 1.1, max: 500, type: 'number', category: 'লাইটনিং রাউন্ড' },
-  lightningDurationSeconds:        { label: 'প্রদর্শন সময়', description: 'কত সেকেন্ড লাইটনিং মাল্টিপ্লায়ার দেখাবে।', unit: 's', min: 1, max: 30, type: 'number', category: 'লাইটনিং রাউন্ড' },
-  lightningBudgetDailyUsd:         { label: 'দৈনিক বাজেট', description: 'প্রতিদিন সর্বোচ্চ কত ডলার লাইটনিং বাড়তি পেআউট হিসেবে দেওয়া হবে।', unit: '$', min: 0, max: 10000, type: 'number', category: 'লাইটনিং রাউন্ড' },
-
-  // তহবিল / উত্তোলন
-  withdrawalMinCoins:              { label: 'ন্যূনতম উত্তোলন', description: 'একক উত্তোলনের ন্যূনতম পরিমাণ (কয়েন)।', unit: 'coin', min: 0.1, max: 10000, type: 'number', category: 'তহবিল / উত্তোলন' },
-  withdrawalMaxCoins:              { label: 'সর্বোচ্চ উত্তোলন', description: 'একক উত্তোলনের সর্বোচ্চ পরিমাণ (কয়েন)।', unit: 'coin', min: 1, max: 1000000, type: 'number', category: 'তহবিল / উত্তোলন' },
-  withdrawalAutoApproveThreshold:  { label: 'Auto-approve threshold', description: 'এই পরিমাণের কম হলে অটো-অনুমোদন (0 = সবসময় ম্যানুয়াল)।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'উইথড্র' },
-  dailyWithdrawalLimitCoins:       { label: 'Daily withdrawal limit', description: 'প্রতিদিন প্রতি ইউজার সর্বোচ্চ উইথড্র।', unit: 'কয়েন', min: 0, max: 1000000, type: 'number', category: 'উইথড্র' },
-
-  // দৈনিক লগইন হুইল
-  dailyWheelEnabled:               { label: 'ডেইলি হুইল চালু', description: 'দৈনিক ফ্রি স্পিন হুইল ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'ডেইলি হুইল' },
-  dailyWheelCooldownHours:         { label: 'হুইল কুলডাউন (ঘণ্টা)', description: 'প্রতি স্পিনের মধ্যে কত ঘণ্টা অপেক্ষা করতে হবে।', unit: 'h', min: 1, max: 168, type: 'number', category: 'ডেইলি হুইল' },
-  dailyWheelPrizes:                { label: 'হুইল পুরস্কার', description: 'JSON array: {label,value,type,weight}।', type: 'string', category: 'ডেইলি হুইল' },
-
-  // লিডারবোর্ড / টুর্নামেন্ট
-  leaderboardEnabled:              { label: 'লিডারবোর্ড চালু', description: 'ওয়েজারিং লিডারবোর্ড ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'লিডারবোর্ড' },
-  leaderboardPrizePool:            { label: 'প্রাইজ পুল', description: 'প্রতি সেশনে সর্বমোট পুরস্কারের পরিমাণ।', unit: 'কয়েন', min: 0, max: 10000, type: 'number', category: 'লিডারবোর্ড' },
-  leaderboardPrizes:               { label: 'পুরস্কার বন্টন', description: 'JSON array: {rank,prize}।', type: 'string', category: 'লিডারবোর্ড' },
-  leaderboardResetHours:             { label: 'রিসেট সময়', description: 'কত ঘণ্টা পর লিডারবোর্ড রিসেট হবে।', unit: 'h', min: 1, max: 168, type: 'number', category: 'লিডারবোর্ড' },
-
-  // রেকব্যাক / ক্যাশব্যাক
-  rakebackEnabled:                 { label: 'রেকব্যাক চালু', description: 'ওয়েজারিং-ভিত্তিক ক্যাশব্যাক ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'রেকব্যাক' },
-  rakebackPercent:                 { label: 'রেকব্যাক %', description: 'মোট বেটের শতকরা কত ভাগ রেকব্যাক হিসেবে ফেরত পাবে।', unit: '%', min: 0, max: 10, type: 'number', category: 'রেকব্যাক' },
-  rakebackMinClaimCoins:           { label: 'ন্যূনতম ক্লেইম', description: 'কত কয়েন জমা হলে ক্লেইম করা যাবে।', unit: 'কয়েন', min: 0.01, max: 1000, type: 'number', category: 'রেকব্যাক' },
-  rakebackVipMultiplier:           { label: 'VIP মাল্টিপ্লায়ার', description: 'VIP র‌্যাঙ্ক অনুযায়ী রেকব্যাক মাল্টিপ্লায়ার।', unit: '×', min: 1, max: 10, type: 'number', category: 'রেকব্যাক' },
-
-  // চ্যালেঞ্জ / মিশন
-  challengesEnabled:               { label: 'চ্যালেঞ্জ চালু', description: 'দৈনিক চ্যালেঞ্জ / মিশন ফিচার চালু বা বন্ধ করুন।', type: 'boolean', category: 'চ্যালেঞ্জ' },
-  dailyChallenges:                 { label: 'দৈনিক চ্যালেঞ্জ', description: 'JSON array: {id,label,target,reward,metric}।', type: 'string', category: 'চ্যালেঞ্জ' },
-};
-
-// ═══════════════════════════════════════════════════════════════
-//  DATABASE থেকে CONFIG পড়া ও লেখা
-// ═══════════════════════════════════════════════════════════════
+// ── DB I/O for the typed GameConfig ───────────────────────────
 
 /** ডাটাবেস থেকে সব সেটিং পড়ো */
 export async function getConfig(): Promise<GameConfig> {
@@ -488,7 +211,7 @@ export async function updateConfig(key: keyof GameConfig, value: unknown): Promi
     `INSERT INTO admin_settings (key, value, updated_at)
      VALUES ($1, $2, NOW())
      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-    [key, stringValue]
+    [key, stringValue],
   );
 }
 
@@ -499,49 +222,7 @@ export async function updateAllConfig(config: Partial<GameConfig>): Promise<void
   }
 }
 
-/**
- * Generic raw key/value helpers for settings that are outside the typed
- * GameConfig interface (e.g., KYC provider secrets and thresholds).
- */
-export async function getRawSetting(key: string): Promise<string | null> {
-  try {
-    const result = await query('SELECT value FROM admin_settings WHERE key = $1', [key]);
-    return result.rows[0]?.value ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function setRawSetting(key: string, value: string, description?: string): Promise<void> {
-  await query(
-    `INSERT INTO admin_settings (key, value, description, updated_at)
-     VALUES ($1, $2, $3, NOW())
-     ON CONFLICT (key) DO UPDATE SET value = $2, description = COALESCE($3, admin_settings.description), updated_at = NOW()`,
-    [key, value, description || null]
-  );
-}
-
 /** সব সেটিং ডিফল্টে ফিরিয়ে দাও */
 export async function resetToDefaults(): Promise<void> {
   await updateAllConfig(DEFAULT_CONFIG);
-}
-
-/** হাউজ এজ থেকে পেআউট মাল্টিপ্লায়ার বের করো */
-export function getPayoutMultiplier(houseEdgePercent: number): number {
-  // ২% হাউজ এজে: multiplier = 2 × (1 - 0.02) = 1.96
-  return parseFloat((2 * (1 - houseEdgePercent / 100)).toFixed(4));
-}
-
-/** বেট পরিমাণ ভ্যালিড কিনা যাচাই করো */
-export function validateBetAmount(
-  amount: number,
-  config: GameConfig
-): { valid: boolean; error?: string } {
-  if (amount < config.minBetAmount) {
-    return { valid: false, error: `সর্বনিম্ন বেট $${config.minBetAmount}। আপনি দিয়েছেন $${amount}।` };
-  }
-  if (amount > config.maxBetAmount) {
-    return { valid: false, error: `সর্বোচ্চ বেট $${config.maxBetAmount}। আপনি দিয়েছেন $${amount}।` };
-  }
-  return { valid: true };
 }

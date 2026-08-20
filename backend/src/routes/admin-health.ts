@@ -1,7 +1,8 @@
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ADMIN HEALTH ROUTES — /api/admin/health
- *  Returns dependency status for Postgres, Redis, and blockchain RPC.
+ *  Returns dependency status for Postgres, Redis, blockchain RPC,
+ *  and (P2-17) the Binance Pay deposit pipeline.
  * ═══════════════════════════════════════════════════════════════
  */
 
@@ -10,6 +11,7 @@ import { authMiddleware, roleMiddleware } from '../middleware/auth';
 import { adminLimiter } from '../middleware/rate-limiter';
 import { db } from '../config/database';
 import { redis } from '../config/redis';
+import { getBinanceHealth } from '../services/binance-pay-ledger-monitor.service';
 
 const router = Router();
 
@@ -65,6 +67,12 @@ router.get('/', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'au
     checkBlockchain(),
   ]);
 
+  // P2-17 — binance deposit pipeline status. Synchronous (no I/O):
+  // getBinanceHealth() reads module-level constants that are set at
+  // boot from process.env. Cheap to compute; included in the same
+  // response so the admin sees all dependency states in one shot.
+  const binance = getBinanceHealth();
+
   const allOk = postgres.status === 'ok' && redisStatus.status === 'ok';
   const status = allOk ? 'ok' : 'degraded';
 
@@ -77,6 +85,7 @@ router.get('/', adminLimiter, authMiddleware, roleMiddleware(['super_admin', 'au
       postgres,
       redis: redisStatus,
       blockchain,
+      binance,
     },
   });
 });

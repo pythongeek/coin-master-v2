@@ -30,6 +30,17 @@ export const registerSchema = z.object({
   fingerprint: z
     .string()
     .optional(),
+  /**
+   * P1-12 — hCaptcha token (optional in the schema, REQUIRED at the
+   * route level when HCAPTCHA_SECRET is set in env). The schema keeps
+   * it optional so dev / unit tests can post without a captcha; the
+   * `hcaptchaMiddleware` enforces presence only when the server is
+   * actually configured to verify hCaptcha.
+   */
+  hcaptchaToken: z
+    .string()
+    .max(4096, 'hcaptchaToken too long')
+    .optional(),
 });
 
 export const loginSchema = z.object({
@@ -41,13 +52,28 @@ export const loginSchema = z.object({
     .min(1, 'পাসওয়ার্ড প্রয়োজন।'),
 });
 
+// P2-22: wallet-auth now requires the timestamp + nonce that the client
+// signed. Without these, the backend cannot rebuild the exact signed
+// message and signature verification fails (the previous silent
+// timestamp-regeneration bug). Both fields are validated here at the
+// schema layer so the route sees a strongly-typed request.
 export const walletAuthSchema = z.object({
   walletAddress: z
     .string()
-    .min(10, 'সঠিক ওয়ালেট অ্যাড্রেস প্রয়োজন।'),
+    .min(10, 'সঠিক ওয়ালেট অ্যাড্রেস প্রয়োজন।'),
   signature: z
     .string()
-    .optional(),
+    .min(1, 'স্বাক্ষর প্রয়োজন।'),
+  // ISO-8601 timestamp embedded in the message the client signed.
+  timestamp: z
+    .string()
+    .datetime({ message: 'সময় ISO-8601 ফরম্যাটে হতে হবে।' }),
+  // Server-issued nonce from GET /api/auth/wallet/challenge. Stored
+  // in Redis with a 5-minute TTL and consumed atomically on login.
+  nonce: z
+    .string()
+    .min(8, 'ননস অনুপস্থিত বা অবৈধ।')
+    .max(128, 'ননস অবৈধ।'),
   fingerprint: z
     .string()
     .optional(),
@@ -402,6 +428,24 @@ export const initiateQrDepositSchema = z.object({
     .max(10000, 'Maximum QR deposit is $10,000 USDT.'),
   chainKey: z.enum(['BSC', 'TRC20', 'ERC20']).optional(),
 });
+
+/**
+ * P2-10 — Single source of truth for valid `chainKey` values.
+ *
+ * Used by:
+ *   - `binance-pay-qr.service.ts` (defense-in-depth at the service
+ *     boundary, in case a future caller bypasses the route validation)
+ *   - `admin-payments-qr.ts` (validates the `:chainKey` URL param
+ *     before SQL — previously unvalidated, a latent risk if admin
+ *     routes were ever exposed by accident)
+ *
+ * Values must match the `chain_key` column constraint in migration
+ * `019_multi_chain_qr.sql` and the live `deposit_chain_config` rows
+ * (BSC, ERC20, TRC20). The DB-side column is `VARCHAR(20) NOT NULL
+ * UNIQUE`, so this Zod enum is the application-side mirror.
+ */
+export const chainKeyEnum = z.enum(['BSC', 'TRC20', 'ERC20']);
+export type ChainKey = z.infer<typeof chainKeyEnum>;
 
 export const qrReceiptUploadSchema = z.object({
   orderId: z.string().min(10, 'orderId required'),
