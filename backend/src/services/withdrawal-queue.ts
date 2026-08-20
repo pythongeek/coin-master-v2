@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { Queue, Worker, Job } from 'bullmq';
 import { logger } from '../config/logger';
 import { db, query } from '../config/database';
@@ -78,6 +77,21 @@ export async function requestWithdrawal(
     const addrCheck = validateAddress(toAddress, wallet.chain);
     if (!addrCheck.ok) {
       throw new Error('Invalid destination address for ' + wallet.chain + ': ' + addrCheck.error);
+    }
+
+    // P2-22: refuse the request outright if the destination chain is not
+    // in the supported-withdrawal allowlist. This prevents the legacy
+    // fake-tx-hash bug from ever producing a 'pending' row in the first
+    // place — the user gets a clear 4xx and their balance is never
+    // touched. The queue's worker layer enforces the same allowlist as
+    // defense in depth for any legacy pending rows.
+    const { isSupportedWithdrawalChain, SUPPORTED_WITHDRAWAL_CHAINS } = await import('./withdrawal-payout');
+    if (!isSupportedWithdrawalChain(wallet.chain)) {
+      throw new Error(
+        'Withdrawal is not supported on chain \'' + wallet.chain + '\'. ' +
+        'Supported chains: ' + SUPPORTED_WITHDRAWAL_CHAINS.join(', ') + '. ' +
+        'Your balance is unchanged.'
+      );
     }
 
     // KYC tier-based limits (P1 fix).
@@ -211,51 +225,80 @@ export async function requestWithdrawal(
 export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
   const { txId, walletId, amount, chain, userId, toAddress } = job.data;
 
+  // P2-22: replace the legacy fake-hash path. The worker used to call
+  // crypto.randomUUID() and write the result to transactions.tx_hash with
+  // status='completed' for ethereum/solana/'mock' chains — debiting
+  // wallets.locked_balance without ever broadcasting on-chain. The fix
+  // is to call payoutWithdrawal (the single entry point) which returns
+  // success=true ONLY if a real on-chain transaction was produced.
+  const { payoutWithdrawal, isSupportedWithdrawalChain, SUPPORTED_WITHDRAWAL_CHAINS } = await import('./withdrawal-payout');
+
   try {
-    // TRON withdrawals are paid out via the MCP payout worker after admin approval.
-    if (chain === 'tron') {
-      logger.info('Skipping TRON simulation payout; will be handled by MCP payout worker after admin approval', { txId, toAddress });
-      return { success: true, handledBy: 'mcp-payout-worker' };
+    // 1. Belt-and-suspenders: refuse to process unsupported chains. The
+    // request layer already rejects these, but legacy rows might still
+    // be in the queue from before this fix.
+    if (!isSupportedWithdrawalChain(chain)) {
+      await markWithdrawalFailed(
+        txId,
+        walletId,
+        amount,
+        userId,
+        `unsupported_chain: chain='${chain}' supported=[${SUPPORTED_WITHDRAWAL_CHAINS.join(',')}]`,
+      );
+      // BullMQ: mark resolved (success:true) so the job does not retry —
+      // retries would just fail the same way. Funds are returned to
+      // available_balance so the user can re-request on a supported chain.
+      return { success: false, failureReason: 'unsupported_chain', txId };
     }
 
-    // 1. Simulate blockchain payout / broadcast for non-TRON chains (legacy/manual)
-    let txHash: string;
-    if (chain === 'ethereum') {
-      txHash = '0x' + crypto.randomUUID().replace(/-/g, '') + '000000000000';
-    } else if (chain === 'solana') {
-      txHash = crypto.randomUUID().replace(/-/g, '') + 'sol';
-    } else {
-      txHash = crypto.randomUUID().replace(/-/g, '') + 'mock';
+    // 2. Dispatch to the real broadcaster. This awaits the actual chain
+    // call (or returns an error like 'configuration_missing' if the
+    // chain's hot-wallet key is not set).
+    const result = await payoutWithdrawal(chain, txId);
+
+    if (!result.success) {
+      await markWithdrawalFailed(
+        txId,
+        walletId,
+        amount,
+        userId,
+        `${result.failureReason || 'unknown'}: ${result.error || 'no error message'}`,
+      );
+      return { success: false, failureReason: result.failureReason, error: result.error, txId };
     }
 
-    // 2. Perform DB updates in SQL transaction
+    // 3. Success — payoutWithdrawal already wrote tx_hash and marked the
+    // transaction 'completed' inside payoutTronWithdrawal. We just need
+    // to decrement locked_balance and run reconciliation.
     const client = await db.connect();
     try {
       await client.query('BEGIN');
 
-      // Verify transaction is still pending
-      const txCheck = await client.query('SELECT status FROM transactions WHERE id = $1 FOR UPDATE', [txId]);
-      if (txCheck.rows.length === 0 || txCheck.rows[0].status !== 'pending') {
-        throw new Error('Transaction is not in pending state or not found');
+      // Verify the transaction is still in 'completed' state (payoutTronWithdrawal
+      // wrote it). If something else touched it in the meantime, abort.
+      const txCheck = await client.query(
+        `SELECT status, tx_hash FROM transactions WHERE id = $1 FOR UPDATE`,
+        [txId],
+      );
+      if (txCheck.rows.length === 0) {
+        throw new Error('Transaction disappeared after payout');
+      }
+      if (txCheck.rows[0].status !== 'completed' || !txCheck.rows[0].tx_hash) {
+        throw new Error(
+          `Payout claimed success but transaction is status='${txCheck.rows[0].status}' ` +
+          `tx_hash='${txCheck.rows[0].tx_hash || ''}'`,
+        );
       }
 
-      // Update transaction to completed
-      await client.query(
-        `UPDATE transactions
-         SET status = 'completed', tx_hash = $1, completed_at = NOW()
-         WHERE id = $2`,
-         [txHash, txId]
-      );
-
-      // Decrement locked_balance
+      // Decrement locked_balance (the matching 'completed' row was already
+      // written by payoutTronWithdrawal under FOR UPDATE).
       await client.query(
         `UPDATE wallets
          SET locked_balance = locked_balance - $1, updated_at = NOW()
          WHERE id = $2`,
-         [amount, walletId]
+        [amount, walletId],
       );
 
-      // Run reconciliation check
       await reconcileUser(userId, client);
 
       await client.query('COMMIT');
@@ -266,21 +309,24 @@ export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
       client.release();
     }
 
-    return { success: true, txHash };
-
+    logger.info('Withdrawal worker completed', { txId, chain, walletId, amount, txHash: result.txHash });
+    return { success: true, txHash: result.txHash };
   } catch (error: any) {
     console.error(`❌ Worker failed processing withdrawal job ${job.id}:`, error);
 
-    // Update transaction to failed. Funds remain locked for manual review.
+    // Best-effort: mark the transaction failed and return funds to
+    // available_balance. If the DB is down, the job will retry via
+    // BullMQ's exponential backoff (3 attempts, 60s base).
     try {
-      await query(
-        `UPDATE transactions
-         SET status = 'failed', metadata = metadata || $1
-         WHERE id = $2`,
-        [JSON.stringify({ error: error.message || String(error) }), txId]
+      await markWithdrawalFailed(
+        txId,
+        walletId,
+        amount,
+        userId,
+        `worker_exception: ${error.message || String(error)}`,
       );
-    } catch (updateErr) {
-      console.error('❌ Failed to update transaction status to failed:', updateErr);
+    } catch (markErr) {
+      console.error('❌ Failed to mark withdrawal failed:', markErr);
     }
 
     throw error; // Re-throw to trigger attempts/backoff/failed state in BullMQ
@@ -289,3 +335,76 @@ export const withdrawalWorker = new Worker('withdrawals', async (job: Job) => {
   connection: redisConfig,
   autorun: true
 });
+
+/**
+ * P2-22: helper that marks a transaction 'failed', returns the locked
+ * amount to the user's available balance, and writes an audit_log entry.
+ * Used when the worker cannot broadcast a real transaction (unsupported
+ * chain, missing config, broadcaster error).
+ */
+async function markWithdrawalFailed(
+  txId: string,
+  walletId: string,
+  amount: number,
+  userId: string,
+  reason: string,
+): Promise<void> {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Mark transaction failed (with FOR UPDATE so we don't race against a
+    // concurrent TRON payout that is mid-broadcast).
+    await client.query(
+      `UPDATE transactions
+       SET status = 'failed',
+           metadata = metadata || jsonb_build_object(
+             'payout_failure', $1::text,
+             'payout_failed_at', NOW()::text
+           )
+       WHERE id = $2 AND status = 'pending'`,
+      [reason, txId],
+    );
+
+    // Return locked_balance to balance so the user can re-request on a
+    // supported chain. We leave locked_balance alone for the case where
+    // the transaction is already 'completed' (TRON payout finished
+    // between the broadcast and this call) — the WHERE clause above
+    // filters those out.
+    await client.query(
+      `UPDATE wallets
+       SET locked_balance = locked_balance - $1,
+           balance = balance + $1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [amount, walletId],
+    );
+
+    // Audit log: this is the record that makes the failure traceable.
+    // Without it, the user's funds would appear to vanish and the admin
+    // would have no signal that the withdrawal was rejected.
+    await client.query(
+      `INSERT INTO audit_log (category, action, severity, user_id, details)
+       VALUES ('withdrawal', 'payout.unbroadcast_refund', 'warn', $1::uuid, $2::jsonb)`,
+      [
+        userId,
+        JSON.stringify({
+          txId,
+          walletId,
+          amount,
+          reason,
+          refundedToBalance: true,
+        }),
+      ],
+    );
+
+    await reconcileUser(userId, client);
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

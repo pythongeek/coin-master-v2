@@ -38,9 +38,25 @@ async function handleWebhook(req: Request, res: Response, gateway: PaymentGatewa
   if (!provider) {
     return res.status(404).json({ error: 'gateway not configured' });
   }
-  // Use rawBody captured by the raw-body middleware (in index.ts)
-  // Fall back to readRawBody if for some reason it's missing
-  const rawBody = (req as Request & { rawBody?: string }).rawBody ?? await readRawBody(req);
+  // P2-22: read the raw body. Three sources, in priority order:
+  //   1. req.body (set by express.raw() in index.ts — Buffer)
+  //   2. req.rawBody (some legacy middlewares set this as a string)
+  //   3. readRawBody() fallback (manual stream read — only works if no
+  //      body parser has already consumed the request stream)
+  // The fallback hangs forever if express.json() has already run
+  // before this route, so the mount in index.ts MUST use express.raw().
+  const bodyFromExpress = req.body;
+  const rawFromMiddleware = (req as Request & { rawBody?: string }).rawBody;
+  let rawBody: string;
+  if (Buffer.isBuffer(bodyFromExpress)) {
+    rawBody = bodyFromExpress.toString('utf8');
+  } else if (typeof bodyFromExpress === 'string') {
+    rawBody = bodyFromExpress;
+  } else if (typeof rawFromMiddleware === 'string') {
+    rawBody = rawFromMiddleware;
+  } else {
+    rawBody = await readRawBody(req);
+  }
   const reqShape = {
     rawBody,
     headers: req.headers as Record<string, string | string[] | undefined>,

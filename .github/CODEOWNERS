@@ -1,0 +1,17 @@
+# CODEOWNERS — required reviewers for sensitive paths
+# Two reviewers required for any change to .github/workflows/** per the
+# audit's "protect .github/workflows/** with CODEOWNERS and mandatory
+# reviews" recommendation. Any single owner can override on /admin
+# discretion if needed.
+# See https://docs.github.com/en/repositories/creating-and-managing-repositories/about-code-owners
+
+# Default owner for everything in this repo (single-owner repo).
+* @pythongeek
+
+# Workflow files — require explicit owner review. Pin this to one
+# human account so the workflow directory is never silently mutated.
+.github/workflows/    @pythongeek
+.github/workflows/**  @pythongeek
+
+# CODEOWNERS itself — owner-only.
+.github/CODEOWNERS    @pythongeek
