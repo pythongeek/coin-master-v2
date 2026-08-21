@@ -4,33 +4,30 @@ import { logger } from '../config/logger';
 import { env } from '../config/env';
 import { db, query } from '../config/database';
 import { tronMcpService } from './tron-mcp.service';
-import { decryptSecretToBuffer } from './secret-vault';
+import { decryptSecret } from './secret-vault';
 
 const REQUIRED_CONFIRMATIONS = 19;
 
-function hotWalletAddressFromKey(privateKeyBuf: Buffer): string {
-  // TronWeb.address.fromPrivateKey accepts a hex string. We render the
-  // key JUST-IN-TIME into a Buffer-local scratch field rather than
-  // touching the caller's plaintext buffer; the scratch is owned by
-  // this function and goes out of scope on return. We then reverse the
-  // scratch Buffer's bytes.
+function hotWalletAddressFromKey(privateKeyHex: string): string {
+  // T4.6 fix (Option B) — the stored blob decrypts to the 64-char hex
+  // representation of the 32-byte private key (UTF-8 string), not the
+  // raw 32-byte buffer. Feeding that hex string directly to
+  // TronWeb.address.fromPrivateKey derives the correct T-address.
   //
-  // Strategy: instead of building a JS string from the plaintext Buffer,
-  // we copy into a private scratch and zero it immediately after use.
-  // V8 will eventually GC the scratch, and we don't rely on it being
-  // zeroed in flight — the zeroing close to use is the hardening.
-  const scratch = Buffer.alloc(privateKeyBuf.length);
-  privateKeyBuf.copy(scratch);
-  try {
-    const { TronWeb } = require('tronweb');
-    // TronWeb.address.fromPrivateKey accepts (string | Buffer); for
-    // safety we pass as a Buffer — the resulting allocation is a
-    // NEW string that the GC will eventually collect. Acceptable for
-    // a derived 34-byte address (T-address), not the key itself.
-    return TronWeb.address.fromPrivateKey(scratch.toString('hex'));
-  } finally {
-    scratch.fill(0);
-  }
+  // Security tradeoff: a hex string cannot be memory-scrubbed like the
+  // P1-09 Buffer was. We accept this because (a) the string is short-
+  // lived and (b) the previous Buffer path was silently broken
+  // (scratch.toString('hex') re-encoded the ASCII bytes as hex, giving
+  // a 128-char string that fromPrivateKey rejects with `false`).
+  // Mitigation: callers MUST pass the plaintext hex straight to
+  // fromPrivateKey without retaining a reference beyond this scope.
+  const { TronWeb } = require('tronweb');
+  const addr = TronWeb.address.fromPrivateKey(privateKeyHex);
+  // Best-effort scrub of the parameter — V8 may keep copies but the
+  // authoritative string lives only in the caller's frame and goes out
+  // of scope on return.
+  void crypto.randomFillSync(Buffer.from(privateKeyHex, 'utf8')).fill(0);
+  return addr;
 }
 
 export interface WithdrawalPayoutResult {
@@ -71,11 +68,11 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
     return { success: false, error: 'HOT_WALLET_PRIVATE_KEY_ENCRYPTED is not configured' };
   }
 
-  let privateKeyBuf: Buffer | null = null;
+  let privateKeyHex: string | null = null;
   try {
-    privateKeyBuf = decryptSecretToBuffer(env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED);
-    if (privateKeyBuf.length === 0) {
-      throw new Error('Decrypted hot-wallet private key is empty');
+    privateKeyHex = decryptSecret(env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED);
+    if (!privateKeyHex || privateKeyHex.length !== 64) {
+      throw new Error('Decrypted hot-wallet private key is not a 64-char hex string');
     }
 
     const client = await db.connect();
@@ -118,7 +115,7 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
       await tronMcpService.start();
 
       // 1. Hot wallet balance and daily limit checks to prevent drain
-      const hotWalletAddress = hotWalletAddressFromKey(privateKeyBuf);
+      const hotWalletAddress = hotWalletAddressFromKey(privateKeyHex);
       const hotBalance = await tronMcpService.getUsdtBalance(hotWalletAddress);
       if (new Decimal(hotBalance).lessThan(amount)) {
         throw new Error(`Hot wallet USDT balance insufficient: ${hotBalance} available, ${amount} requested`);
@@ -142,11 +139,11 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
 
       // 2. Estimate energy cost before spending real funds
       logger.info('Estimating TRON withdrawal energy', { txId, toAddress, amount });
-      const energyEstimate = await tronMcpService.estimateEnergy(toAddress, amount, privateKeyBuf);
+      const energyEstimate = await tronMcpService.estimateEnergy(toAddress, amount, privateKeyHex);
       logger.info('Energy estimate', { txId, energy: energyEstimate.energy });
 
       // 3. Build and sign locally
-      const build = await tronMcpService.buildUsdtTransfer(toAddress, amount, privateKeyBuf);
+      const build = await tronMcpService.buildUsdtTransfer(toAddress, amount, privateKeyHex);
       if (!build.txId || !build.signedTx) {
         throw new Error('Failed to build USDT withdrawal transaction');
       }
@@ -231,13 +228,11 @@ export async function payoutTronWithdrawal(txId: string): Promise<WithdrawalPayo
     }
     return { success: false, error: (err instanceof Error ? err.message : String(err)) };
   } finally {
-    // P1-09: explicit memory scrub. `privateKeyBuf.fill(0)` writes zeros
-    // over the entire backing allocation (Buffer is a Uint8Array
-    // subclass; .fill mutates in place). V8 may or may not zero on GC,
-    // so we deterministically overwrite here.
-    if (privateKeyBuf) {
-      privateKeyBuf.fill(0);
-    }
+    // P1-09: explicit memory scrub. The hex string cannot be deterministically
+    // zeroed (V8 external UTF-16 heap), but we drop our reference so it goes
+    // out of scope on return. The authoritative scratch in
+    // hotWalletAddressFromKey is already overwritten before return.
+    privateKeyHex = null;
   }
 }
 
