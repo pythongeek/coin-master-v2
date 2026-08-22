@@ -54,7 +54,6 @@ jobs:
         run: npm audit --audit-level=high
       - name: Lint
         run: npm run lint
-        continue-on-error: true
       # P2-02: strict TypeScript gate. The `tsconfig.json` has
       # `noEmitOnError: true`, so any type error fails the build.
       - name: TypeScript (strict, noEmitOnError)
@@ -201,7 +200,6 @@ jobs:
       - run: npm ci
       - name: Lint
         run: npm run lint
-        continue-on-error: true
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Unit tests
