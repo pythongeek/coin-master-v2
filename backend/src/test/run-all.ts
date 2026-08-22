@@ -29,6 +29,7 @@ const testFiles = [
   'p1-12-hcaptcha.test.ts',
   'p1-12-fingerprint-cap.test.ts',
   'p1-12-register-strict-limiter.test.ts',
+  'wo3-atomic-deposit.test.ts',
   'audit-backup.test.ts',
   'dashboard.test.ts',
   'error-handler.test.ts',
