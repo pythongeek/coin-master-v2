@@ -14,6 +14,26 @@ jobs:
     defaults:
       run:
         working-directory: ./backend
+    services:
+      # Ephemeral postgres for `npm test`. The 48-migration set applies
+      # at the start of the job; tests run with this DATABASE_URL and
+      # never touch the production DB. Service container dies with the
+      # job — no persistence, no external visibility.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cryptoflip
+          POSTGRES_PASSWORD: cryptoflip
+          POSTGRES_DB: cryptoflip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cryptoflip"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://cryptoflip:cryptoflip@localhost:5432/cryptoflip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,13 +54,30 @@ jobs:
         run: npm audit --audit-level=high
       - name: Lint
         run: npm run lint
-        continue-on-error: true
       # P2-02: strict TypeScript gate. The `tsconfig.json` has
       # `noEmitOnError: true`, so any type error fails the build.
       - name: TypeScript (strict, noEmitOnError)
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
+      # WO-1.5 (PR-2): backend test gate. Tests run against the
+      # ephemeral postgres service above. The bootstrap SQL is applied
+      # first to recreate the legacy pre-migration state, then all 48
+      # migrations run via node-pg-migrate. The active testFiles in
+      # run-all.ts are all known-green against this configuration. The
+      # 17 quarantined tests print a SKIPPED block with their backlinked
+      # test-debt issues so the debt is visible on every CI run.
+      - name: Build CI bootstrap SQL
+        run: bash scripts/build-ci-bootstrap.sh > /tmp/ci-bootstrap.sql
+      - name: Apply bootstrap SQL
+        run: |
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d postgres             -c "DROP DATABASE IF EXISTS cryptoflip;"
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d postgres             -c "CREATE DATABASE cryptoflip OWNER cryptoflip;"
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d cryptoflip             -v ON_ERROR_STOP=1 -f /tmp/ci-bootstrap.sql
+      - name: Apply node-pg-migrate migrations
+        run: npm run migrate
+      - name: Backend tests (npm test)
+        run: npm test
 
   # ─── MIGRATIONS ─────────────────────────────────────────────
   #
@@ -163,7 +200,6 @@ jobs:
       - run: npm ci
       - name: Lint
         run: npm run lint
-        continue-on-error: true
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Unit tests

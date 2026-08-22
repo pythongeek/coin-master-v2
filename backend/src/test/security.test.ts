@@ -47,7 +47,16 @@ function createMockNext() {
 
 async function runTests() {
   console.log('🧪 Starting CSRF Protection Middleware Tests...');
+  // Compute the test's expected allowedOrigin and force the middleware's
+  // env to match. Without this, the middleware (security.ts:18-26) reads
+  // process.env.NEXT_PUBLIC_APP_URL at module-load time and may end up
+  // with empty allowedOrigins, causing Scenario 2's POST (origin =
+  // 'http://localhost:3000') to be rejected with 403 in CI where the
+  // env var is not set in the runner. This makes the test self-consistent:
+  // whatever allowedOrigin the test computes for its mock, the middleware
+  // also sees as the only allowed origin.
   const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  process.env.NEXT_PUBLIC_APP_URL = allowedOrigin;
 
   try {
     // ══════════════════════════════════════════════════════════════
