@@ -28,6 +28,15 @@
 --   users.withdrawable_balance_coins, not in currencies. Adding BDT
 --   would create a row whose code is referenced nowhere.
 --
+-- Seed-column decisions:
+--   exchange_rate = 0 + exchange_rate_updated_at = NOW() is a sentinel
+--   for "rate not yet fetched." exchange_rate stays 0 until WO-3 (or a
+--   separate price-sync job) populates it. Any future reader MUST treat
+--   0 as "unset" rather than a fresh rate of zero — a zero-rate read
+--   would silently produce zero-value deposits. There is no NOT NULL
+--   constraint on exchange_rate precisely so this sentinel is safe; if
+--   a future schema migration adds one, this seed must be revisited.
+--
 -- Idempotency: ON CONFLICT (id) DO UPDATE keeps the seed deterministic
 -- across re-runs without erroring. Re-applying the migration updates
 -- the row to match the canonical values; it never inserts a duplicate.
