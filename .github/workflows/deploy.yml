@@ -49,12 +49,16 @@ jobs:
           # 3. docker compose build --no-cache backend frontend — rebuilds
           #    the new code into images. (Was previously part of
           #    `up -d --build`; explicit for clarity.)
-          # 4. docker compose up -d migrate — runs node-pg-migrate up via
-          #    the one-shot migrate service. The compose file already
-          #    has backend depending on `migrate: service_completed_successfully`,
-          #    so the explicit up here is belt-and-suspenders: failures
-          #    show up in the deploy log instead of just blocking the
-          #    backend container.
+          # 4. docker compose up --exit-code-from migrate migrate — runs
+          #    node-pg-migrate up via the one-shot migrate service and
+          #    PROMOTES that container's exit code to `docker compose up`
+          #    itself. Without `--exit-code-from`, compose v2 returns 0
+          #    even when a one-shot container exits non-zero, which would
+          #    hide a migration failure behind a green deploy log. The
+          #    belt-and-suspenders pgmigrations check immediately after
+          #    is the second line of defense: a silent migration failure
+          #    would not write to pgmigrations, and the count assertion
+          #    would catch it.
           # 5. docker compose up -d --no-deps backend frontend — starts
           #    the new images.
           # 6. smoke + log watch — same as before.
@@ -62,6 +66,12 @@ jobs:
             "root@${{ secrets.CX23_HOST }}" bash -s <<'REMOTE_EOF'
             set -euo pipefail
             cd /root/coin-master
+            # Capture the migrations dir's highest-numbered migration
+            # filename BEFORE we deploy — this is the "expected" entry
+            # we want to see in pgmigrations after step 4.
+            EXPECTED_MIG=$(ls migrations/ | grep -E '^[0-9]+' | sort -V | tail -1)
+            echo "Expected latest migration: $EXPECTED_MIG"
+
             echo "=== [1/6] backup ==="
             ./scripts/backup.sh dump
             echo "=== [2/6] git pull ==="
@@ -70,7 +80,23 @@ jobs:
             echo "=== [3/6] docker build ==="
             docker compose build --no-cache backend frontend
             echo "=== [4/6] explicit migrate (one-shot) ==="
-            docker compose up migrate
+            # --exit-code-from promotes the migrate container's exit code
+            # to the `docker compose up` invocation itself, so a failed
+            # migration aborts the deploy (set -euo pipefail above).
+            docker compose up --exit-code-from migrate migrate
+            # Second line of defense: assert the expected migration
+            # actually wrote to pgmigrations. Catches the edge case where
+            # --exit-code-from mis-fires (compose-version surprise,
+            # manual operator override, etc.) by querying the DB
+            # directly.
+            APPLIED_COUNT=$(docker exec coin-master-postgres-1 \
+              psql -U cryptoflip -d cryptoflip -tAc \
+              "SELECT count(*) FROM pgmigrations WHERE name = '$EXPECTED_MIG';")
+            if [ "$APPLIED_COUNT" != "1" ]; then
+              echo "FATAL: migration $EXPECTED_MIG not in pgmigrations (count=$APPLIED_COUNT). Aborting deploy."
+              exit 1
+            fi
+            echo "Migration $EXPECTED_MIG applied (pgmigrations row confirmed)."
             echo "=== [5/6] start backend + frontend ==="
             docker compose up -d --no-deps backend frontend
             echo "=== [6/6] smoke + status ==="

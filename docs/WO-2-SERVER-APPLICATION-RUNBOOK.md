@@ -62,8 +62,21 @@ The backend image now contains `049/050/051` in its `migrations/` dir.
 ### 4. Run migrations (one-shot)
 
 ```bash
-ssh root@crazycoin.duckdns.org "cd /root/coin-master && docker compose up migrate"
+ssh root@crazycoin.duckdns.org "cd /root/coin-master && docker compose up --exit-code-from migrate migrate"
 ```
+
+The `--exit-code-from migrate` flag is **mandatory**. Without it, docker compose v2 returns exit 0 even when a one-shot container fails — the deploy would report green, the backend would start against an unmigrated schema, and the failure would surface only when the first real query crashed at runtime. With the flag, a failed migration aborts the deploy with the migrate container's actual exit code.
+
+The deploy script then does a **second-line pgmigrations assertion** immediately after:
+
+```bash
+EXPECTED_MIG=$(ls migrations/ | grep -E '^[0-9]+' | sort -V | tail -1)
+APPLIED_COUNT=$(docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -tAc \
+  "SELECT count(*) FROM pgmigrations WHERE name = '$EXPECTED_MIG';")
+[ "$APPLIED_COUNT" = "1" ] || { echo "FATAL: migration $EXPECTED_MIG not applied"; exit 1; }
+```
+
+This catches the edge case where `--exit-code-from` mis-fires (compose-version surprise, manual operator override, etc.) by querying the DB directly. Belt + suspenders: if either layer says "migration failed," the deploy aborts.
 
 The `migrate` service is defined in `docker-compose.yml` as a one-shot
 container that runs `node dist/migrate-cli/run-migrations.js up`. It
@@ -75,13 +88,13 @@ the error to the operator and exits non-zero.
 **What success looks like** (in the deploy log):
 ```
 [migrate] OK (2662ms).
+Migration 051_deposit_blockchain_tx_id_unique applied (pgmigrations row confirmed).
 ```
 
 **What failure looks like** (any of these aborts the deploy):
 ```
 [migrate] FAILED with exit code 1 after Nms.
-[migrate] The backend container was NOT started — fix the migration
-         and re-run this script before deploying.
+FATAL: migration 051 not in pgmigrations (count=0). Aborting deploy.
 ```
 
 If the migration fails, **DO NOT proceed to step 5**. The schema and
