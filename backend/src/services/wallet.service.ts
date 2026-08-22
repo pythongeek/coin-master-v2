@@ -3,29 +3,16 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { computeLedgerHash, signLedgerEntry } from '../utils/crypto';
 import { InsufficientBalanceError, GameIntegrityError } from '../utils/errors';
 import { logger } from '../config/logger';
-import { query } from '../config/database';
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error'] : ['error'],
 });
 
-// Bridge to existing CryptoFlip user balance columns.
-async function syncExistingBalance(userId: string, amount: Decimal, depositId: string): Promise<void> {
-  try {
-    // Credit the real play-money column; convert net credit to coins as 1:1.
-    const creditCoins = parseFloat(amount.toString());
-    await query('UPDATE users SET wallet_balance_coins = wallet_balance_coins + $1, balance = balance + $1 WHERE id = $2', [creditCoins, userId]);
-    // Record a wallet transaction for audit trail
-    await query(
-      `INSERT INTO wallet_transactions (user_id, type, amount, description, status)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [userId, 'credit', creditCoins, `Crypto deposit ${depositId}`, 'completed']
-    );
-  } catch (err) {
-    logger.error('Failed to sync existing user balance', { userId, depositId, error: (err as Error).message });
-    throw new GameIntegrityError('Balance sync failed during deposit');
-  }
-}
+// USDCoin → BDT (legacy play-money column) conversion rate.
+// All CryptoFlip play-money columns are 1:1 with USDT at the user
+// surface, so the conversion is a no-op; the value is a named
+// constant so future margin changes have one home.
+const USDT_TO_PLAY_COINS = 1;
 
 export class WalletService {
   async getBalance(userId: string, currencyId: string) {
@@ -240,6 +227,27 @@ export class WalletService {
     depositId: string,
     description: string
   ): Promise<void> {
+    // Idempotency: processDeposit is safe to call twice for the same
+    // deposit. The unique constraint on `ledger_entries.referenceId`
+    // (`deposit:${depositId}`) makes the second invocation's ledger
+    // write a conflict. We catch that conflict at the application
+    // level BEFORE the transaction starts, and return early as a
+    // no-op. This makes the function safe to call from retry paths
+    // (webhook redelivery, admin re-queue, etc.) without risking a
+    // double credit.
+    const existingEntry = await prisma.ledgerEntry.findUnique({
+      where: { referenceId: `deposit:${depositId}` },
+    });
+    if (existingEntry) {
+      logger.info('processDeposit: ledger entry already exists, treating as idempotent no-op', {
+        depositId,
+        existingEntryId: existingEntry.id,
+      });
+      return;
+    }
+
+    const creditCoins = amount.times(USDT_TO_PLAY_COINS).toDecimalPlaces(8);
+
     await prisma.$transaction(async (tx) => {
       const balance = await tx.userBalance.findUnique({
         where: { userId_currencyId: { userId, currencyId } },
@@ -248,6 +256,7 @@ export class WalletService {
       const beforeBalance = balance?.availableBalance || new Decimal(0);
       const afterBalance = beforeBalance.plus(amount);
 
+      // ── Prisma-side writes: user_balances + ledger_entries ──
       await tx.userBalance.upsert({
         where: { userId_currencyId: { userId, currencyId } },
         create: {
@@ -278,6 +287,50 @@ export class WalletService {
           type: 'crypto_deposit',
         },
       });
+
+      // ── Legacy-side writes: users.{wallet_balance_coins,
+      //    withdrawable_balance_coins} + wallet_transactions.
+      //    These columns power the live game (the 2x-multiplier bet
+      //    path reads wallet_balance_coins; the trigger
+      //    trg_sync_user_balance derives `users.balance` from
+      //    withdrawable + bonus on every UPDATE).
+      //    Same transaction = atomic with the Prisma writes. If any
+      //    statement in the tx throws, all writes roll back.
+      //
+      //    $executeRaw is the Prisma-canonical way to write raw SQL
+      //    that participates in the surrounding transaction. The
+      //    previous syncExistingBalance used the raw pg pool (query()
+      //    imported from '../config/database'), which runs OUTSIDE the
+      //    transaction — that was the bug shape the audit flagged.
+      //
+      //    The UPDATE must increment `withdrawable_balance_coins`
+      //    (NOT `balance` directly). The trg_sync_user_balance
+      //    trigger recomputes `balance = bonus + withdrawable` on
+      //    every row update, so directly incrementing `balance` would
+      //    be silently overwritten by the trigger back to its
+      //    pre-update value. The split-pair credit is the
+      //    schema-correct way; the trigger then keeps `balance` in
+      //    sync.
+      //
+      //    wallet_transactions columns (real schema.sql):
+      //      id, user_id, type, amount_coins, currency, source, note,
+      //      metadata, created_at
+      //    The previous INSERT referenced amount/description/status —
+      //    none of which exist. That would have crashed on first
+      //    execution. Fixed by mapping to the real columns.
+      await tx.$executeRaw`
+        UPDATE users
+           SET wallet_balance_coins       = wallet_balance_coins       + ${creditCoins}::numeric,
+               withdrawable_balance_coins = withdrawable_balance_coins + ${creditCoins}::numeric
+         WHERE id = ${userId}::uuid
+      `;
+      await tx.$executeRaw`
+        INSERT INTO wallet_transactions
+          (user_id, type, amount_coins, currency, source, note, metadata)
+        VALUES
+          (${userId}::uuid, 'topup', ${creditCoins}::numeric, 'COIN', 'crypto_deposit',
+           ${`Crypto deposit ${depositId}`}, ${JSON.stringify({ depositId, description })}::jsonb)
+      `;
     }, {
       isolationLevel: 'Serializable',
     });
