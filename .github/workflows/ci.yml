@@ -102,7 +102,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://cryptoflip:***@localhost:5432/cryptoflip
+      DATABASE_URL: postgres://cryptoflip:cryptoflip@localhost:5432/cryptoflip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -121,16 +121,16 @@ jobs:
       # instead of relying on /docker-entrypoint-initdb.d/.
       - name: Apply bootstrap SQL
         run: |
-          PGPASSWORD=*** psql -h localhost -U cryptoflip -d postgres             -c "DROP DATABASE IF EXISTS cryptoflip;"
-          PGPASSWORD=*** psql -h localhost -U cryptoflip -d postgres             -c "CREATE DATABASE cryptoflip OWNER cryptoflip;"
-          PGPASSWORD=*** psql -h localhost -U cryptoflip -d cryptoflip             -v ON_ERROR_STOP=1 -f /tmp/ci-bootstrap.sql
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d postgres             -c "DROP DATABASE IF EXISTS cryptoflip;"
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d postgres             -c "CREATE DATABASE cryptoflip OWNER cryptoflip;"
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d cryptoflip             -v ON_ERROR_STOP=1 -f /tmp/ci-bootstrap.sql
       # Sanity check: confirm the bootstrap SQL loaded correctly.
       # If the bootstrap was incomplete, some later table like
       # 'server_seeds' will be missing and the dry-run below will
       # show what reference fails.
       - name: Verify base tables exist after bootstrap
         run: |
-          PGPASSWORD=*** psql -h localhost -U cryptoflip -d cryptoflip -tAc             "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','audit_log','server_seeds','wallet_settings','rate_cache');"
+          PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d cryptoflip -tAc             "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','audit_log','server_seeds','wallet_settings','rate_cache');"
       # Dry-run: parses every SQL file and prints the would-be
       # statements without executing. Cheap first line of defense.
       - name: node-pg-migrate up --dry-run
