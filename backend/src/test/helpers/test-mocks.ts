@@ -23,6 +23,14 @@
  */
 
 import Module from 'module';
+import path from 'path';
+
+// Absolute paths for modules we install mocks onto. `tryRequire` below
+// invokes Module.prototype.require, which resolves relative paths against
+// Module's own location rather than test-mocks.ts. Using absolute paths
+// derived from __dirname sidesteps that and is the only reliable way to
+// load these .ts modules under ts-node from a Module.prototype.require call.
+const REDIS_MODULE_PATH = path.resolve(__dirname, '..', '..', 'config', 'redis');
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -542,11 +550,32 @@ class MockRedisClass {
     _redisSet(key, String(next));
     return next;
   }
+  // incrbyfloat: ioredis returns the new value as a string. Used by
+  // config/redis.ts (streak bonus + lightning budget helpers).
+  async incrbyfloat(key: string, delta: number) {
+    const current = parseFloat(_redisGet(key) || '0');
+    const next = current + Number(delta);
+    _redisSet(key, String(next));
+    return String(next);
+  }
+  // getdel: read-and-delete in one round-trip. ioredis 5+ ships this; some
+  // modules use it as an atomic claim-token primitive.
+  async getdel(key: string) {
+    const v = _redisGet(key);
+    if (v !== null) _redisStore.delete(key);
+    return v;
+  }
   async info() { return 'redis_version:mock'; }
   async flushdb() { _redisStore.clear(); return 'OK'; }
   async flushall() { _redisStore.clear(); return 'OK'; }
   async quit() { return 'OK'; }
   async ping() { return 'PONG'; }
+  // connect()/disconnect(): ioredis lifecycle. config/redis.ts:58 calls
+  // redis.connect() at module load; missing this caused every test that
+  // transitively imports config/redis.ts to crash with
+  // "TypeError: exports.redis.connect is not a function".
+  async connect() { return this; }
+  disconnect() { return this; }
   pipeline() { return this; }
   multi() { return this; }
   exec() { return []; }
@@ -808,9 +837,12 @@ export function installCommonMocks(options?: {
 
   // Install redis mock — replace the exported redis instance so cache.ts
   // helpers (getOrSet, setCache, etc.) use the in-memory store.
-  const redisModule = tryRequire(require.resolve('../../config/redis'))
-    || tryRequire('../../config/redis')
-    || tryRequire('../config/redis');
+  // Use an absolute path: relative resolves are evaluated against
+  // Module.prototype, not test-mocks.ts, so the original '../../config/redis'
+  // never pointed at backend/src/config/redis.ts and the install was silently
+  // skipped — causing every test that transitively imports config/redis.ts
+  // to crash with "exports.redis.connect is not a function".
+  const redisModule = tryRequire(REDIS_MODULE_PATH);
   // Replace the `redis` instance with our own MockRedisClass instance and
   // overlay the named helper functions (lockBet, unlockBet, etc.).
   if (redisModule) {
