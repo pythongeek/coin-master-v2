@@ -76,6 +76,15 @@ jobs:
           PGPASSWORD=cryptoflip psql -h localhost -U cryptoflip -d cryptoflip             -v ON_ERROR_STOP=1 -f /tmp/ci-bootstrap.sql
       - name: Apply node-pg-migrate migrations
         run: npm run migrate
+      # WO-2 parity gate: prisma/schema.prisma declares 7 enums + 8 tables
+      # that production code (Prisma client) generates SQL against. If
+      # the schema drifts from the migrated DB (someone adds a model
+      # but forgets to write a migration), the client compiles fine but
+      # the first real query crashes with `relation "X" does not exist`.
+      # This gate runs after the migration apply and fails the build if
+      # any declared type or table is missing from the public schema.
+      - name: Prisma ↔ DB parity check
+        run: npm run lint:prisma-parity
       - name: Backend tests (npm test)
         run: npm test
 

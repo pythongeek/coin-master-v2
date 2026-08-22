@@ -17,6 +17,7 @@
     "migrate:dry-run": "ts-node src/migrate-cli/run-migrations.ts up --dry-run",
     "migrate:create": "node-pg-migrate create --migrations-dir migrations",
     "lint:migrations": "node scripts/lint-migrations.js migrations",
+    "lint:prisma-parity": "node scripts/lint-prisma-parity.js",
     "price:sync": "npx ts-node src/jobs/price-sync.ts",
     "deposit:monitor": "npx ts-node src/jobs/deposit-monitor.ts",
     "prisma:generate": "prisma generate",
