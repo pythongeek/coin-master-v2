@@ -160,6 +160,37 @@ async function runTests() {
       throw new Error(`Expected referer check to pass. Status: ${m5.getStatusCode()}`);
     }
 
+    // ══════════════════════════════════════════════════════════════
+    //  SCENARIO 6: Production browser-traffic path
+    // ══════════════════════════════════════════════════════════════
+    // The live Cloudflare tunnel sets Host: crazycoin.duckdns.org on the
+    // backend's incoming request while the browser sends Origin:
+    // https://crazycoin.duckdns.org. The CSRF middleware must accept
+    // this — the same-host fallback (security.ts:60-62) covers the case
+    // where the allowed-origin list contains the IP:port but the browser
+    // sends the DNS hostname. This scenario reproduces that exact pair
+    // so a future regression that breaks same-host fallback is caught here.
+    console.log('\nScenario 6: Testing production browser path (tunnel Host === Origin hostname)...');
+
+    const req6 = createMockRequest('POST', {
+      host: 'crazycoin.duckdns.org',
+      origin: 'https://crazycoin.duckdns.org',
+    });
+    const m6 = createMockResponse();
+    const n6 = createMockNext();
+
+    await csrfMiddleware(req6, m6.res, n6.next);
+
+    if (n6.getCalls() === 1 && m6.getStatusCode() === 200) {
+      console.log('✅ Production browser path (tunnel Host matching Origin hostname) accepted.');
+    } else {
+      throw new Error(
+        `Production browser path blocked: Origin=${req6.headers.origin}, ` +
+        `Host=${req6.headers.host}. Status: ${m6.getStatusCode()}, Next: ${n6.getCalls()}. ` +
+        `This would block every browser POST from the deployed frontend.`
+      );
+    }
+
     console.log('\n🎉 All CSRF protection integration tests passed successfully!');
     process.exit(0);
   } catch (error) {
