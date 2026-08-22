@@ -155,14 +155,28 @@ for (const file of testFiles) {
   console.log(`\n========================================`);
   console.log(`🧪 Running test: ${file}`);
   console.log(`========================================`);
+  // The CSRF middleware reads NEXT_PUBLIC_APP_URL at module-load time and
+  // security.test.ts reads it for its mock origin. If a stray value leaks
+  // in from the CI runner (e.g. a frontend-job env that survived onto the
+  // shared runner image), the test's mock origin and the middleware's
+  // allowedOrigins disagree and Scenario 2 returns 403 unexpectedly.
+  // Scrub these vars before each test so the contract is the default:
+  // NEXT_PUBLIC_APP_URL unset, TUNNEL_APP_URL unset, EXTRA_ALLOWED_ORIGINS
+  // unset, CSRF_REQUIRE_BROWSER_ORIGIN unset. NODE_ENV is preserved — the
+  // security tests intentionally exercise the production-mode branch.
+  const testEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    JWT_SECRET: JWT_SECRET,
+    ADMIN_2FA_REQUIRED: 'false',
+  };
+  delete testEnv.NEXT_PUBLIC_APP_URL;
+  delete testEnv.TUNNEL_APP_URL;
+  delete testEnv.EXTRA_ALLOWED_ORIGINS;
+  delete testEnv.CSRF_REQUIRE_BROWSER_ORIGIN;
   try {
     execSync(`npx ts-node --require "${path.join(__dirname, 'setup.ts')}" "${filePath}"`, {
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        JWT_SECRET: JWT_SECRET,
-        ADMIN_2FA_REQUIRED: 'false',
-      },
+      env: testEnv,
     });
     console.log(`✅ Passed: ${file}`);
   } catch (error) {
