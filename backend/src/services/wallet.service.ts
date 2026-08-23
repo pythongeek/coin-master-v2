@@ -3,29 +3,16 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { computeLedgerHash, signLedgerEntry } from '../utils/crypto';
 import { InsufficientBalanceError, GameIntegrityError } from '../utils/errors';
 import { logger } from '../config/logger';
-import { query } from '../config/database';
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'development' ? ['query', 'error'] : ['error'],
 });
 
-// Bridge to existing CryptoFlip user balance columns.
-async function syncExistingBalance(userId: string, amount: Decimal, depositId: string): Promise<void> {
-  try {
-    // Credit the real play-money column; convert net credit to coins as 1:1.
-    const creditCoins = parseFloat(amount.toString());
-    await query('UPDATE users SET wallet_balance_coins = wallet_balance_coins + $1, balance = balance + $1 WHERE id = $2', [creditCoins, userId]);
-    // Record a wallet transaction for audit trail
-    await query(
-      `INSERT INTO wallet_transactions (user_id, type, amount, description, status)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [userId, 'credit', creditCoins, `Crypto deposit ${depositId}`, 'completed']
-    );
-  } catch (err) {
-    logger.error('Failed to sync existing user balance', { userId, depositId, error: (err as Error).message });
-    throw new GameIntegrityError('Balance sync failed during deposit');
-  }
-}
+// USDCoin → BDT (legacy play-money column) conversion rate.
+// All CryptoFlip play-money columns are 1:1 with USDT at the user
+// surface, so the conversion is a no-op; the value is a named
+// constant so future margin changes have one home.
+const USDT_TO_PLAY_COINS = 1;
 
 export class WalletService {
   async getBalance(userId: string, currencyId: string) {
@@ -240,6 +227,107 @@ export class WalletService {
     depositId: string,
     description: string
   ): Promise<void> {
+    // Idempotency layer 1 (optimistic pre-check): the unique constraint
+    // on `ledger_entries.referenceId` (`deposit:${depositId}`) makes
+    // *sequential* duplicates a no-op. We catch that case BEFORE the
+    // transaction starts and return early. This handles the common
+    // case of webhook redelivery arriving after the first write has
+    // committed.
+    //
+    // Idempotency layer 2 (concurrent duplicates — see Scenario 5 in
+    // the test file): two webhook deliveries can pass the pre-check
+    // simultaneously and both enter the transaction. The unique
+    // constraint catches the second one with P2002 (unique violation
+    // from the INSERT). P2002 unambiguously means "another writer
+    // already committed the same referenceId" — a duplicate. We
+    // absorb it as a no-op. This avoids the noisy Sentry-bound
+    // self-heal-via-retry path that 500'd the webhook caller.
+    //
+    // Idempotency layer 3 (concurrent non-duplicates — see Scenario 6
+    // in the test file): Serializable isolation throws 40001 /
+    // P2034 for ANY write-write conflict, including two DIFFERENT
+    // deposits racing on the same user's user_balances row. A 40001
+    // is *ambiguous* — we don't know if the conflict was a true
+    // duplicate (in which case absorb) or a legitimate concurrent
+    // credit for a different deposit (in which case absorbing
+    // silently drops money). The Serializable contract says these
+    // errors are retryable; we honor that: re-run the pre-check
+    // (a true duplicate will now have a committed row → no-op), and
+    // only then retry the tx. Bounded to 3 attempts.
+
+    const MAX_SERIALIZATION_RETRIES = 3;
+
+    const creditCoins = amount.times(USDT_TO_PLAY_COINS).toDecimalPlaces(8);
+
+    for (let attempt = 0; attempt < MAX_SERIALIZATION_RETRIES; attempt++) {
+      // Re-run the pre-check on every attempt. If the previous
+      // attempt collided with a true duplicate, the winning tx will
+      // have committed by now and we'll catch it here, returning a
+      // clean no-op. If the previous attempt collided with a
+      // legitimate concurrent credit, this pre-check still misses
+      // and the tx proceeds.
+      const existingEntry = await prisma.ledgerEntry.findUnique({
+        where: { referenceId: `deposit:${depositId}` },
+      });
+      if (existingEntry) {
+        logger.info('processDeposit: ledger entry already exists, treating as idempotent no-op', {
+          depositId,
+          existingEntryId: existingEntry.id,
+          attempt,
+        });
+        return;
+      }
+
+      try {
+        await this.executeTransactionCredit(userId, currencyId, amount, depositId, description, creditCoins);
+        return; // success
+      } catch (err) {
+        // P2002 on referenceId is the only error class we know for
+        // certain is a true duplicate — the unique constraint fired,
+        // which only happens if another writer committed the same
+        // depositId while we were inside the tx. Absorb and return.
+        if (isUniqueViolationOnLedgerReference(err)) {
+          logger.info('processDeposit: concurrent duplicate absorbed by constraint', {
+            depositId,
+            prismaCode: (err as any)?.code,
+            attempt,
+          });
+          return;
+        }
+        // 40001 / P2034 / 40P01 (serialization/deadlock) is
+        // ambiguous — could be a true duplicate (rare: same
+        // depositId but pre-check raced differently than expected)
+        // OR a legitimate concurrent credit for a DIFFERENT
+        // depositId hitting the same user_balances row. The
+        // Serializable contract says these errors are retryable; we
+        // honor that on every attempt. The pre-check on the next
+        // loop iteration handles the "true duplicate" case.
+        if (isPostgresSerializationFailure(err) && attempt + 1 < MAX_SERIALIZATION_RETRIES) {
+          logger.warn('processDeposit: serialization conflict, retrying with fresh pre-check', {
+            depositId,
+            attempt: attempt + 1,
+            prismaCode: (err as any)?.code,
+          });
+          continue;
+        }
+        // Either: not a retryable error, or we've exhausted retries.
+        // On a 40001 after exhausting retries, the pre-check has had
+        // 3 chances to catch a duplicate. None found → it really is
+        // a conflict we can't resolve → re-throw so the caller can
+        // handle it (provider retry, Sentry alert, manual review).
+        throw err;
+      }
+    }
+  }
+
+  private async executeTransactionCredit(
+    userId: string,
+    currencyId: string,
+    amount: Decimal,
+    depositId: string,
+    description: string,
+    creditCoins: Decimal
+  ): Promise<void> {
     await prisma.$transaction(async (tx) => {
       const balance = await tx.userBalance.findUnique({
         where: { userId_currencyId: { userId, currencyId } },
@@ -248,6 +336,7 @@ export class WalletService {
       const beforeBalance = balance?.availableBalance || new Decimal(0);
       const afterBalance = beforeBalance.plus(amount);
 
+      // ── Prisma-side writes: user_balances + ledger_entries ──
       await tx.userBalance.upsert({
         where: { userId_currencyId: { userId, currencyId } },
         create: {
@@ -278,6 +367,50 @@ export class WalletService {
           type: 'crypto_deposit',
         },
       });
+
+      // ── Legacy-side writes: users.{wallet_balance_coins,
+      //    withdrawable_balance_coins} + wallet_transactions.
+      //    These columns power the live game (the 2x-multiplier bet
+      //    path reads wallet_balance_coins; the trigger
+      //    trg_sync_user_balance derives `users.balance` from
+      //    withdrawable + bonus on every UPDATE).
+      //    Same transaction = atomic with the Prisma writes. If any
+      //    statement in the tx throws, all writes roll back.
+      //
+      //    $executeRaw is the Prisma-canonical way to write raw SQL
+      //    that participates in the surrounding transaction. The
+      //    previous syncExistingBalance used the raw pg pool (query()
+      //    imported from '../config/database'), which runs OUTSIDE the
+      //    transaction — that was the bug shape the audit flagged.
+      //
+      //    The UPDATE must increment `withdrawable_balance_coins`
+      //    (NOT `balance` directly). The trg_sync_user_balance
+      //    trigger recomputes `balance = bonus + withdrawable` on
+      //    every row update, so directly incrementing `balance` would
+      //    be silently overwritten by the trigger back to its
+      //    pre-update value. The split-pair credit is the
+      //    schema-correct way; the trigger then keeps `balance` in
+      //    sync.
+      //
+      //    wallet_transactions columns (real schema.sql):
+      //      id, user_id, type, amount_coins, currency, source, note,
+      //      metadata, created_at
+      //    The previous INSERT referenced amount/description/status —
+      //    none of which exist. That would have crashed on first
+      //    execution. Fixed by mapping to the real columns.
+      await tx.$executeRaw`
+        UPDATE users
+           SET wallet_balance_coins       = wallet_balance_coins       + ${creditCoins}::numeric,
+               withdrawable_balance_coins = withdrawable_balance_coins + ${creditCoins}::numeric
+         WHERE id = ${userId}::uuid
+      `;
+      await tx.$executeRaw`
+        INSERT INTO wallet_transactions
+          (user_id, type, amount_coins, currency, source, note, metadata)
+        VALUES
+          (${userId}::uuid, 'topup', ${creditCoins}::numeric, 'COIN', 'crypto_deposit',
+           ${`Crypto deposit ${depositId}`}, ${JSON.stringify({ depositId, description })}::jsonb)
+      `;
     }, {
       isolationLevel: 'Serializable',
     });
@@ -466,3 +599,48 @@ export class WalletService {
 }
 
 export const walletService = new WalletService();
+
+// ── Idempotency helpers (layer 2 in processDeposit) ─────────────
+// Placed at the bottom so the call site above can reference them.
+// Function declarations are hoisted within the module, so this
+// ordering is purely cosmetic.
+//
+// Prisma surfaces unique-constraint violations as
+//   { code: 'P2002', meta: { target: ['ledger_entries_reference_id_key', ...] } }
+// Serializable-isolation conflicts surface as raw Postgres errors with
+//   { code: '40001' } (serialization_failure) or '40P01' (deadlock).
+// Either way, the database did its job — only one writer committed.
+// We treat both as idempotent no-ops so the loser of a concurrent
+// race doesn't propagate a 500 to the webhook caller.
+function isUniqueViolationOnLedgerReference(err: unknown): boolean {
+  const e = err as any;
+  if (e?.code !== 'P2002') return false;
+  const target = e?.meta?.target;
+  if (Array.isArray(target)) {
+    return target.some((t: string) => typeof t === 'string' && t.includes('reference'));
+  }
+  // meta.target is sometimes just a string; sometimes omitted.
+  // Fall back to the message text — P2002 messages on this column
+  // include the column name.
+  const msg = String(e?.message ?? '');
+  return msg.includes('reference_id') || msg.includes('referenceId');
+}
+
+function isPostgresSerializationFailure(err: unknown): boolean {
+  const e = err as any;
+  // Prisma 5.x surfaces a serialization failure in one of several places:
+  //   - err.code === 'P2034'          (PrismaClientKnownRequestError mapped)
+  //   - err.code === '40001' or '40P01' (raw SQLSTATE in PrismaClientUnknownRequestError)
+  //   - err.meta.code                   (sometimes used as a fallback)
+  //   - the raw SQLSTATE leaks into the message text on Prisma 5.x.
+  // We match on all of these to avoid missing the race.
+  if (e?.code === 'P2034') return true;
+  if (e?.code === '40001' || e?.code === '40P01') return true;
+  if (e?.meta?.code === '40001' || e?.meta?.code === '40P01') return true;
+  const msg = String(e?.message ?? '');
+  if (msg.includes('40001') || msg.includes('serialization_failure')
+      || msg.includes('deadlock detected') || msg.includes('could not serialize')) {
+    return true;
+  }
+  return false;
+}
