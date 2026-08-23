@@ -463,7 +463,107 @@ async function runTests() {
     await cleanupTestUser(user5);
   }
 
-  console.log('');
+  // ─────────────────────────────────────────────────────────────────
+// Scenario 6: Two DIFFERENT depositIds, same user, concurrent →
+//            both credits must land (no silent drop on 40001)
+// ─────────────────────────────────────────────────────────────────
+// Fires two processDeposit calls in parallel for *different*
+// depositIds on the same user. Both target the same
+// user_balances row, so Serializable isolation can throw 40001
+// on one of them. This is the production-shape scenario:
+//   1. User makes two deposits minutes apart.
+//   2. A live webhook races your reconciliation loop's
+//      handlePaymentWebhook for a *different* order of the same
+//      user.
+//   3. Both transactions serialize-conflict on the user's
+//      user_balances row.
+//
+// Scenario 5 covers the same-depositId duplicate path. Scenario
+// 6 covers the different-depositIds path — the one where absorbing
+// 40001 as a no-op silently drops a real deposit. The retry
+// loop must rerun and let the second credit land; the final
+// balance must equal the sum of both deposits.
+//
+// Assertion: BOTH credits land (2 ledger_entries, 2
+// wallet_transactions, both balance columns sum to the total).
+// Neither call rejected. The retry-then-no-op is acceptable for
+// the false-duplicate edge case (where retry attempt 2's pre-check
+// finds a committed row), but the default behavior is "both
+// succeed via retry".
+console.log('\nScenario 6: Two different depositIds (same user) — both must credit');
+const user6 = await seedTestUser(usdtCurrencyId);
+const depositIdA = uuidv4();
+const depositIdB = uuidv4();
+const amountA = new Decimal('50.12345600');
+const amountB = new Decimal('75.65432100');
+const expectedTotal = amountA.plus(amountB); // 125.777777
+
+try {
+  const result = await Promise.allSettled([
+    walletService.processDeposit(user6, usdtCurrencyId, amountA, depositIdA, 'concurrent-A'),
+    walletService.processDeposit(user6, usdtCurrencyId, amountB, depositIdB, 'concurrent-B'),
+  ]);
+
+  const fulfilled = result.filter(r => r.status === 'fulfilled');
+  const rejected = result.filter(r => r.status === 'rejected');
+  assert(
+    fulfilled.length === 2,
+    `both calls fulfilled (retry loop resolved the conflict): ${fulfilled.length}/2 fulfilled, ${rejected.length} rejected`
+  );
+  // If the retry path falls back to "exhausted retries → rethrow",
+  // surface the error message so the operator can see WHY (only
+  // possible if 40001 fired 3 times in a row).
+  if (rejected.length > 0) {
+    const reason = (rejected[0] as PromiseRejectedResult).reason;
+    console.log(`  [debug] rejected reason: ${String(reason).slice(0, 200)}`);
+  }
+
+  // Both credits must have landed.
+  const ubRow6 = await prisma.userBalance.findUnique({
+    where: { userId_currencyId: { userId: user6, currencyId: usdtCurrencyId } },
+  });
+  assert(
+    ubRow6 && parseFloat(ubRow6.availableBalance.toString()) === parseFloat(expectedTotal.toString()),
+    `user_balances.availableBalance = ${expectedTotal} (sum of both deposits) (got ${ubRow6?.availableBalance.toString()})`
+  );
+
+  const ledgerRows6 = await getLedgerEntries(user6);
+  assert(
+    ledgerRows6.length === 2,
+    `ledger_entries has EXACTLY 2 deposit rows (got ${ledgerRows6.length})`
+  );
+  // Verify the two depositIds are the ones we sent (no merging,
+  // no absorption).
+  const referenceIds = new Set(ledgerRows6.map(r => r.reference_id));
+  assert(
+    referenceIds.has(`deposit:${depositIdA}`),
+    `ledger_entries contains deposit:${depositIdA.slice(0, 12)}…`
+  );
+  assert(
+    referenceIds.has(`deposit:${depositIdB}`),
+    `ledger_entries contains deposit:${depositIdB.slice(0, 12)}…`
+  );
+
+  const walletTxs6 = await getWalletTransactions(user6);
+  assert(
+    walletTxs6.length === 2,
+    `wallet_transactions has EXACTLY 2 topup rows (got ${walletTxs6.length})`
+  );
+
+  const userRow6 = await getUserLegacyCols(user6);
+  assert(
+    userRow6 && parseFloat(userRow6.wallet_balance_coins) === parseFloat(expectedTotal.toString()),
+    `users.wallet_balance_coins = ${expectedTotal} (sum) (got ${userRow6?.wallet_balance_coins})`
+  );
+  assert(
+    userRow6 && parseFloat(userRow6.balance) === parseFloat(expectedTotal.toString()),
+    `users.balance (trigger-derived) = ${expectedTotal} (sum) (got ${userRow6?.balance})`
+  );
+} finally {
+  await cleanupTestUser(user6);
+}
+
+console.log('');
   if (failed) {
     console.error('FAILED: WO-3 atomic-deposit tests did not all pass');
     process.exit(1);
