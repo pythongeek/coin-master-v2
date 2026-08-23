@@ -227,14 +227,25 @@ export class WalletService {
     depositId: string,
     description: string
   ): Promise<void> {
-    // Idempotency: processDeposit is safe to call twice for the same
-    // deposit. The unique constraint on `ledger_entries.referenceId`
-    // (`deposit:${depositId}`) makes the second invocation's ledger
-    // write a conflict. We catch that conflict at the application
-    // level BEFORE the transaction starts, and return early as a
-    // no-op. This makes the function safe to call from retry paths
-    // (webhook redelivery, admin re-queue, etc.) without risking a
-    // double credit.
+    // Idempotency layer 1 (optimistic pre-check): the unique constraint
+    // on `ledger_entries.referenceId` (`deposit:${depositId}`) makes
+    // *sequential* duplicates a no-op. We catch that case BEFORE the
+    // transaction starts and return early. This handles the common
+    // case of webhook redelivery arriving after the first write has
+    // committed.
+    //
+    // Idempotency layer 2 (concurrent duplicates — see Scenario 5 in
+    // the test file): two webhook deliveries can pass the pre-check
+    // simultaneously and both enter the transaction. The unique
+    // constraint catches the second one with P2002 (unique violation
+    // from the INSERT) or the Serializable isolation throws 40001
+    // (serialization failure) when both try to write the same row.
+    // We catch both error codes below and treat them as the same
+    // idempotent no-op the pre-check would have produced. Without this
+    // catch, the loser propagates a 500 to the webhook caller, the
+    // provider retries, and on the next attempt the pre-check
+    // catches it — noisy, Sentry-bound, and (worse) leaves an
+    // unhandled exception in financial code.
     const existingEntry = await prisma.ledgerEntry.findUnique({
       where: { referenceId: `deposit:${depositId}` },
     });
@@ -248,92 +259,111 @@ export class WalletService {
 
     const creditCoins = amount.times(USDT_TO_PLAY_COINS).toDecimalPlaces(8);
 
-    await prisma.$transaction(async (tx) => {
-      const balance = await tx.userBalance.findUnique({
-        where: { userId_currencyId: { userId, currencyId } },
-      });
+    try {
+      await prisma.$transaction(async (tx) => {
+        const balance = await tx.userBalance.findUnique({
+          where: { userId_currencyId: { userId, currencyId } },
+        });
 
-      const beforeBalance = balance?.availableBalance || new Decimal(0);
-      const afterBalance = beforeBalance.plus(amount);
+        const beforeBalance = balance?.availableBalance || new Decimal(0);
+        const afterBalance = beforeBalance.plus(amount);
 
-      // ── Prisma-side writes: user_balances + ledger_entries ──
-      await tx.userBalance.upsert({
-        where: { userId_currencyId: { userId, currencyId } },
-        create: {
+        // ── Prisma-side writes: user_balances + ledger_entries ──
+        await tx.userBalance.upsert({
+          where: { userId_currencyId: { userId, currencyId } },
+          create: {
+            userId,
+            currencyId,
+            availableBalance: amount,
+            totalDeposited: amount,
+          },
+          update: {
+            availableBalance: { increment: amount },
+            totalDeposited: { increment: amount },
+            version: { increment: 1 },
+            lastUpdatedAt: new Date(),
+          },
+        });
+
+        await this.createLedgerEntry(tx, {
           userId,
           currencyId,
-          availableBalance: amount,
-          totalDeposited: amount,
-        },
-        update: {
-          availableBalance: { increment: amount },
-          totalDeposited: { increment: amount },
-          version: { increment: 1 },
-          lastUpdatedAt: new Date(),
-        },
-      });
+          entryType: 'deposit',
+          amount,
+          balanceBefore: beforeBalance,
+          balanceAfter: afterBalance,
+          referenceId: `deposit:${depositId}`,
+          metadata: {
+            depositId,
+            description,
+            type: 'crypto_deposit',
+          },
+        });
 
-      await this.createLedgerEntry(tx, {
-        userId,
-        currencyId,
-        entryType: 'deposit',
-        amount,
-        balanceBefore: beforeBalance,
-        balanceAfter: afterBalance,
-        referenceId: `deposit:${depositId}`,
-        metadata: {
+        // ── Legacy-side writes: users.{wallet_balance_coins,
+        //    withdrawable_balance_coins} + wallet_transactions.
+        //    These columns power the live game (the 2x-multiplier bet
+        //    path reads wallet_balance_coins; the trigger
+        //    trg_sync_user_balance derives `users.balance` from
+        //    withdrawable + bonus on every UPDATE).
+        //    Same transaction = atomic with the Prisma writes. If any
+        //    statement in the tx throws, all writes roll back.
+        //
+        //    $executeRaw is the Prisma-canonical way to write raw SQL
+        //    that participates in the surrounding transaction. The
+        //    previous syncExistingBalance used the raw pg pool (query()
+        //    imported from '../config/database'), which runs OUTSIDE the
+        //    transaction — that was the bug shape the audit flagged.
+        //
+        //    The UPDATE must increment `withdrawable_balance_coins`
+        //    (NOT `balance` directly). The trg_sync_user_balance
+        //    trigger recomputes `balance = bonus + withdrawable` on
+        //    every row update, so directly incrementing `balance` would
+        //    be silently overwritten by the trigger back to its
+        //    pre-update value. The split-pair credit is the
+        //    schema-correct way; the trigger then keeps `balance` in
+        //    sync.
+        //
+        //    wallet_transactions columns (real schema.sql):
+        //      id, user_id, type, amount_coins, currency, source, note,
+        //      metadata, created_at
+        //    The previous INSERT referenced amount/description/status —
+        //    none of which exist. That would have crashed on first
+        //    execution. Fixed by mapping to the real columns.
+        await tx.$executeRaw`
+          UPDATE users
+             SET wallet_balance_coins       = wallet_balance_coins       + ${creditCoins}::numeric,
+                 withdrawable_balance_coins = withdrawable_balance_coins + ${creditCoins}::numeric
+           WHERE id = ${userId}::uuid
+        `;
+        await tx.$executeRaw`
+          INSERT INTO wallet_transactions
+            (user_id, type, amount_coins, currency, source, note, metadata)
+          VALUES
+            (${userId}::uuid, 'topup', ${creditCoins}::numeric, 'COIN', 'crypto_deposit',
+             ${`Crypto deposit ${depositId}`}, ${JSON.stringify({ depositId, description })}::jsonb)
+        `;
+      }, {
+        isolationLevel: 'Serializable',
+      });
+    } catch (err) {
+      // Idempotency layer 2: concurrent duplicates that race past the
+      // pre-check surface as P2002 (unique violation — second writer's
+      // ledger_entries INSERT hits the constraint) or 40001
+      // (serialization failure — both writers' Serializable tx tried
+      // to commit conflicting changes). Either way the constraint did
+      // its job: only one credit landed. Treat it as the same
+      // idempotent no-op layer 1 would have produced.
+      if (isUniqueViolationOnLedgerReference(err) || isPostgresSerializationFailure(err)) {
+        logger.info('processDeposit: concurrent duplicate absorbed by constraint', {
           depositId,
-          description,
-          type: 'crypto_deposit',
-        },
-      });
-
-      // ── Legacy-side writes: users.{wallet_balance_coins,
-      //    withdrawable_balance_coins} + wallet_transactions.
-      //    These columns power the live game (the 2x-multiplier bet
-      //    path reads wallet_balance_coins; the trigger
-      //    trg_sync_user_balance derives `users.balance` from
-      //    withdrawable + bonus on every UPDATE).
-      //    Same transaction = atomic with the Prisma writes. If any
-      //    statement in the tx throws, all writes roll back.
-      //
-      //    $executeRaw is the Prisma-canonical way to write raw SQL
-      //    that participates in the surrounding transaction. The
-      //    previous syncExistingBalance used the raw pg pool (query()
-      //    imported from '../config/database'), which runs OUTSIDE the
-      //    transaction — that was the bug shape the audit flagged.
-      //
-      //    The UPDATE must increment `withdrawable_balance_coins`
-      //    (NOT `balance` directly). The trg_sync_user_balance
-      //    trigger recomputes `balance = bonus + withdrawable` on
-      //    every row update, so directly incrementing `balance` would
-      //    be silently overwritten by the trigger back to its
-      //    pre-update value. The split-pair credit is the
-      //    schema-correct way; the trigger then keeps `balance` in
-      //    sync.
-      //
-      //    wallet_transactions columns (real schema.sql):
-      //      id, user_id, type, amount_coins, currency, source, note,
-      //      metadata, created_at
-      //    The previous INSERT referenced amount/description/status —
-      //    none of which exist. That would have crashed on first
-      //    execution. Fixed by mapping to the real columns.
-      await tx.$executeRaw`
-        UPDATE users
-           SET wallet_balance_coins       = wallet_balance_coins       + ${creditCoins}::numeric,
-               withdrawable_balance_coins = withdrawable_balance_coins + ${creditCoins}::numeric
-         WHERE id = ${userId}::uuid
-      `;
-      await tx.$executeRaw`
-        INSERT INTO wallet_transactions
-          (user_id, type, amount_coins, currency, source, note, metadata)
-        VALUES
-          (${userId}::uuid, 'topup', ${creditCoins}::numeric, 'COIN', 'crypto_deposit',
-           ${`Crypto deposit ${depositId}`}, ${JSON.stringify({ depositId, description })}::jsonb)
-      `;
-    }, {
-      isolationLevel: 'Serializable',
-    });
+          prismaCode: (err as any)?.code,
+          postgresCode: (err as any)?.meta?.code,
+        });
+        return;
+      }
+      throw err;
+    }
   }
 
   async adminAdjustment(
@@ -519,3 +549,41 @@ export class WalletService {
 }
 
 export const walletService = new WalletService();
+
+// ── Idempotency helpers (layer 2 in processDeposit) ─────────────
+// Placed at the bottom so the call site above can reference them.
+// Function declarations are hoisted within the module, so this
+// ordering is purely cosmetic.
+//
+// Prisma surfaces unique-constraint violations as
+//   { code: 'P2002', meta: { target: ['ledger_entries_reference_id_key', ...] } }
+// Serializable-isolation conflicts surface as raw Postgres errors with
+//   { code: '40001' } (serialization_failure) or '40P01' (deadlock).
+// Either way, the database did its job — only one writer committed.
+// We treat both as idempotent no-ops so the loser of a concurrent
+// race doesn't propagate a 500 to the webhook caller.
+function isUniqueViolationOnLedgerReference(err: unknown): boolean {
+  const e = err as any;
+  if (e?.code !== 'P2002') return false;
+  const target = e?.meta?.target;
+  if (Array.isArray(target)) {
+    return target.some((t: string) => typeof t === 'string' && t.includes('reference'));
+  }
+  // meta.target is sometimes just a string; sometimes omitted.
+  // Fall back to the message text — P2002 messages on this column
+  // include the column name.
+  const msg = String(e?.message ?? '');
+  return msg.includes('reference_id') || msg.includes('referenceId');
+}
+
+function isPostgresSerializationFailure(err: unknown): boolean {
+  const e = err as any;
+  // Prisma surfaces the raw Postgres SQLSTATE on PrismaClientKnownRequestError
+  // but in this code path the error comes through as PrismaClientUnknownRequestError
+  // or even a plain Error — both expose the SQLSTATE via different fields.
+  const candidates = [
+    e?.code,                       // PrismaClientUnknownRequestError
+    e?.meta?.code,                 // PrismaClientKnownRequestError meta.code
+  ];
+  return candidates.includes('40001') || candidates.includes('40P01');
+}

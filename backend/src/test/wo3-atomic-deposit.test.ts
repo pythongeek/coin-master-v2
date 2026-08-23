@@ -386,6 +386,83 @@ async function runTests() {
     await cleanupTestUser(user4);
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  // Scenario 5: Genuinely concurrent duplicate → constraint absorbs
+  // ─────────────────────────────────────────────────────────────────
+  // Fires two processDeposit calls in parallel for the same depositId.
+  // Both pass the optimistic pre-check (findUnique misses because no
+  // row has committed yet). Both enter the Serializable transaction.
+  // The database is the only thing that can stop the double-write:
+  // either the unique constraint on ledger_entries.referenceId fires
+  // (P2002), or the Serializable isolation aborts one of the two
+  // (40001). The catch block in processDeposit treats both as
+  // idempotent no-ops.
+  //
+  // Without layer-2 catching, the loser of this race would propagate
+  // the error to the webhook caller, which would 500, which would
+  // trigger a provider retry, which on the *next* attempt would
+  // find the row committed and no-op. So functionally it self-heals,
+  // but through a noisy Sentry-bound path. Layer 2 makes the race
+  // silent — the only signal is a single info-level log line.
+  console.log('\nScenario 5: Genuinely concurrent duplicate (Promise.all) absorbs cleanly');
+  const user5 = await seedTestUser(usdtCurrencyId);
+  const depositId5 = uuidv4();
+
+  try {
+    const result = await Promise.allSettled([
+      walletService.processDeposit(
+        user5, usdtCurrencyId, depositAmount, depositId5, 'race-call-A'
+      ),
+      walletService.processDeposit(
+        user5, usdtCurrencyId, depositAmount, depositId5, 'race-call-B'
+      ),
+    ]);
+
+    const fulfilled = result.filter(r => r.status === 'fulfilled');
+    const rejected = result.filter(r => r.status === 'rejected');
+    assert(
+      fulfilled.length === 2,
+      `both calls fulfilled (the catch block absorbed the constraint error): ${fulfilled.length}/2 fulfilled, ${rejected.length} rejected`
+    );
+
+    // Verify EXACTLY ONE credit across all four tables. If the catch
+    // block didn't catch, the rejected call would have left a
+    // partial state (the catch happens AFTER the tx rolls back, so
+    // rejecting silently is fine; but if both calls somehow
+    // committed, this assertion would fail).
+    const ubRow5 = await prisma.userBalance.findUnique({
+      where: { userId_currencyId: { userId: user5, currencyId: usdtCurrencyId } },
+    });
+    assert(
+      ubRow5 && ubRow5.availableBalance.toString() === '123.456789',
+      `user_balances.availableBalance = 123.456789 (single credit) (got ${ubRow5?.availableBalance.toString()})`
+    );
+
+    const ledgerRows5 = await getLedgerEntries(user5);
+    assert(
+      ledgerRows5.length === 1,
+      `ledger_entries has EXACTLY 1 deposit row (got ${ledgerRows5.length})`
+    );
+
+    const walletTxs5 = await getWalletTransactions(user5);
+    assert(
+      walletTxs5.length === 1,
+      `wallet_transactions has EXACTLY 1 topup row (got ${walletTxs5.length})`
+    );
+
+    const userRow5 = await getUserLegacyCols(user5);
+    assert(
+      userRow5 && parseFloat(userRow5.wallet_balance_coins) === 123.456789,
+      `users.wallet_balance_coins = 123.456789 (single credit) (got ${userRow5?.wallet_balance_coins})`
+    );
+    assert(
+      userRow5 && parseFloat(userRow5.balance) === 123.456789,
+      `users.balance (trigger-derived) = 123.456789 (single credit) (got ${userRow5?.balance})`
+    );
+  } finally {
+    await cleanupTestUser(user5);
+  }
+
   console.log('');
   if (failed) {
     console.error('FAILED: WO-3 atomic-deposit tests did not all pass');
