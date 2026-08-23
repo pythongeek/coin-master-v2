@@ -578,12 +578,19 @@ function isUniqueViolationOnLedgerReference(err: unknown): boolean {
 
 function isPostgresSerializationFailure(err: unknown): boolean {
   const e = err as any;
-  // Prisma surfaces the raw Postgres SQLSTATE on PrismaClientKnownRequestError
-  // but in this code path the error comes through as PrismaClientUnknownRequestError
-  // or even a plain Error — both expose the SQLSTATE via different fields.
-  const candidates = [
-    e?.code,                       // PrismaClientUnknownRequestError
-    e?.meta?.code,                 // PrismaClientKnownRequestError meta.code
-  ];
-  return candidates.includes('40001') || candidates.includes('40P01');
+  // Prisma 5.x surfaces a serialization failure in one of several places:
+  //   - err.code === 'P2034'          (PrismaClientKnownRequestError mapped)
+  //   - err.code === '40001' or '40P01' (raw SQLSTATE in PrismaClientUnknownRequestError)
+  //   - err.meta.code                   (sometimes used as a fallback)
+  //   - the raw SQLSTATE leaks into the message text on Prisma 5.x.
+  // We match on all of these to avoid missing the race.
+  if (e?.code === 'P2034') return true;
+  if (e?.code === '40001' || e?.code === '40P01') return true;
+  if (e?.meta?.code === '40001' || e?.meta?.code === '40P01') return true;
+  const msg = String(e?.message ?? '');
+  if (msg.includes('40001') || msg.includes('serialization_failure')
+      || msg.includes('deadlock detected') || msg.includes('could not serialize')) {
+    return true;
+  }
+  return false;
 }
