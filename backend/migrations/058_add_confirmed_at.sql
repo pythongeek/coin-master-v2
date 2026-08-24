@@ -1,0 +1,25 @@
+-- =============================================================
+--  Migration 058: S1-C4-R2 — Add confirmed_at to transactions
+-- =============================================================
+--
+--  Background:
+--    services/bonus.ts:952 (the S1-C4-R2 approveWithdrawal fix) sets
+--    `confirmed_at = NOW()` when the admin approves a withdrawal.
+--    The schema.sql file has this column, but the live DB was
+--    migrated before this column was added, leaving the C4-R2
+--    approve path broken (HTTP 500 "column does not exist").
+--
+--    This migration closes the schema drift between schema.sql and
+--    the live DB. It is idempotent (uses IF NOT EXISTS).
+--
+--  Why this is in Sprint 1:
+--    The C4-R2 commit (3b2866e) made the approve path's UPDATE
+--    atomic with FOR UPDATE. The `confirmed_at` column reference is
+--    preserved from the original code; the live DB never had it.
+--    Without this column, the entire C4-R2 fix is unreachable in
+--    production.
+--
+--  Order in sprint: 058 — comes after 056 (S1-C1) and 057 (S1-W3).
+-- =============================================================
+
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;
