@@ -41,12 +41,24 @@ INSERT INTO pgmigrations (name, run_on)
     SELECT 1 FROM pgmigrations WHERE name = '045_audit_log_archived_at'
   );
 
--- ── Backfill: this alignment script itself ──
-INSERT INTO pgmigrations (name, run_on)
-  SELECT '047_align_pgmigrations_after_p1_01_renumber', NOW()
-  WHERE NOT EXISTS (
-    SELECT 1 FROM pgmigrations WHERE name = '047_align_pgmigrations_after_p1_01_renumber'
-  );
+-- ── Self-record: REMOVED ────────────────────────────────────
+-- Originally this script ended with an INSERT for its own name:
+--   INSERT INTO pgmigrations (name, run_on)
+--     SELECT '047_align_pgmigrations_after_p1_01_renumber', NOW()
+--     WHERE NOT EXISTS (...);
+-- That INSERT is now redundant AND counter-productive. node-pg-migrate
+-- records the migration row automatically after the SQL above completes
+-- (see node-pg-migrate/dist/bundle/index.js line 3016:
+-- `INSERT INTO "${migrationsTable}" (name, run_on) VALUES ($1, NOW())`).
+-- Before WO-2.1 added the `pgmigrations_name_key` UNIQUE INDEX to the
+-- baseline, the two INSERTs coexisted silently (no constraint). With
+-- the UNIQUE INDEX in place, the runner's INSERT would fail with
+-- `Key (name)=(047_...) is duplicated.` on a fresh DB because this
+-- migration's INSERT and the runner's INSERT both target the same
+-- name with no ON CONFLICT. Removing the explicit INSERT lets the
+-- runner's automatic INSERT succeed, and node-pg-migrate's
+-- `getMigrationsToRun` ensures the migration is not re-applied on
+-- subsequent runs (because the row exists).
 
 DO $$
 BEGIN
@@ -56,7 +68,7 @@ BEGIN
   RAISE NOTICE '  043_ip_whitelist_self_loopback (was 042_ip_whitelist_self_loopback)';
   RAISE NOTICE '  044_webhook_subscriptions (was 043_webhook_subscriptions)';
   RAISE NOTICE '  045_audit_log_archived_at backfilled (P0-04 was applied manually)';
-  RAISE NOTICE '  047_align_pgmigrations_after_p1_01_renumber recorded';
+  RAISE NOTICE '  047_align_pgmigrations_after_p1_01_renumber (recorded by node-pg-migrate runner)';
 END $$;
 
 COMMIT;
