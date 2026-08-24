@@ -1,0 +1,22 @@
+-- =============================================================
+--  Migration 057: S1-W3 — no-op (see migration 056 for full text)
+-- =============================================================
+--
+--  Originally this file added 'payout_stuck' to the CHECK constraint
+--  in a separate DROP+ADD cycle. As of the Sprint 1 audit, that
+--  caused a constraint-violation rollback when applied to the live
+--  DB (the W11 reconciliation cron had already flipped ~2,700
+--  confirmed-without-tx-hash rows to 'payout_stuck' status, so the
+--  narrow 7-value constraint in migration 056 would have rejected
+--  them).
+--
+--  Resolution: 056 now extends the CHECK with the full 8-value list
+--  (pending, confirming, completed, failed, cancelled, confirmed,
+--  rejected, payout_stuck). 057 is preserved here as a no-op for
+--  environments that already recorded 057 in pgmigrations.
+--
+--  Do not edit. If you need to add a new status, edit migration 058
+--  (Sprint 1's C4-R2 confirmed_at column add) or open a new migration.
+-- =============================================================
+
+SELECT 1;
