@@ -41,24 +41,20 @@ INSERT INTO pgmigrations (name, run_on)
     SELECT 1 FROM pgmigrations WHERE name = '045_audit_log_archived_at'
   );
 
--- ── Self-record: REMOVED ────────────────────────────────────
--- Originally this script ended with an INSERT for its own name:
---   INSERT INTO pgmigrations (name, run_on)
---     SELECT '047_align_pgmigrations_after_p1_01_renumber', NOW()
---     WHERE NOT EXISTS (...);
--- That INSERT is now redundant AND counter-productive. node-pg-migrate
--- records the migration row automatically after the SQL above completes
--- (see node-pg-migrate/dist/bundle/index.js line 3016:
--- `INSERT INTO "${migrationsTable}" (name, run_on) VALUES ($1, NOW())`).
--- Before WO-2.1 added the `pgmigrations_name_key` UNIQUE INDEX to the
--- baseline, the two INSERTs coexisted silently (no constraint). With
--- the UNIQUE INDEX in place, the runner's INSERT would fail with
--- `Key (name)=(047_...) is duplicated.` on a fresh DB because this
--- migration's INSERT and the runner's INSERT both target the same
--- name with no ON CONFLICT. Removing the explicit INSERT lets the
--- runner's automatic INSERT succeed, and node-pg-migrate's
--- `getMigrationsToRun` ensures the migration is not re-applied on
--- subsequent runs (because the row exists).
+-- ── Backfill: this alignment script itself ──
+-- node-pg-migrate records the row automatically after the SQL above
+-- completes without errors (see node-pg-migrate/dist/bundle/index.js
+-- line 3016). With the WO-2.1 baseline adding the
+-- pgmigrations_name_key UNIQUE INDEX on pgmigrations(name), the runner's
+-- plain INSERT (no ON CONFLICT) must NOT collide with any prior INSERT
+-- for the same name. The original 047 file ended with an explicit
+-- `INSERT INTO pgmigrations (name, run_on) ... WHERE NOT EXISTS (...)`
+-- for itself; that was harmless without the UNIQUE INDEX but becomes
+-- a duplicate-row error now that the INDEX exists. Removing the
+-- explicit INSERT lets the runner record the row exactly once;
+-- subsequent runs are filtered out by getMigrationsToRun (no re-insert).
+-- The renames + 045 backfill above remain unchanged — they're the
+-- functional purpose of 047 and don't conflict with the runner.
 
 DO $$
 BEGIN

@@ -21,7 +21,16 @@ CREATE INDEX IF NOT EXISTS idx_group_bet_has_spectators
   ON group_bet (id)
   WHERE spectator_count > 0;
 
--- Insert migration row so node-pg-migrate (and the migrate container)
--- record this as applied. ON CONFLICT DO NOTHING makes it idempotent.
-INSERT INTO pgmigrations (name, run_on) VALUES ('053_group_spectator_count', NOW())
-  ON CONFLICT (name) DO NOTHING;
+-- node-pg-migrate records this migration's row automatically after the
+-- SQL above completes without errors (see
+-- node-pg-migrate/dist/bundle/index.js line 3016). The original 053
+-- file (in origin/fix/gap-11-spectator-mode) ended with an explicit
+-- `INSERT INTO pgmigrations (name, run_on) ... ON CONFLICT (name) DO
+-- NOTHING` for itself, but the WO-2.1 baseline adds a UNIQUE INDEX
+-- pgmigrations_name_key on pgmigrations(name) to satisfy 053/054's
+-- own ON CONFLICT(name) clauses. With that UNIQUE in place, the
+-- runner's plain INSERT (no ON CONFLICT) would fail with 23505 on a
+-- fresh DB because both 053's explicit INSERT and the runner's
+-- automatic INSERT target the same name. Removing the explicit
+-- INSERT lets the runner record the row exactly once; subsequent
+-- runs are filtered out by getMigrationsToRun (no re-insert).
