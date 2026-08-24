@@ -68,7 +68,7 @@ DO $$ BEGIN
   CREATE TYPE "AdminApprovalStatus" AS ENUM ('pending', 'approved', 'rejected', 'executed', 'cancelled');
 
 -- CreateTable
-CREATE TABLE "exchange_rates" (
+CREATE TABLE IF NOT EXISTS "exchange_rates" (
     "id" UUID NOT NULL,
     "currency_pair" TEXT NOT NULL,
     "base_currency" TEXT NOT NULL,
@@ -256,62 +256,62 @@ CREATE TABLE IF NOT EXISTS "admin_actions" (
 CREATE INDEX IF NOT EXISTS "exchange_rates_currency_pair_is_platform_default_idx" ON "exchange_rates"("currency_pair", "is_platform_default");
 
 -- CreateIndex
-CREATE INDEX "exchange_rates_currency_pair_fetched_at_idx" ON "exchange_rates"("currency_pair", "fetched_at");
+CREATE INDEX IF NOT EXISTS "exchange_rates_currency_pair_fetched_at_idx" ON "exchange_rates"("currency_pair", "fetched_at");
 
 CREATE INDEX IF NOT EXISTS "exchange_rates_source_type_is_platform_default_idx" ON "exchange_rates"("source_type", "is_platform_default");
 
 -- CreateIndex
-CREATE INDEX "rate_locks_user_id_status_idx" ON "rate_locks"("user_id", "status");
+CREATE INDEX IF NOT EXISTS "rate_locks_user_id_status_idx" ON "rate_locks"("user_id", "status");
 
 CREATE INDEX IF NOT EXISTS "rate_locks_expires_at_status_idx" ON "rate_locks"("expires_at", "status");
 
 -- CreateIndex
-CREATE INDEX "deposit_transactions_user_id_status_idx" ON "deposit_transactions"("user_id", "status");
+CREATE INDEX IF NOT EXISTS "deposit_transactions_user_id_status_idx" ON "deposit_transactions"("user_id", "status");
 
 CREATE INDEX IF NOT EXISTS "deposit_transactions_blockchain_tx_id_idx" ON "deposit_transactions"("blockchain_tx_id");
 
 -- CreateIndex
-CREATE INDEX "deposit_transactions_to_address_status_idx" ON "deposit_transactions"("to_address", "status");
+CREATE INDEX IF NOT EXISTS "deposit_transactions_to_address_status_idx" ON "deposit_transactions"("to_address", "status");
 
 CREATE INDEX IF NOT EXISTS "deposit_transactions_status_created_at_idx" ON "deposit_transactions"("status", "created_at");
 
 -- CreateIndex
-CREATE INDEX "custom_rate_configs_currency_pair_is_platform_default_idx" ON "custom_rate_configs"("currency_pair", "is_platform_default");
+CREATE INDEX IF NOT EXISTS "custom_rate_configs_currency_pair_is_platform_default_idx" ON "custom_rate_configs"("currency_pair", "is_platform_default");
 
 CREATE INDEX IF NOT EXISTS "custom_rate_configs_currency_pair_is_active_idx" ON "custom_rate_configs"("currency_pair", "is_active");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "currencies_code_key" ON "currencies"("code");
+CREATE UNIQUE INDEX IF NOT EXISTS "currencies_code_key" ON "currencies"("code");
 
 CREATE INDEX IF NOT EXISTS "currencies_is_default_idx" ON "currencies"("is_default");
 
 -- CreateIndex
-CREATE INDEX "currencies_is_active_idx" ON "currencies"("is_active");
+CREATE INDEX IF NOT EXISTS "currencies_is_active_idx" ON "currencies"("is_active");
 
 CREATE INDEX IF NOT EXISTS "user_balances_user_id_idx" ON "user_balances"("user_id");
 
 -- CreateIndex
-CREATE INDEX "user_balances_currency_id_idx" ON "user_balances"("currency_id");
+CREATE INDEX IF NOT EXISTS "user_balances_currency_id_idx" ON "user_balances"("currency_id");
 
 CREATE UNIQUE INDEX IF NOT EXISTS "user_balances_user_id_currency_id_key" ON "user_balances"("user_id", "currency_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ledger_entries_reference_id_key" ON "ledger_entries"("reference_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "ledger_entries_reference_id_key" ON "ledger_entries"("reference_id");
 
 CREATE INDEX IF NOT EXISTS "ledger_entries_user_id_currency_id_created_at_idx" ON "ledger_entries"("user_id", "currency_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "ledger_entries_reference_id_idx" ON "ledger_entries"("reference_id");
+CREATE INDEX IF NOT EXISTS "ledger_entries_reference_id_idx" ON "ledger_entries"("reference_id");
 
 CREATE INDEX IF NOT EXISTS "ledger_entries_entry_type_idx" ON "ledger_entries"("entry_type");
 
 -- CreateIndex
-CREATE INDEX "admin_actions_admin_id_created_at_idx" ON "admin_actions"("admin_id", "created_at");
+CREATE INDEX IF NOT EXISTS "admin_actions_admin_id_created_at_idx" ON "admin_actions"("admin_id", "created_at");
 
 CREATE INDEX IF NOT EXISTS "admin_actions_approval_status_idx" ON "admin_actions"("approval_status");
 
 -- CreateIndex
-CREATE INDEX "admin_actions_target_type_target_id_idx" ON "admin_actions"("target_type", "target_id");
+CREATE INDEX IF NOT EXISTS "admin_actions_target_type_target_id_idx" ON "admin_actions"("target_type", "target_id");
 
 -- ============================================================
 -- SECTION 2: Closure additions (users columns + group_bet + fn + trigger)
@@ -421,14 +421,37 @@ BEGIN
 END;
 $$;
 
+-- pgmigrations unique index on `name` — closure dependency for the
+-- hand-written `INSERT INTO pgmigrations (name, run_on) ... ON CONFLICT
+-- (name) DO NOTHING` clauses in historicals 053 and 054. node-pg-migrate's
+-- own runner does NOT create this index (it tracks migrations by id, not
+-- name; see node-pg-migrate/dist/bundle/index.js line 3016). Production
+-- applied these migrations directly via psql, so prod's pgmigrations has
+-- no UNIQUE on name — which means 053/054's ON CONFLICT clause would fail
+-- with 42P10 if applied on a fresh DB. The baseline creates the UNIQUE
+-- index idempotently, so the verbatim 053/054 work cleanly on a fresh DB
+-- AND on production (where the constraint doesn't exist but the rows
+-- already do — so the INSERT path never executes; the index creation is
+-- skipped by IF NOT EXISTS).
+--
+-- Production pgmigrations has no duplicate `name` values (verified via
+-- `SELECT name, count(*) FROM pgmigrations GROUP BY name HAVING count(*) > 1`
+-- on 2026-08-24), so adding the UNIQUE constraint is safe.
+--
+-- Why we DON'T add this to 047 or earlier: only 053 and 054 have the
+-- ON CONFLICT(name) clause; the rest of the migrations use node-pg-migrate's
+-- automatic tracker which doesn't need this constraint. Adding it here
+-- (before 053 runs) ensures 053's ON CONFLICT can resolve correctly.
+CREATE UNIQUE INDEX IF NOT EXISTS pgmigrations_name_key
+  ON pgmigrations (name);
+
 DROP TRIGGER IF EXISTS trg_group_bet_updated_at ON public.group_bet;
 CREATE TRIGGER trg_group_bet_updated_at BEFORE UPDATE ON public.group_bet FOR EACH ROW EXECUTE FUNCTION public.group_bet_set_updated_at();
 
--- node-pg-migrate records the migration row automatically (see
--- node-pg-migrate/dist/bundle/index.js line 3016: `INSERT INTO
--- ${migrationsTable} (name, run_on) VALUES ($1, NOW())`). The pgmigrations
--- table has only a PRIMARY KEY on id, no UNIQUE constraint on name — so
--- `ON CONFLICT (name) DO NOTHING` would error. We deliberately omit the
--- explicit INSERT (which the imported historicals 053 and 054 also omit
--- after the fix that removes their hand-written INSERT INTO pgmigrations).
+-- node-pg-migrate records the baseline's migration row automatically
+-- after the SQL above completes without errors (see
+-- node-pg-migrate/dist/bundle/index.js line 3016:
+-- `INSERT INTO "${migrationsTable}" (name, run_on) VALUES ($1, NOW())`).
+-- We deliberately do NOT add our own INSERT for this baseline so we
+-- don't introduce a conflict with node-pg-migrate's automatic tracker.
 

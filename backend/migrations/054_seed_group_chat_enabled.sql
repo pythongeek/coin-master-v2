@@ -13,5 +13,11 @@
 --   - frontend/components/dashboard/AdminGroupConfig.tsx (renders the toggle)
 
 INSERT INTO admin_settings (key, value, updated_at)
-VALUES ('group_chat_enabled', 'false', NOW())
+  VALUES ('group_chat_enabled', 'false', NOW())
   ON CONFLICT (key) DO NOTHING;
+
+-- Migration row so node-pg-migrate (and the migrate container) record
+-- this as applied. ON CONFLICT DO NOTHING makes it idempotent.
+INSERT INTO pgmigrations (name, run_on)
+  VALUES ('054_seed_group_chat_enabled', NOW())
+  ON CONFLICT (name) DO NOTHING;

@@ -20,3 +20,8 @@ ALTER TABLE group_bet
 CREATE INDEX IF NOT EXISTS idx_group_bet_has_spectators
   ON group_bet (id)
   WHERE spectator_count > 0;
+
+-- Insert migration row so node-pg-migrate (and the migrate container)
+-- record this as applied. ON CONFLICT DO NOTHING makes it idempotent.
+INSERT INTO pgmigrations (name, run_on) VALUES ('053_group_spectator_count', NOW())
+  ON CONFLICT (name) DO NOTHING;
