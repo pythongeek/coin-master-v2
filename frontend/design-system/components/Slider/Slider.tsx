@@ -138,7 +138,6 @@ export function Slider({
           )}
           style={{
             // Custom property for Firefox track fill
-            // @ts-ignore — custom prop
             '--fill': `${pct}%`,
           }}
           {...rest}

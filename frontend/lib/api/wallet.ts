@@ -160,9 +160,6 @@ export interface WalletTopUpResponse {
   message: string;
 }
 
-/** Legacy PaymentOrder — kept for backwards-compat in WalletModal. */
-export interface PaymentOrder extends MergedPaymentOrder {}
-
 /** Legacy request type for createPaymentOrder. */
 export interface CreatePaymentRequest {
   currency: SupportedCurrency;

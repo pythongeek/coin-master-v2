@@ -144,12 +144,12 @@ function ModalRoot({
     // Body scroll lock is the main side effect.
   }, [open]);
 
-  if (!open) return null;
-
   const handleBackdrop = useCallback(() => {
     setOpen(false);
     onClose?.();
   }, [onClose]);
+
+  if (!open) return null;
 
   return (
     <div

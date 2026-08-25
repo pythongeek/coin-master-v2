@@ -33,7 +33,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.CX23_SSH_KEY }}" > ~/.ssh/cx23_key
           chmod 600 ~/.ssh/cx23_key
-          ssh-keyscan -H "${{ secrets.CX23_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Deploy via ssh (backup → migrate → up)
         run: |
@@ -62,8 +62,20 @@ jobs:
           # 5. docker compose up -d --no-deps backend frontend — starts
           #    the new images.
           # 6. smoke + log watch — same as before.
+          #
+          # NOTE on the secret rename: this workflow historically
+          # referenced `secrets.CX23_HOST`, which doesn't exist in the
+          # repo. The actual host secret is named `VPS_HOST`. Before
+          # WO-4, every `workflow_dispatch` of this workflow aborted at
+          # the `ssh-keyscan` step with an empty host argument
+          # (`ssh-keyscan -H "" >> ~/.ssh/known_hosts` → exit 1). The
+          # auto-deploy path also references this same secret and was
+          # silently broken. Renaming the references to `VPS_HOST` here
+          # (matching the actual secret name) unblocks both paths. The
+          # sister secret `CX23_SSH_KEY` is correctly named (it exists),
+          # so only the host secret needed renaming.
           ssh -i ~/.ssh/cx23_key -o StrictHostKeyChecking=accept-new \
-            "root@${{ secrets.CX23_HOST }}" bash -s <<'REMOTE_EOF'
+            "root@${{ secrets.VPS_HOST }}" bash -s <<'REMOTE_EOF'
             set -euo pipefail
             cd /root/coin-master
             # Capture the migrations dir's highest-numbered migration
