@@ -137,10 +137,14 @@ export function Slider({
             '[&::-moz-range-thumb]:cursor-pointer',
           )}
           style={{
-            // Custom property for Firefox track fill
-            // @ts-ignore — custom prop
+            // Custom property for Firefox track fill.
+            // Cast through `as React.CSSProperties` because React's
+            // `Properties` type does not allow arbitrary `--*` keys
+            // (CSS custom properties) without it; the key is real
+            // and consumed by the `[&::-moz-range-track]:bg-[length:--fill]`
+            // sibling class in this file.
             '--fill': `${pct}%`,
-          }}
+          } as React.CSSProperties}
           {...rest}
         />
       </div>

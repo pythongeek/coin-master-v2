@@ -37,20 +37,33 @@ const nextConfig = {
 
   async headers() {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-    if (!appUrl || !appUrl.startsWith('http')) {
-      throw new Error('NEXT_PUBLIC_APP_URL must be a valid http/https origin');
-    }
+    // The CORS /api/* block below is conditional on a valid NEXT_PUBLIC_APP_URL
+    // being set at build time. At Docker build time, this env may not be set
+    // (the workflow doesn't currently pass build-args), and the build must
+    // be hermetic — env-specific values must not break a build. When
+    // NEXT_PUBLIC_APP_URL is missing or malformed, the CORS headers are
+    // omitted entirely (the browser will apply its default same-origin
+    // policy, which is the correct behaviour for a missing-config scenario).
+    //
+    // Other headers (security headers for HTML pages, immutable cache for
+    // /_next/static/*, etc.) are always emitted — they don't depend on
+    // appUrl and are correct under all configurations.
+    const apiCorsHeaders = appUrl && appUrl.startsWith('http')
+      ? [
+          {
+            source: '/api/:path*',
+            headers: [
+              { key: 'Access-Control-Allow-Origin', value: appUrl },
+              { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
+              { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
+              { key: 'Access-Control-Allow-Credentials', value: 'true' },
+            ],
+          },
+        ]
+      : [];
 
     return [
-      {
-        source: '/api/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Origin', value: appUrl },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
-          { key: 'Access-Control-Allow-Credentials', value: 'true' },
-        ],
-      },
+      ...apiCorsHeaders,
       {
         // HTML pages (incl. /, /game, /admin/*): always revalidate.
         // Forces the browser + any CDN/proxy to refetch on every visit so

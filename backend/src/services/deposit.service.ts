@@ -383,32 +383,18 @@ export class DepositService {
   }
 
   private generateDepositAddress(userId: string, lockId: string): string {
-    const hot = env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
-    if (env.DEPOSIT_ADDRESS_DERIVATION === 'per_user') {
-      // Derive a deterministic TRON address per deposit (per rate lock) from a
-      // dedicated deposit derivation seed. This prevents address reuse across
-      // deposits and separates deposit derivation from the hot wallet signing key.
-      let seed = env.HOT_WALLET_ADDRESS;
-      if (env.DEPOSIT_DERIVATION_SEED_ENCRYPTED) {
-        const { decryptSecret } = require('./secret-vault');
-        const seedValue = decryptSecret(env.DEPOSIT_DERIVATION_SEED_ENCRYPTED.replace('seed:', ''));
-        seed = seedValue;
-      } else if (env.HOT_WALLET_PRIVATE_KEY_ENCRYPTED) {
-        // Legacy fallback: do not decrypt the real hot wallet key here; use the
-        // configured hot wallet address as the stable seed. This keeps existing
-        // derived addresses unchanged when the private key is rotated.
-        seed = env.HOT_WALLET_ADDRESS;
-      }
-      const fullSeed = `${seed}:${userId}:${lockId}`;
-      const hash = crypto.createHash('sha256').update(fullSeed).digest('hex');
-      const { TronWeb } = require('tronweb');
-      const tw = new TronWeb({ fullHost: 'https://api.trongrid.io' });
-      const account = tw.address.fromPrivateKey(hash);
-      if (account && typeof account === 'string' && account.startsWith('T')) {
-        return account;
-      }
-    }
-    return hot;
+    // WO-4 (C7): per_user derivation branch deleted. The static hot wallet
+    // address is the only supported path. Per_user derivation encoded the
+    // secret seed in environment configuration and ran an HMAC over it
+    // over a network call to TronGrid at request time — both wrong shape
+    // for the production deposit path. If per-user addresses are needed
+    // later, the implementation must:
+    //   1. Store seed in an HSM/KMS, never env (see H5 in WO-4f).
+    //   2. Cache the derived address index (no per-request deriv).
+    //   3. Use a deterministic on-chain mapping (chain index), not a
+    //      round-trip to TronGrid to derive from a private key.
+    // Until those land, this returns the configured hot wallet address.
+    return env.HOT_WALLET_ADDRESS || 'TExampleAddress123456789';
   }
 
   private generateMemo(userId: string, lockId: string): string {
