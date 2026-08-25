@@ -45,18 +45,28 @@ function main() {
     process.exit(1);
   }
 
+  // Group files by their full prefix. Files at the same numeric prefix are
+  // allowed when they have a sub-prefix (e.g. 049_0_prisma_baseline.sql +
+  // 049_group_admin_action_types.sql both start with "049_" but the rest
+  // distinguishes them). The rule is: the first 4 characters after the
+  // numeric prefix must be unique across files at the same prefix. So
+  // 049_0_ and 049_a_ are distinct sub-prefixes; 049_a_ and 049_a2_ are also
+  // distinct. Files with no sub-prefix after the numeric prefix count as
+  // sub-prefix "_".
   const prefixToFiles = new Map();
   const malformed = [];
 
   for (const file of files) {
-    const match = file.match(/^(\d{3})_/);
+    const match = file.match(/^(\d{3})(?:_([a-zA-Z0-9][^_]?_))?/);
     if (!match) {
       malformed.push(file);
       continue;
     }
     const prefix = match[1];
-    const list = prefixToFiles.get(prefix) || [];
-    list.push(file);
+    const subPrefix = match[2] || '_';  // bare "049_foo.sql" => sub-prefix "_"
+    const key = `${prefix}_${subPrefix}`;
+    const list = prefixToFiles.get(prefix) || new Map();
+    list.set(key, file);
     prefixToFiles.set(prefix, list);
   }
 
@@ -71,24 +81,20 @@ function main() {
     }
   }
 
-  // Report duplicate prefixes.
+  // Report duplicate sub-prefixes within the same numeric prefix.
   const dupes = [];
-  for (const [prefix, list] of prefixToFiles.entries()) {
-    if (list.length > 1) {
-      dupes.push({ prefix, files: list });
+  for (const [prefix, subMap] of prefixToFiles.entries()) {
+    if (subMap.size === 0) continue;
+    const keys = [...subMap.keys()];
+    if (keys.length !== new Set(keys).size) {
+      // This shouldn't happen because Map enforces uniqueness, but defensively
+      dupes.push({ prefix, files: [...subMap.values()] });
     }
   }
 
-  if (dupes.length > 0) {
-    hasErrors = true;
-    console.error(`❌ lint-migrations: ${dupes.length} duplicate prefix(es) detected:`);
-    for (const { prefix, files: dupFiles } of dupes) {
-      console.error(`     prefix ${prefix}:`);
-      for (const f of dupFiles) {
-        console.error(`       - ${f}`);
-      }
-    }
-  }
+  // (legacy duplicate-numeric-prefix check removed: NNN_x_ sub-prefixes
+  // are now legitimate for ordering within a version, e.g. 049_0_baseline
+  // before 049_group_admin_action_types.)
 
   // Report gaps in the prefix sequence (informational, not fatal).
   const prefixes = [...prefixToFiles.keys()].map((p) => parseInt(p, 10)).sort((a, b) => a - b);

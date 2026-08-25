@@ -42,11 +42,19 @@ INSERT INTO pgmigrations (name, run_on)
   );
 
 -- ── Backfill: this alignment script itself ──
-INSERT INTO pgmigrations (name, run_on)
-  SELECT '047_align_pgmigrations_after_p1_01_renumber', NOW()
-  WHERE NOT EXISTS (
-    SELECT 1 FROM pgmigrations WHERE name = '047_align_pgmigrations_after_p1_01_renumber'
-  );
+-- node-pg-migrate records the row automatically after the SQL above
+-- completes without errors (see node-pg-migrate/dist/bundle/index.js
+-- line 3016). With the WO-2.1 baseline adding the
+-- pgmigrations_name_key UNIQUE INDEX on pgmigrations(name), the runner's
+-- plain INSERT (no ON CONFLICT) must NOT collide with any prior INSERT
+-- for the same name. The original 047 file ended with an explicit
+-- `INSERT INTO pgmigrations (name, run_on) ... WHERE NOT EXISTS (...)`
+-- for itself; that was harmless without the UNIQUE INDEX but becomes
+-- a duplicate-row error now that the INDEX exists. Removing the
+-- explicit INSERT lets the runner record the row exactly once;
+-- subsequent runs are filtered out by getMigrationsToRun (no re-insert).
+-- The renames + 045 backfill above remain unchanged — they're the
+-- functional purpose of 047 and don't conflict with the runner.
 
 DO $$
 BEGIN
@@ -56,7 +64,7 @@ BEGIN
   RAISE NOTICE '  043_ip_whitelist_self_loopback (was 042_ip_whitelist_self_loopback)';
   RAISE NOTICE '  044_webhook_subscriptions (was 043_webhook_subscriptions)';
   RAISE NOTICE '  045_audit_log_archived_at backfilled (P0-04 was applied manually)';
-  RAISE NOTICE '  047_align_pgmigrations_after_p1_01_renumber recorded';
+  RAISE NOTICE '  047_align_pgmigrations_after_p1_01_renumber (recorded by node-pg-migrate runner)';
 END $$;
 
 COMMIT;
