@@ -36,13 +36,10 @@ import {
   GetStatusResponse, WebhookPayload, WebhookRequest,
 } from './types';
 
-function _env(n: string) { return process.env[n] || ''; }
-const _K = _env('REDOT_PAY_API_KEY');
-const _S = _env('REDOT_PAY_API_SECRET');
-
+// API_KEY / API_SECRET are read directly from process.env below.
 // ── Config ─────────────────────────────────────────────────────
-const API_KEY=process.env.BINANCE_PAY_API_KEY || "";
-const API_SECRET=process.env.BINANCE_PAY_API_SECRET || "";
+const API_KEY=process.env.REDOT_PAY_API_KEY || "";
+const API_SECRET=process.env.REDOT_PAY_API_SECRET || "";
 const BASE_URL = process.env.REDOT_PAY_BASE_URL || 'https://api.redotpay.com/v1';
 const CHECKOUT_HOST = process.env.REDOT_PAY_CHECKOUT_URL || 'https://checkout.redotpay.com';
 const TIMESTAMP_WINDOW_MS = 5 * 60 * 1000;

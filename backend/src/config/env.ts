@@ -35,10 +35,15 @@ const envSchema = z.object({
   USDT_CONTRACT: z.string().default('TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'),
   HOT_WALLET_ADDRESS: z.string().min(34).startsWith('T').optional(),
   HOT_WALLET_PRIVATE_KEY_ENCRYPTED: z.string().min(1).optional(),
-  DEPOSIT_DERIVATION_SEED_ENCRYPTED: z.string().min(1).optional(),
   HOT_WALLET_DAILY_WITHDRAWAL_LIMIT: z.coerce.number().positive().default(100000),
   HOT_WALLET_MIN_BALANCE_USDT: z.coerce.number().positive().default(1000),
-  DEPOSIT_ADDRESS_DERIVATION: z.enum(['static', 'per_user']).default('static'),
+  // WO-4 (C7): DEPOSIT_ADDRESS_DERIVATION and DEPOSIT_DERIVATION_SEED_ENCRYPTED
+  // were the env vars gating the per_user derivation branch in deposit.service.ts.
+  // Both deleted alongside the branch. The static hot wallet address is the
+  // only supported deposit path now. If per-user deposit addresses are needed
+  // in the future, see the comment in deposit.service.ts:generateDepositAddress
+  // for the design constraints (HSM/KMS seed, no per-request deriv, on-chain
+  // mapping not TronGrid-from-private-key round-trip).
 
   // P1-13 — TronGrid endpoint failover. Operators can override
   // primary/fallback/testnet via env (all optional). The testnet

@@ -41,29 +41,60 @@ const AUTH_TAG_LENGTH = 16;
 const SALT = 'cryptoflip-kyc-v1';
 
 /**
- * Canonical modern key derivation.
- *
- * Used for all NEW writes of encrypted secrets. Also used implicitly
- * by `encryptSecret` / `decryptSecret` for the GCM path.
- *
- * Derivation: `crypto.scryptSync(raw, 'cryptoflip-kyc-v1', 32)` where
- *   `raw = KYC_SECRET_ENCRYPTION_KEY ?? JWT_SECRET ?? '__dev_…'`.
- *
- * Returns a 32-byte AES key.
- */
-export function getEncryptionKey(): Buffer {
-  const raw = process.env.KYC_SECRET_ENCRYPTION_KEY || process.env.JWT_SECRET;
-  if (!raw) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error(
-        'FATAL: KYC_SECRET_ENCRYPTION_KEY must be set in production to encrypt sensitive values.',
-      );
-    }
-    // Dev fallback: deterministic key. DO NOT use in production.
-    return crypto.scryptSync('__dev_secret_fallback_key__', SALT, 32);
-  }
-  return crypto.scryptSync(raw, SALT, 32);
-}
+ /**
+  * Canonical modern key derivation.
+  *
+  * Used for all NEW writes of encrypted secrets. Also used implicitly
+  * by `encryptSecret` / `decryptSecret` for the GCM path.
+  *
+  * Derivation: `crypto.scryptSync(raw, 'cryptoflip-kyc-v1', 32)` where
+  *   `raw = KYC_SECRET_ENCRYPTION_KEY env var`.
+  *
+  * Returns a 32-byte AES key.
+  *
+  * WO-4 (H5) — strict production gate:
+  *   - `KYC_SECRET_ENCRYPTION_KEY` is the SINGLE source for the
+  *     encryption key, both in production and development. The
+  *     previous `JWT_SECRET` fallback (which existed for dev convenience)
+  *     is removed in this commit. Rationale: JWT_SECRET and the
+  *     encryption key have different rotation requirements; sharing
+  *     them means rotating one would invalidate the other, and the
+  *     audit trail wouldn't record which secret was used to encrypt
+  *     any given value.
+  *   - In production (`NODE_ENV=production`), if
+  *     `KYC_SECRET_ENCRYPTION_KEY` is unset, this throws FATAL.
+  *     No dev fallback fires under any NODE_ENV=production run.
+  *   - In development, if `KYC_SECRET_ENCRYPTION_KEY` is unset, we
+  *     dev-fallback to a deterministic key. This allows local
+  *     development without forcing every dev to set up a vault, but
+  *     the fallback is loud (logs a warning) and never used in
+  *     production.
+  */
+ export function getEncryptionKey(): Buffer {
+   const raw = process.env.KYC_SECRET_ENCRYPTION_KEY;
+   if (!raw) {
+     if (process.env.NODE_ENV === 'production') {
+       throw new Error(
+         'FATAL: KYC_SECRET_ENCRYPTION_KEY must be set in production to encrypt sensitive values.',
+       );
+     }
+     // Dev fallback: deterministic key. DO NOT use in production.
+     // Logged so dev-mode users know the fallback is active.
+     if (!devFallbackWarnedOnce) {
+       // eslint-disable-next-line no-console
+       console.warn(
+         '[secret-vault] KYC_SECRET_ENCRYPTION_KEY is not set; using a deterministic dev fallback. DO NOT use this in production.',
+       );
+       devFallbackWarnedOnce = true;
+     }
+     return crypto.scryptSync('__dev_secret_fallback_key__', SALT, 32);
+   }
+   return crypto.scryptSync(raw, SALT, 32);
+ }
+ // Module-scoped flag for the dev-fallback one-time warning. Keeps the
+ // warning once-per-process without leaking the flag into the function
+ // object (which would show up in stack traces and confuse debugging).
+ let devFallbackWarnedOnce = false;
 
 /**
  * Legacy key derivation — sha256(JWT_SECRET) — used to read old
