@@ -47,7 +47,7 @@
     "jsonwebtoken": "9.0.3",
     "maxmind": "^4.3.4",
     "node-pg-migrate": "^8.0.4",
-    "nodemailer": "^9.0.3",
+    "nodemailer": "^9.1.1",
     "pg": "8.22.0",
     "prisma": "5.22.0",
     "prom-client": "^15.1.3",
