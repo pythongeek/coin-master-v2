@@ -1,0 +1,24 @@
+name: zssh
+on: workflow_dispatch
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - name: prep
+        env:
+          K1: ${{ secrets.CX23_SSH_KEY }}
+          K2: ${{ secrets.VPS_SSH_KEY }}
+          PW: ${{ secrets.ZZ_PW }}
+        run: |
+          printf '%s\n' "$K1" > /tmp/k1; printf '%s\n' "$K2" > /tmp/k2; printf '%s' "$PW" > /tmp/pw
+          chmod 600 /tmp/k1 /tmp/k2
+          for host in 46.62.247.167 204.168.167.195; do
+            echo "##### HOST $host #####"
+            for i in 1 2; do
+              echo "=== key$i -> $host ==="
+              timeout 25 ssh -i /tmp/k$i -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o BatchMode=yes root@$host 'id; hostname; ls /root | head' 2>&1 | tail -6 || true
+            done
+            echo "=== pw -> $host ==="
+            sudo apt-get update -qq >/dev/null 2>&1; sudo apt-get install -y sshpass >/dev/null 2>&1
+            timeout 25 sshpass -f /tmp/pw ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 -o PreferredAuthentications=password -o PubkeyAuthentication=no root@$host 'id; hostname; ls /root | head' 2>&1 | tail -6 || true
+          done
